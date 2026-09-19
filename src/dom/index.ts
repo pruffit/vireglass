@@ -25,6 +25,8 @@ import { systemAccessibility, watchAccessibility } from './preferences';
 import { applyAccessibility, type VireGlassAccessibility } from '../accessibility';
 import { applyGlassScale, GLASS_SCALE_DEFAULT } from '../glass-scale';
 import { applyAppear } from '../appear';
+import { accentAmount, accentTone } from '../accent';
+import type { VireGlassAccent } from '../adapters';
 import { concentricRadius } from '../concentric';
 import { RIM_WIDTH_PX, rimGradientCss } from './rim';
 import { REST_LIGHT } from '../adapters';
@@ -263,8 +265,23 @@ function rgbCss(r: number, g: number, b: number): string {
  * and the hue is the surroundings' — glass has no colour of its own, only the colour of what lies
  * beneath it. A flat fill in place of a tint is what breaks the material.
  */
-function bodyCss(optics: VireGlassOptics, sample: BackdropSample, ink: number): string {
+function bodyCss(
+  optics: VireGlassOptics,
+  sample: BackdropSample,
+  ink: number,
+  accent?: VireGlassAccent,
+): string {
   const body = withPresence(resolveBody(optics, sample, ink), optics, sample);
+
+  // A tinted element takes its colour from the accent rather than from its surroundings, but it is
+  // still the MEDIUM that is coloured: the amount stays short of one so the content keeps coming
+  // through. A fill at full opacity is the thing §7 says breaks the material.
+  if (accent) {
+    const [r, g, b] = accentTone(accent.color, sample.luma);
+    const amount = Math.max(accentAmount(accent), body.density);
+    return `rgba(${to255(r)}, ${to255(g)}, ${to255(b)}, ${amount.toFixed(3)})`;
+  }
+
   const [r, g, b] = ambientFrom(sample);
   const hue = (c: number) => body.tintLuma + (c - body.tintLuma) * optics.colorPickup;
   return `rgba(${to255(hue(r))}, ${to255(hue(g))}, ${to255(hue(b))}, ${body.density.toFixed(3)})`;
@@ -286,8 +303,17 @@ export type AttachGlassOptions = {
   scale?: number;
   /** System accessibility (§9). Read from the browser's own media queries unless supplied. */
   accessibility?: VireGlassAccessibility;
+  /**
+   * Tint for a primary action (§7). A colour that belongs to the medium, generating a range of
+   * tones from the backdrop's brightness — not a fill. Use it on the one element that should stand
+   * out: "when every element is tinted, nothing stands out" (219 @17:31).
+   */
+  accent?: VireGlassAccent;
   /** Initial presence, 0 to 1 (§1). Defaults to fully present. */
   appear?: number;
+  /** Called while this element is being touched, so a group can carry the glow to its neighbours
+   *  (§5). Wired for you by `createGlassGroup`. */
+  onGlow?: (glow: { pageX: number; pageY: number; strength: number } | null) => void;
   /** Pointer response (§5). On by default. */
   interactive?: boolean;
   /** Overrides the probe entirely — images and video are invisible to it, and the host app
@@ -318,6 +344,10 @@ export type GlassHandle = {
    * backdrop through a veil; one that is still arriving shows it undistorted.
    */
   setAppear(t: number): void;
+  /** Tint the element, or clear it with null (§7). */
+  setAccent(accent: VireGlassAccent | null): void;
+  /** A glow that started on a neighbour, in page coordinates (§5). Null clears it. */
+  setNeighbourGlow(glow: { pageX: number; pageY: number; strength: number } | null): void;
   setMorph(morph: GlassMorph | null): void;
   destroy(): void;
 };
@@ -340,6 +370,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   let mapKey = '';
   let morph: GlassMorph | null = null;
   let appear = opts.appear ?? 1;
+  let accent = opts.accent;
   // Read once at attach, then followed: a setting turned on while the page is open has to reach
   // the material, not wait for a reload.
   let a11y = systemAccessibility();
@@ -412,7 +443,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     } else {
       el.style.setProperty('backdrop-filter', fallbackFilterCss(opticsNow));
       el.style.setProperty('-webkit-backdrop-filter', fallbackFilterCss(opticsNow));
-      el.style.backgroundColor = bodyCss(opticsNow, sample, wasLight ? 1 : 0);
+      el.style.backgroundColor = bodyCss(opticsNow, sample, wasLight ? 1 : 0, accent);
     }
 
     const light = shouldInkBeLight(sample, wasLight);
@@ -428,7 +459,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     const inkLevel = Math.round((light ? INK_LIGHT : INK_DARK) * 255);
     el.style.setProperty('--vireglass-ink-color', `rgb(${inkLevel} ${inkLevel} ${inkLevel})`);
     el.style.setProperty('--vireglass-tint-color', rgbCss(tr, tg, tb));
-    el.style.setProperty('--vireglass-body-color', bodyCss(opticsNow, sample, light ? 1 : 0));
+    el.style.setProperty('--vireglass-body-color', bodyCss(opticsNow, sample, light ? 1 : 0, accent));
 
     // Rim and shadow follow the SAMPLE, not just the geometry, so they sit outside the map's
     // cache key: the environment they take their colour and density from moves under a scroll
@@ -494,17 +525,40 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     }
     mapKey = '';
 
-    // The glow is a CONCENTRATION of the surroundings, not the glass's own whiteness: over a dark
-    // backdrop the element lightens but never turns white, and ink over it stays legible.
+    paintGlow(sampleOut.touchX, sampleOut.touchY, sampleOut.active * base.edgeLight, geometry);
+
+    // "the glow spreads throughout the element and onto any Liquid Glass elements NEARBY" (§5,
+    // 219 @12:11). This element cannot know who is nearby; the group does, so it is told.
+    const rect = el.getBoundingClientRect();
+    opts.onGlow?.({
+      pageX: rect.left + rect.width / 2 + sampleOut.touchX,
+      pageY: rect.top + rect.height / 2 + sampleOut.touchY,
+      strength: sampleOut.active,
+    });
+  }
+
+  /**
+   * The glow is a CONCENTRATION of the surroundings, not the glass's own whiteness: over a dark
+   * backdrop the element lightens but never turns white, and ink over it stays legible.
+   *
+   * `x` and `y` are relative to the element's centre and may fall outside it — a glow that started
+   * next door still has a direction, and dropping it to the centre would make a neighbour brighten
+   * uniformly rather than from the side the finger is on.
+   */
+  function paintGlow(x: number, y: number, strength: number, geometry: VireGlassGeometry): void {
+    if (strength <= 0.001) {
+      el.style.setProperty('--vireglass-glow-opacity', '0');
+      return;
+    }
     const [gr, gg, gb] = ambientFrom(opts.sample ?? probeBackdrop(el));
-    const cx = ((sampleOut.touchX + geometry.width / 2) / geometry.width) * 100;
-    const cy = ((sampleOut.touchY + geometry.height / 2) / geometry.height) * 100;
+    const cx = ((x + geometry.width / 2) / geometry.width) * 100;
+    const cy = ((y + geometry.height / 2) / geometry.height) * 100;
     const reach = halfMinDp(geometry) * TOUCH_RADIUS_FRACTION;
     el.style.setProperty(
       '--vireglass-glow',
       `radial-gradient(circle ${reach.toFixed(0)}px at ${cx.toFixed(1)}% ${cy.toFixed(1)}%, rgba(${to255(gr)},${to255(gg)},${to255(gb)},1) 0%, rgba(${to255(gr)},${to255(gg)},${to255(gb)},0) 100%)`,
     );
-    el.style.setProperty('--vireglass-glow-opacity', (sampleOut.active * base.edgeLight).toFixed(3));
+    el.style.setProperty('--vireglass-glow-opacity', strength.toFixed(3));
   }
 
   function tick(now: number): void {
@@ -520,6 +574,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       lastFrameAt = 0;
       // Settled: put the full-resolution map back and drop the glow.
       el.style.setProperty('--vireglass-glow-opacity', '0');
+      opts.onGlow?.(null);
       apply();
       return;
     }
@@ -627,6 +682,25 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       if (next === appear) return;
       appear = next;
       apply();
+    },
+    setAccent(next) {
+      accent = next ?? undefined;
+      apply();
+    },
+    setNeighbourGlow(glow) {
+      if (destroyed || interacting) return;
+      const geometry = opts.geometry ?? measureGeometry(el);
+      if (!glow) {
+        paintGlow(0, 0, 0, geometry);
+        return;
+      }
+      const rect = el.getBoundingClientRect();
+      paintGlow(
+        glow.pageX - (rect.left + rect.width / 2),
+        glow.pageY - (rect.top + rect.height / 2),
+        glow.strength,
+        geometry,
+      );
     },
     setMorph(next) {
       morph = next && next.smoothing > 0 ? next : null;

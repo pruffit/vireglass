@@ -1,4 +1,4 @@
-import { BODY, DISPERSION, LENS, MEDIUM, RIM, SPECTRAL } from './law';
+import { ACCENT, BODY, DISPERSION, LENS, MEDIUM, RIM, SPECTRAL } from './law';
 import { VG_SDF } from './sdf';
 
 // The lens source is assembled HERE and ships to the native view as a prop: AGSL and SKSL are one
@@ -490,7 +490,7 @@ half4 main(float2 xy) {
   // tone — deeper over dark, lighter over light — and the content's texture still shows through
   // the color.
   if (u_accent.a > 0.0) {
-    float3 tone = u_accent.rgb * mix(0.88, 1.08, local);
+    float3 tone = u_accent.rgb * mix(${ACCENT.deep}, ${ACCENT.light}, local);
     float3 through = tone * (0.85 + 0.3 * vgLuma(rgb));
     rgb = mix(rgb, clamp(through, float3(0.0), float3(1.0)), u_accent.a * u_appear);
   }

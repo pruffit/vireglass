@@ -1,6 +1,7 @@
 export * from './material';
 export * from './optics';
 export * from './geometry';
+export * from './accent';
 export * from './appear';
 export * from './sdf';
 export * from './shadow-tint';

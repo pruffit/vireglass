@@ -1,3 +1,4 @@
+import { ACCENT } from './law';
 import {
   bevelDp,
   bevelFraction,
@@ -50,7 +51,7 @@ const NO_PROGRESS = -1;
 export type VireGlassAccent = { color: readonly [number, number, number]; amount?: number };
 
 /** Default tint fraction: the color reads, but content beneath it is still visible. */
-export const ACCENT_AMOUNT = 0.8;
+export const ACCENT_AMOUNT = ACCENT.amount;
 const NO_ACCENT = [0, 0, 0, 0] as const;
 
 

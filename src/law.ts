@@ -95,6 +95,13 @@ export const TOUCH = {
   waveOfTravel: 0.18,
   /** The lift-off ring is weaker than the one from touching down (§5). UNMEASURED ratio. */
   releaseWave: 0.6,
+  /**
+   * How far a glow reaches past the element it started on, as a multiple of that element's
+   * half-size. UNMEASURED: §5 says the glow spreads "onto any Liquid Glass elements nearby" and
+   * names no distance. This is the reach at which a neighbour in a tab bar still lights and one
+   * across the screen does not.
+   */
+  glowReach: 3,
 } as const;
 
 /** The bevel's profile — spherical, like a cap: `t / sqrt(1 - t² · k)`, clamped. A plain `t²` kept
@@ -184,4 +191,15 @@ export const SPECTRAL = {
   diffractionFringes: 4,
   /** The channel the hue is measured against, nm. Green is the eye's own reference. */
   referenceLambda: 550,
+} as const;
+
+/** Tinting (§7): a colour that is a property of the medium, not a fill over it. */
+export const ACCENT = {
+  /** The tone the colour takes over a dark backdrop and over a light one. "A range of tones mapped
+   *  to content brightness underneath", rather than one flat colour. */
+  deep: 0.88,
+  light: 1.08,
+  /** How much of the medium the colour occupies by default. Short of one, because the content has
+   *  to keep coming through: a fill "breaks the visual character of Liquid Glass" (@17:03). */
+  amount: 0.8,
 } as const;
