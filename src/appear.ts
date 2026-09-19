@@ -27,6 +27,16 @@ export function applyAppear(optics: VireGlassOptics, t: number): VireGlassOptics
     bodyDensity: optics.bodyDensity * a,
     dimming: optics.dimming * a,
     edgeLight: optics.edgeLight * a,
+    // A floor on how far the element must stand out from its backdrop (§3). Left alone it holds
+    // the element visible at t = 0, which is the opposite of what materialising means.
+    presence: optics.presence * a,
+    // The spectral trio is lensing too — §1's "light bending and lensing" is not only the
+    // displacement. The fringe map and the per-channel split are drawn from these, and a filter
+    // graph that still paints them is an element that is not there but is casting a rainbow.
+    dispersion: optics.dispersion * a,
+    iridescence: optics.iridescence * a,
+    diffraction: optics.diffraction * a,
+    tintStrength: optics.tintStrength * a,
     // Legibility is a REQUIREMENT, not an effect: an element still arriving has no ink on it yet,
     // and holding a demand it cannot meet would darken the body exactly while it should be
     // clearing. It fades with the rest.

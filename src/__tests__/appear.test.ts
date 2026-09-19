@@ -28,6 +28,33 @@ describe('materialising, not fading (docs/reference.md §1)', () => {
     expect(none.dimming).toBe(0);
   });
 
+  // Every one of these was left behind by the first version, and every one of them paints. The
+  // browser gate is what caught it: an element at t = 0 was still measurably visible over the page
+  // (check-dom's "untouched" figure), because presence held it apart from its backdrop and the
+  // spectral trio went on drawing a fringe around nothing.
+  it('leaves nothing that still paints at zero', () => {
+    const none = applyAppear(base, 0);
+    expect(none.presence).toBe(0);
+    expect(none.dispersion).toBe(0);
+    expect(none.iridescence).toBe(0);
+    expect(none.diffraction).toBe(0);
+    expect(none.tintStrength).toBe(0);
+    expect(none.legibility).toBe(0);
+    expect(none.edgeLight).toBe(0);
+  });
+
+  // The ones that say WHAT the material is rather than how much of it there is. Scaling them would
+  // make a half-materialised element a different glass, not less of the same one.
+  it('does not change what kind of glass it is on the way in', () => {
+    const half = applyAppear(base, 0.5);
+    expect(half.ior).toBe(base.ior);
+    expect(half.thicknessDp).toBe(base.thicknessDp);
+    expect(half.bevelDp).toBe(base.bevelDp);
+    expect(half.film).toBe(base.film);
+    expect(half.ink).toBe(base.ink);
+    expect(half.refractionScale).toBe(base.refractionScale);
+  });
+
   it('does not touch the shape, only the optics', () => {
     const half = applyAppear(base, 0.5);
     // Geometry-derived values stay put: an arriving element is not a smaller one.

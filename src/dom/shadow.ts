@@ -31,12 +31,19 @@ const to255 = (v: number) => Math.round(Math.min(Math.max(v, 0), 1) * 255);
  * much like it would in the physical world" (219 @8:22). A black shadow leaves an element over
  * colourful content hanging above a grey blob, which is the one thing that reads as pasted on.
  */
+/**
+ * `appear` is the same gate the surface shader puts on the shadow (`u_shadow * u_appear`, line
+ * 176). An element that is not there yet does not cast: a shadow under nothing is the one part of
+ * materialising that gives the trick away.
+ */
 export function boxShadowCss(
   geometry: VireGlassGeometry,
   sample: BackdropSample | { busy: number },
+  appear = 1,
 ): string {
   const reach = shadowReachDp(geometry);
-  const alpha = shadowAlphaFrom(sample);
+  const present = appear < 0 ? 0 : appear > 1 ? 1 : appear;
+  const alpha = shadowAlphaFrom(sample) * present;
   const ambient = 'luma' in sample ? ambientFrom(sample as BackdropSample) : null;
   if (!ambient) return `0 0 ${reach.toFixed(1)}px rgba(0, 0, 0, ${alpha.toFixed(3)})`;
 

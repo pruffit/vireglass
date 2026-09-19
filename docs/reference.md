@@ -186,6 +186,26 @@ settles into in the interface.
   case (S): the logo was removed from the header and let it scroll away with the content — the
   brand is carried by the content itself, not by a badge on top of it.
 
+### Which layer the glass belongs in
+
+219 @11:50 states it among the principles: glass is "best reserved for the NAVIGATION layer",
+and you should "avoid putting glass in the content layer and avoid putting [it] within or on top
+of other glass elements to maintain hierarchy and prevent clutter."
+
+Containment and overlap are not the same failure. Two panes in the stacking order — a sheet over
+a bar — is what two panes of glass actually do, and 219 calls it a hierarchy mistake rather than a
+rendering one. Glass CONTAINED IN glass is broken output: an adopting team (S 32:54, "Building
+CNN for iOS 26") reported it as their first lesson — "applying the glass effect to both a parent
+and child views led to visual redundancy. Double translucency, layered blur, and unpredictable
+rendering." On any renderer that samples what is already composited behind an element, the inner
+pane's backdrop is the outer pane's output: the refraction lands twice on the same pixels and the
+blurs multiply.
+
+The way to put glass on something that is NOT chrome is to have it arrive only under the finger
+(S 42:34, "Building Tide Guide"): "this effect doesn't change the appearance of a view until you
+interact with it... as you start sliding it, the interactive effect adds a soft, subtle highlight
+beneath the wave." At rest there is no glass in the content layer, because there is no glass.
+
 ## 8. Bars on wide screens (iPhone Duo)
 
 - On a wide screen, navigation and toolbars move SIDEWAYS, into a vertical strip: vertical space
@@ -261,3 +281,5 @@ content scrolls under a bar (219 @8:52).
 | one bevel size for every element | bigger element, thicker glass |
 | opacity fade on appearance | the lens builds up from zero |
 | solid color fill | tint keyed to backdrop lightness |
+| glass nested inside glass | one pane, or glass that arrives on touch |
+| permanent glass on a content control | the interactive variant — nothing at rest |

@@ -29,6 +29,7 @@ import { accentAmount, accentTone } from '../accent';
 import type { VireGlassAccent } from '../adapters';
 import { concentricRadius } from '../concentric';
 import { RIM_WIDTH_PX, contrastRimCss, rimGradientCss } from './rim';
+import { GLASS_ATTR, warnIfNested } from './nesting';
 import { REST_LIGHT } from '../adapters';
 import { refractionStrength } from '../optics';
 import { DISPERSION, TOUCH } from '../law';
@@ -67,7 +68,7 @@ function waveImpulse(g: VireGlassGeometry): number {
 }
 
 const STYLE_ATTR = 'data-vireglass-styles';
-const GLASS_ATTR = 'data-vireglass';
+
 
 /**
  * The hairline rim (docs/reference.md §2) needs a layer of its own over the element. A stylesheet
@@ -311,6 +312,16 @@ export type AttachGlassOptions = {
   accent?: VireGlassAccent;
   /** Initial presence, 0 to 1 (§1). Defaults to fully present. */
   appear?: number;
+  /**
+   * `'interactive'` is glass that is not there until it is touched (S 42:34, "Building Tide Guide"): "this effect doesn't
+   * change the appearance of a view until you interact with it... as you start sliding it, the
+   * interactive effect adds a soft, subtle highlight". The element carries no material at rest and
+   * materialises under the finger — §1's materialising, driven by touch instead of by the host.
+   *
+   * It is what makes glass usable on a control that is not chrome: a slider thumb, a chart scrubber,
+   * a card. Permanent glass there would be glass in the content layer, which §6 says to avoid.
+   */
+  variant?: 'present' | 'interactive';
   /** Called while this element is being touched, so a group can carry the glow to its neighbours
    *  (§5). Wired for you by `createGlassGroup`. */
   onGlow?: (glow: { pageX: number; pageY: number; strength: number } | null) => void;
@@ -369,7 +380,8 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   let destroyed = false;
   let mapKey = '';
   let morph: GlassMorph | null = null;
-  let appear = opts.appear ?? 1;
+  const onlyWhenTouched = opts.variant === 'interactive';
+  let appear = onlyWhenTouched ? 0 : (opts.appear ?? 1);
   let accent = opts.accent;
   // Read once at attach, then followed: a setting turned on while the page is open has to reach
   // the material, not wait for a reload.
@@ -380,6 +392,8 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     deform.setElastic(elasticAllowed(opts.accessibility ?? a11y));
     apply();
   });
+
+  warnIfNested(el);
 
   ensureRimStyles();
   el.setAttribute(GLASS_ATTR, '');
@@ -473,7 +487,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       '--vireglass-rim',
       (opts.accessibility ?? a11y).increaseContrast
         ? contrastRimCss(pole, contrastRimLuma(pole))
-        : rimGradientCss(opticsNow, [tr, tg, tb], opts.light ?? REST_LIGHT),
+        : rimGradientCss(opticsNow, [tr, tg, tb], opts.light ?? REST_LIGHT, appear),
     );
     el.style.setProperty('--vireglass-rim-width', `${RIM_WIDTH_PX}px`);
 
@@ -482,7 +496,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     el.style.setProperty('--vireglass-radius', `${geometry.cornerRadius}px`);
     el.style.setProperty('--vireglass-radius-min', `${concentricRadius(geometry.cornerRadius, geometry.cornerRadius, 0)}px`);
 
-    const shadow = boxShadowCss(geometry, sample);
+    const shadow = boxShadowCss(geometry, sample, appear);
     el.style.setProperty('--vireglass-shadow', shadow);
     if (opts.shadow !== false) el.style.setProperty('box-shadow', shadow);
   }
@@ -577,6 +591,10 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     lastFrameAt = now;
     deform.step(dt);
     const s = deform.sample();
+    // The interactive variant materialises with the touch rather than being held present. `active`
+    // rather than `press`: press is the depth of the dent, active is simply whether a finger is
+    // there, and the material arriving has to track the second.
+    if (onlyWhenTouched) appear = s.active;
     paintInteraction(s);
     if (deform.idle()) {
       interacting = false;

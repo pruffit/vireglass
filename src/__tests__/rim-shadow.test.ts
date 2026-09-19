@@ -4,6 +4,7 @@ import { MATERIAL_PRESETS, resolveOptics } from '../material';
 import { lightConicAngle, rimGradientCss, rimLobe } from '../dom/rim';
 import { boxShadowCss, shadowAlphaFrom } from '../dom/shadow';
 import { resolveBody, withPresence } from '../dom/body';
+import { RIM } from '../law';
 
 describe('adaptive shadow (docs/reference.md §4)', () => {
   it('lands on the two densities measured off the reference frames', () => {
@@ -29,6 +30,11 @@ describe('adaptive shadow (docs/reference.md §4)', () => {
     expect(small.startsWith('0 0 ')).toBe(true);
   });
 });
+
+/** Every alpha in a conic-gradient string, in order. */
+function alphas(css: string): number[] {
+  return [...css.matchAll(/rgba\([^)]*,\s*([\d.]+)\)/g)].map((m) => Number(m[1]));
+}
 
 describe('rim light (docs/reference.md §2)', () => {
   it('points the gradient at the light', () => {
@@ -61,7 +67,23 @@ describe('rim light (docs/reference.md §2)', () => {
     const optics = resolveOptics(MATERIAL_PRESETS.glass);
     const css = rimGradientCss(optics, [0.5, 0.5, 0.5], [0, -1]);
     // The side of the ring, away from both arcs, is the dark edge iOS 27 made its own layer.
-    expect(css).toContain('rgba(0,0,0,0.22)');
+    // Matched on the value, not its spelling: the alpha is formatted, and a test that pins the
+    // formatting fails on a change that moved nothing.
+    const darkest = Math.min(...alphas(css));
+    expect(darkest).toBeCloseTo(RIM.darkEdge, 3);
+    expect(css).toContain('rgba(0,0,0,');
+  });
+
+  // §1: an element that is not fully there yet is not yet outlined either. The dark edge is the
+  // part that survives facing away from the light, so a rim left unscaled draws a hairline around
+  // nothing — which is what the browser gate caught.
+  it('fades with the element rather than outlining an absent one', () => {
+    const optics = resolveOptics(MATERIAL_PRESETS.glass);
+    const present = alphas(rimGradientCss(optics, [0.5, 0.5, 0.5], [0, -1], 1));
+    const half = alphas(rimGradientCss(optics, [0.5, 0.5, 0.5], [0, -1], 0.5));
+    const absent = alphas(rimGradientCss(optics, [0.5, 0.5, 0.5], [0, -1], 0));
+    expect(Math.max(...half)).toBeCloseTo(Math.max(...present) * 0.5, 3);
+    expect(Math.max(...absent)).toBe(0);
   });
 });
 

@@ -51,7 +51,9 @@ export function rimGradientCss(
   optics: VireGlassOptics,
   ambient: RimAmbient,
   light: readonly [number, number],
+  appear = 1,
 ): string {
+  const present = clamp01(appear);
   const start = lightConicAngle(light);
   const [ar, ag, ab] = ambient;
   const stops: string[] = [];
@@ -68,9 +70,13 @@ export function rimGradientCss(
     const g = ag + (1 - ag) * lift;
     const b = ab + (1 - ab) * clamp01(lift - fringe);
 
-    const alpha = clamp01(DARK_EDGE + lift * (1 - DARK_EDGE));
+    // Scaled, not floored: the dark edge is the one part of the rim that survives facing away from
+    // the light, so leaving it unscaled leaves a hairline drawn around an element that is not there.
+    const alpha = clamp01(DARK_EDGE + lift * (1 - DARK_EDGE)) * present;
     // Below the arcs the line is the dark edge itself, not a dim copy of the environment.
-    const colour = lift > 0.001 ? `rgba(${to255(r)},${to255(g)},${to255(b)},${alpha.toFixed(3)})` : `rgba(0,0,0,${DARK_EDGE})`;
+    const colour = lift > 0.001
+      ? `rgba(${to255(r)},${to255(g)},${to255(b)},${alpha.toFixed(3)})`
+      : `rgba(0,0,0,${alpha.toFixed(3)})`;
     stops.push(`${colour} ${angle.toFixed(1)}deg`);
   }
 

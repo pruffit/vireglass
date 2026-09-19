@@ -94,6 +94,29 @@ shape costs under 1.5 ms.
 A scroll costs `update`, which is the probe and the CSS writes — the map is untouched because the
 backdrop is not one of its inputs.
 
+## Glass that is not there until you touch it
+
+`variant: 'interactive'` attaches the material and leaves the element alone until a finger
+arrives, then materialises it under the touch and takes it away again on release. It is how glass
+goes on something that is not chrome — a scrubber, a slider thumb, a card — without putting
+permanent glass in the content layer, which §7 says to avoid.
+
+```js
+attachGlass(thumb, { material: MATERIAL_PRESETS.glass, variant: 'interactive' });
+```
+
+"Absent" is measured, not asserted: `check:dom` screenshots the element untouched and compares it
+to the same page with no glass attached at all, and fails on any difference. That gate is what
+caught `setAppear(0)` leaving a rim, a shadow, a presence floor and a spectral fringe behind.
+
+## One pane, not two
+
+Attaching glass to an element that is already inside glass warns on the console and names the
+outer element. The warning is not a style rule: `backdrop-filter` samples what is composited
+behind an element, so a nested pane's backdrop is the outer pane's output — the refraction lands
+twice on the same pixels and the blurs multiply. Overlapping panes are fine and are not warned
+about; that is what two sheets of glass do.
+
 ## Limits
 
 **The refraction is Chromium-only today.** Firefox does not support a filter reference in

@@ -11,6 +11,7 @@
 //   full   the material as specified
 //   flat   the same material at ior = 1 — blur and body unchanged, no refraction
 //   none   no glass
+//   rest   the interactive variant, untouched
 //
 // `full` against `none` says the material does something. `full` against `flat` ISOLATES the
 // displacement, which is the only way to check §1's claim that the optics live at the rim. The
@@ -60,7 +61,13 @@ const FIXTURE = `<!doctype html>
       ? { ...MATERIAL_PRESETS.glass, ior: 1 }
       : MATERIAL_PRESETS.glass;
     live = attachGlass(document.getElementById('glass'), {
-      material, sample, interactive: false, shadow: false,
+      material,
+      sample,
+      // 'rest' keeps the pointer listeners — the claim is that an ATTACHED interactive element
+      // shows nothing until it is touched, and detaching them would prove a different thing.
+      interactive: which === 'rest',
+      shadow: which === 'rest' ? false : false,
+      variant: which === 'rest' ? 'interactive' : 'present',
     });
   };
 
@@ -145,6 +152,7 @@ try {
   const full = await shoot('full');
   const flat = await shoot('flat');
   const none = await shoot('none');
+  const rest = await shoot('rest');
 
   const diff = (a, b, rect) =>
     page.evaluate(([x, y, r, fn]) => new Function(`return ${fn}`)()(x, y, r), [a, b, rect, DIFF]);
@@ -160,10 +168,15 @@ try {
   const rimShift = await diff(full, flat, rimBand);
   const middleShift = await diff(full, flat, middle);
   const leak = await diff(full, none, beyond);
+  // §7: glass that is not there until it is touched. The whole element, not a band — at rest the
+  // page under it has to be the page.
+  const box = { x: BOX.x, y: BOX.y, w: BOX.w, h: BOX.h };
+  const atRest = await diff(rest, none, box);
 
   console.log(
     `check-dom: material ${alive.toFixed(2)} | displacement rim ${rimShift.toFixed(2)} ` +
-      `middle ${middleShift.toFixed(2)} | outside ${leak.toFixed(2)} (mean |delta| per pixel)`,
+      `middle ${middleShift.toFixed(2)} | outside ${leak.toFixed(2)} | untouched ${atRest.toFixed(2)} ` +
+      `(mean |delta| per pixel)`,
   );
 
   // 1. The E-34 guard: the material has to do something at all.
@@ -180,8 +193,12 @@ try {
   //    around, and it stays invisible until someone looks outside the element.
   if (leak > 0.5) fail(`the page changed outside the element (${leak.toFixed(2)}) — the filter is leaking past its box`);
 
+  // 4. §7: the way to put glass on a content control is for there to be no glass until a finger
+  //    arrives. An element that shows anything at rest is permanent glass in the content layer.
+  if (atRest > 0.5) fail(`the interactive variant is visible untouched (${atRest.toFixed(2)}) — that is glass in the content layer`);
+
   if (!failed) {
-    console.log('check-dom: the glass bends live DOM at its rim, leaves its middle alone, and touches nothing outside itself');
+    console.log('check-dom: the glass bends live DOM at its rim, leaves its middle alone, touches nothing outside itself, and the interactive variant is absent until touched');
   }
 } catch (error) {
   fail(String(error?.message ?? error));
