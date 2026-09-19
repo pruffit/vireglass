@@ -219,7 +219,7 @@ preference; `applyGlassScale` gives that preference its own axis, ultra clear to
 
 ```bash
 npm run typecheck
-npm test             # 244 tests
+npm test
 npm run check:glsl   # both shaders compile and link as GLSL ES 3.0
 npm run check:optics
 npm run check:law    # every calibrated number is in src/law.ts, cited or named unmeasured

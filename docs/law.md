@@ -29,7 +29,8 @@ It checks three things, and reports a fourth:
 - every law is read by someone — a constant nothing imports is one the material no longer obeys;
 - every `§N` in the source resolves to a section `reference.md` actually has;
 - no calibrated constant is left outside `law.ts`;
-- and it names every unmeasured value, every run.
+- and it names every unmeasured value, every run — and fails if this page or the README states a
+  different number, because a count written out in prose goes stale the moment a value is added.
 
 Today that last line reads **45 of 118**. That is the real state of the model, and it is meant to
 be uncomfortable. It was 9 until the constants hiding inside `optics.ts`, `geometry.ts` and

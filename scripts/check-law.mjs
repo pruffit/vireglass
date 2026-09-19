@@ -169,6 +169,19 @@ lawLines.forEach((line, index) => {
   if (/UNMEASURED/.test(block)) unmeasured.push(field[1]);
 });
 
+// A count written out in prose goes stale the moment a value is added, and a stale number in a
+// document that exists to be honest about the model is worse than no number. The documents state
+// it, so the gate owns it.
+const CLAIMS = ['docs/law.md', 'README.md'];
+const claim = `${unmeasured.length} of ${entries.length}`;
+const stale = CLAIMS.filter((file) => !readFileSync(join(ROOT, file), 'utf8').includes(claim));
+
+if (stale.length > 0) {
+  console.error(`check-law: the documents state a debt the law no longer has. It is now "${claim}".`);
+  for (const file of stale) console.error(`  ${file}`);
+  process.exit(1);
+}
+
 console.log(`check-law: ${entries.length} calibrated values, all read from src/law.ts`);
 console.log(`check-law: every citation resolves into docs/reference.md (${sections.size} sections)`);
 console.log(
