@@ -5,6 +5,13 @@
 First public release. The material had been developed inside a private product since
 August 2026; this is its extraction, unchanged in behaviour.
 
+### Entry points
+
+`vireglass` is the core and has no dependencies at all. `vireglass/web` is the WebGL2
+renderer. `vireglass/react` carries the one hook that needs React, so that importing the core
+never does. `vireglass/native` ships as source: the surface uses a Reanimated worklet, and
+worklets are compiled by the consumer's Babel plugin.
+
 ### What is in it
 
 - **Material model.** Glass described by causes — `ior`, `thickness`, `bevel`, `roughness`,
