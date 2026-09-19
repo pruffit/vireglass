@@ -264,6 +264,7 @@ canvas, and that the rim gathers what is behind it.
 | `docs/adr-001-rendering.md` | the rendering architecture decision and its evidence |
 | `docs/platform-parity.md` | how web and Android are kept numerically in agreement |
 | `docs/benchmarks.md` | measurement protocol, device, numbers |
+| `docs/dom.md` | the DOM renderer: the technique, what it renders, what it costs |
 | `docs/material-lab.md` | selected entries from the experiment journal |
 
 ## Calibration

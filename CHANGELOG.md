@@ -1,6 +1,34 @@
 # Changelog
 
-## Unreleased
+## 1.1.0
+
+Glass over live DOM, and the core becomes the single place the material is written down.
+
+### The spectral edge, and what the renderer costs
+
+Diffraction and interference looked impossible here: both are hues that vary across the bevel, and
+a filter graph cannot evaluate a function per pixel. But it can MULTIPLY by an image. Both are
+baked into one hue map and applied with an arithmetic composite, carrying headroom because a
+normalised hue exceeds one wherever a channel is boosted and eight bits would clip it to white.
+
+Nothing of the material is now unrendered on the web.
+
+Then the measurement, which had never been taken. A sheet cost 120 ms to attach and a frame of
+interaction rebuilt the whole map. Both from the same mistake: resolving the ELEMENT when the map
+only carries the bevel. Inside that band everything is constant and `feImage` stretches whatever it
+is given, so a sheet paid for 197 000 pixels of arithmetic to describe a profile eight samples
+wide. Building at the bevel's own resolution cut it five to twelve times — and `check:dom` reports
+the rim displacing MORE than before, because the profile is cleaner.
+
+Maps are cached across elements, since they are pure functions of geometry, optics and density. The
+second element of a shape costs under 1.5 ms where it cost 13 to 58.
+
+### Gates
+
+`check:law` — every calibrated value is written once, every section citation resolves into
+`docs/reference.md`, and every value without provenance is named out loud. `check:dom` — the glass
+demonstrably bends live DOM at its rim, leaves its middle alone, and touches nothing outside
+itself, measured from screenshots because `backdrop-filter` composites where script cannot reach.
 
 ### The core modules the DOM path was ignoring
 
