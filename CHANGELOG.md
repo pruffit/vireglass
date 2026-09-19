@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Glass over live DOM — `vireglass/dom`
+
+`attachGlass(el)` refracts the real page behind an element. No canvas, no second render of your
+UI. The displacement comes from the same material model the other two renderers use, handed to
+`backdrop-filter` as an SVG filter so the bending happens inside the compositor — the browser
+never gives page pixels to script, and it should not.
+
+Adaptation still runs, but its probe reads declared styles through `elementsFromPoint` and
+composites the background stack, because there are no pixels to measure. Exact for colour-defined
+surfaces, blind to images and video; pass your own `sample` there.
+
+Refraction is Chromium-only today — Firefox has closed the request as not planned, Safari has
+patches in flight — and everywhere else the same optics drive a blur-and-tint fallback, chosen by
+measurement rather than by user-agent string.
+
+Also adds `sdfRoundedRect` and `sdfRoundedRectGradient` to the core: the JS twin of the shader's
+geometry, so the DOM path bends along the same silhouette instead of a second, drifting one.
+
 ## 1.0.0
 
 First stable release. The material had been developed inside a private product since

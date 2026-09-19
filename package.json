@@ -45,6 +45,11 @@
       "import": "./dist/react.js",
       "require": "./dist/react.cjs"
     },
+    "./dom": {
+      "types": "./dist/dom.d.ts",
+      "import": "./dist/dom.js",
+      "require": "./dist/dom.cjs"
+    },
     "./native": {
       "types": "./src/native/index.ts",
       "default": "./src/native/index.ts"

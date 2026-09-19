@@ -147,3 +147,42 @@ float vgProgress(float2 p, float2 halfSize, float progress) {
  *  offset) and the surface (visualizing the displacement field in debug mode) — otherwise they'd
  *  drift apart. */
 export const VG_FALLOFF = 2.6;
+
+// JS twin of `vgRoundRect`/`vgRoundRectNormal` above, for targets with no GPU to run the shader on
+// (the DOM displacement map). Term-for-term against the GLSL text: a second geometry that behaves
+// differently is exactly the class of bug `check:optics` exists to catch on the shader side, and
+// there is no such gate for this one.
+
+/** Signed distance from `(x, y)` to a rounded rect of size `w`×`h` centered on the origin. */
+export function sdfRoundedRect(x: number, y: number, w: number, h: number, r: number): number {
+  const qx = Math.abs(x) - w / 2 + r;
+  const qy = Math.abs(y) - h / 2 + r;
+  return Math.min(Math.max(qx, qy), 0) + Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) - r;
+}
+
+/**
+ * Closed-form gradient of `sdfRoundedRect`, unit length everywhere except the exact center (where
+ * it's genuinely undefined — the medial axis of the shape). NOT finite differences: differencing
+ * quantizes the gradient to the sampling step, and the displacement map needs sub-pixel accuracy
+ * right at the rim.
+ */
+export function sdfRoundedRectGradient(x: number, y: number, w: number, h: number, r: number): [number, number] {
+  const qx = Math.abs(x) - w / 2 + r;
+  const qy = Math.abs(y) - h / 2 + r;
+  let gx: number;
+  let gy: number;
+  if (qx > 0 && qy > 0) {
+    const cx = Math.max(qx, 0.0001);
+    const cy = Math.max(qy, 0.0001);
+    const len = Math.hypot(cx, cy);
+    gx = cx / len;
+    gy = cy / len;
+  } else if (qx > qy) {
+    gx = 1;
+    gy = 0;
+  } else {
+    gx = 0;
+    gy = 1;
+  }
+  return [gx * Math.sign(x), gy * Math.sign(y)];
+}

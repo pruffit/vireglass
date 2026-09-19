@@ -83,10 +83,51 @@ renderer.render({
 `render` also returns one backdrop probe per element — mean lightness, 10th/90th percentiles
 and variegation of what lies under it. That is what the adaptation layer reads.
 
-> **WebGL does not see the DOM.** The lens refracts only what the renderer drew itself, which is
-> why you hand it a `scene` callback that rasterises your backdrop into a 2D canvas. Glass over
-> live HTML is not supported in this release. If that is what you came for, this package does
-> not do it yet.
+> **WebGL does not see the DOM**, so this renderer refracts only what it drew itself — hence the
+> `scene` callback. For glass over your actual page, use `vireglass/dom` below.
+
+## Live DOM
+
+```ts
+import { attachGlass } from 'vireglass/dom';
+
+const glass = attachGlass(document.querySelector('.player'), {
+  material: MATERIAL_PRESETS.glass,
+});
+// glass.update() after a scroll or a theme change, glass.destroy() on unmount
+```
+
+The element now refracts the real page behind it. No canvas, no duplicate render of your UI.
+
+It works by handing `backdrop-filter` an SVG filter whose `feDisplacementMap` bends the backdrop
+along a map derived from the same material model the other renderers use. The browser never gives
+the page's pixels to script — that boundary is what stops a page reading your cross-origin frames
+and visited links — so the displacement happens inside the compositor, where the pixels already are.
+
+`attachGlass` writes CSS custom properties you can use directly:
+
+| | |
+|---|---|
+| `--vireglass-ink-color` | ink colour for this backdrop, already resolved |
+| `--vireglass-body-color` | the glass body: density from the model, hue from the surroundings |
+| `--vireglass-tint-color` | ambient colour alone |
+| `--vireglass-ink`, `--vireglass-tint`, `--vireglass-body-density` | the model's raw numbers |
+
+Three things to know before you reach for it:
+
+- **It renders part of the material, not all of it.** Refraction, the roughness prefilter, body
+  density and ambient pickup come through; the Fresnel rim, specular highlight, dispersion,
+  iridescence and diffraction do not — an SVG filter graph has nowhere to put them. The web lab
+  and the Android renderer remain the full article.
+
+- **The refraction is Chromium-only today.** Firefox does not support a filter reference in
+  `backdrop-filter` and has closed the request as not planned; Safari does not yet, though WebKit
+  has patches in flight. Elsewhere `attachGlass` falls back to blur, saturation and tint from the
+  same optics — detected by measurement, never by user-agent string.
+- **There is no pixel probe, so adaptation reads declared styles.** The grid under the element is
+  sampled through `elementsFromPoint` and the background stack is composited. That is exact for
+  colour-defined surfaces and blind to images, video and canvas — pass your own `sample` there,
+  since your app already knows its cover-art accent.
 
 ## Android / React Native
 
@@ -171,7 +212,9 @@ canvas, and that the rim gathers what is behind it.
 
 ## Limits — read these before adopting
 
-- **No glass over live DOM on the web.** See above.
+- **Glass over live DOM refracts in Chromium only**, and falls back to blur elsewhere. Its
+  adaptation reads declared styles rather than pixels, so images and video need a supplied
+  `sample`. See *Live DOM* above.
 - **Refraction needs Android 13+** (`RenderEffect`). Below that it degrades to an affine
   magnifier: a loupe, not a lens.
 - **No iOS.** There is no public API for reading what is behind a view.
