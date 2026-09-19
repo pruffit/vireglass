@@ -22,13 +22,13 @@ import { supportsSvgBackdropFilter } from './support';
 import { boxShadowCss } from './shadow';
 import { resolveBody, withPresence } from './body';
 import { systemAccessibility, watchAccessibility } from './preferences';
-import { applyAccessibility, type VireGlassAccessibility } from '../accessibility';
+import { applyAccessibility, contrastRimLuma, elasticAllowed, type VireGlassAccessibility } from '../accessibility';
 import { applyGlassScale, GLASS_SCALE_DEFAULT } from '../glass-scale';
 import { applyAppear } from '../appear';
 import { accentAmount, accentTone } from '../accent';
 import type { VireGlassAccent } from '../adapters';
 import { concentricRadius } from '../concentric';
-import { RIM_WIDTH_PX, rimGradientCss } from './rim';
+import { RIM_WIDTH_PX, contrastRimCss, rimGradientCss } from './rim';
 import { REST_LIGHT } from '../adapters';
 import { refractionStrength } from '../optics';
 import { DISPERSION, TOUCH } from '../law';
@@ -377,6 +377,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   const stopWatchingA11y = watchAccessibility((next) => {
     a11y = next;
     mapKey = '';
+    deform.setElastic(elasticAllowed(opts.accessibility ?? a11y));
     apply();
   });
 
@@ -464,7 +465,16 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     // Rim and shadow follow the SAMPLE, not just the geometry, so they sit outside the map's
     // cache key: the environment they take their colour and density from moves under a scroll
     // while the silhouette does not.
-    el.style.setProperty('--vireglass-rim', rimGradientCss(opticsNow, [tr, tg, tb], opts.light ?? REST_LIGHT));
+    // §9: under increased contrast the hairline stops reporting where the light is and starts
+    // separating the element from what is behind it, so it is measured from the body, not the
+    // environment.
+    const pole = withPresence(resolveBody(opticsNow, sample, light ? 1 : 0), opticsNow, sample).tintLuma;
+    el.style.setProperty(
+      '--vireglass-rim',
+      (opts.accessibility ?? a11y).increaseContrast
+        ? contrastRimCss(pole, contrastRimLuma(pole))
+        : rimGradientCss(opticsNow, [tr, tg, tb], opts.light ?? REST_LIGHT),
+    );
     el.style.setProperty('--vireglass-rim-width', `${RIM_WIDTH_PX}px`);
 
     // §11: a rounded child inside glass has to be concentric with it, or the two curves fight.
@@ -482,7 +492,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   // INTERACTION (docs/reference.md §5). The physics is the core's — `createDeform` carries the
   // spring, the press attack and the wave, at its own fixed step. What lives here is only the
   // plumbing: pointer in, map and glow out.
-  const deform = createDeform();
+  const deform = createDeform({ elastic: elasticAllowed(opts.accessibility ?? a11y) });
   let frame: number | null = null;
   let lastFrameAt = 0;
   let interacting = false;
@@ -582,9 +592,6 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   }
 
   function run(): void {
-    // §9: reduced motion turns the material's springiness off. It is the one accessibility setting
-    // that leaves optics alone — it is about motion, so it applies where motion is computed.
-    if ((opts.accessibility ?? a11y).reduceMotion) return;
     if (frame === null && !destroyed) frame = requestAnimationFrame(tick);
   }
 

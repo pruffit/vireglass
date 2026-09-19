@@ -208,12 +208,16 @@ System settings are MODIFIERS of the material: they change its layers but don't 
 
 - **Reduce Transparency** — the glass turns more matte and hides what's underneath it more
   strongly (219 @18:22). A vertical bar that has no background in its normal state gets one under
-  this setting (B 10:36).
+  this setting (B 10:07).
 - **Increase Contrast** — the element shifts mostly to black or white and picks up a contrasting
   outline around its silhouette (219 @18:29). Specifically an outline, not just a flat fill of the
   body.
 - **Reduce Motion** — effect intensity drops, and the material's elasticity turns off entirely
-  (219 @18:35). This is about motion, not optics.
+  (219 @18:35). This is about motion, not optics. The elastic properties are the ones that
+  overshoot and oscillate: the spring that lags the finger and the ripple that crosses the
+  surface. The press is neither — it is what lights an element from within (219 @12:11), which is
+  light rather than movement, so it stays and is damped. An element that stops answering a finger
+  under this setting is not reduced motion, it is no feedback.
 - The settings apply to ALL the glass at once (219 @18:45), and the Clear variant is no
   exception: under Increase Contrast it too moves to the edge of the scale — the "variants don't
   mix" rule gives way to what the person themselves asked for.

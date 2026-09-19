@@ -1,8 +1,9 @@
 // System accessibility on the web (docs/reference.md §9). The three settings the reference names
 // all have media queries, so nothing here has to be asked of the host: the browser already knows.
 //
-// `reduceMotion` is read but not applied to optics — §9 is explicit that it is about motion, and
-// motion is applied by whoever computes it. `attachGlass` uses it to hold the material still.
+// `reduceMotion` leaves optics alone — it is about motion, and motion is computed by the
+// deformation model, which takes it as `elastic: false`. The element keeps answering a finger; it
+// stops springing and rippling.
 import { NO_ACCESSIBILITY, type VireGlassAccessibility } from '../accessibility';
 
 const QUERIES = {

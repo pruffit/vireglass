@@ -78,3 +78,20 @@ export function rimGradientCss(
 }
 
 export const RIM_WIDTH_PX = RIM.widthPx;
+
+/**
+ * The border for increased contrast (§9: elements become "predominantly black or white" and are
+ * highlighted "with a contrasting border").
+ *
+ * Not a gradient: the two arcs above are a light source reflecting off a curved edge, and under
+ * this setting the edge is not reporting where the light is, it is separating the element from
+ * everything around it. It has to hold at every angle, including the one facing away from the key
+ * light where the ordinary rim falls back to a dim dark line.
+ */
+export function contrastRimCss(bodyLuma: number, rimLuma: number): string {
+  const v = to255(rimLuma);
+  // Opaque on purpose. A border that lets the backdrop through is the thing this setting exists
+  // to replace, and the body behind it is already at its own pole.
+  void bodyLuma;
+  return `conic-gradient(rgb(${v},${v},${v}) 0deg, rgb(${v},${v},${v}) 360deg)`;
+}

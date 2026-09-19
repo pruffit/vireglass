@@ -18,6 +18,8 @@
 //   dense glass.
 //   WAVE: touch and lift-off each throw a short ring that decays within a quarter second.
 
+import { ACCESSIBILITY } from './law';
+
 export type DeformSample = {
   /** Touch point relative to the element's center, CSS pixels. */
   touchX: number;
@@ -46,7 +48,17 @@ const PRESS_RELEASE = 0.16;
 const WAVE_DECAY = 0.22;
 const WAVE_TURNS_PER_SECOND = 3.0;
 
-export function createDeform() {
+/**
+ * `elastic: false` is reduced motion (§9): the spring and the ripple are the material's elastic
+ * properties and stop, the press stays and is damped. An element that goes dead under the setting
+ * would not be reduced motion — it would be no feedback at all, and the press is what lights the
+ * element from within (§5), which is light rather than movement.
+ */
+export type DeformOptions = { elastic?: boolean };
+
+export function createDeform(options: DeformOptions = {}) {
+  let elastic = options.elastic !== false;
+  let pressCeiling = elastic ? 1 : ACCESSIBILITY.stillPress;
   let touchX = 0;
   let touchY = 0;
   let targetTouchX = 0;
@@ -82,11 +94,11 @@ export function createDeform() {
     targetY = 0;
     // Impulses ADD UP rather than restart, and phase isn't reset: resetting it would cut off a
     // running wave mid-period, which is exactly what causes a jolt on rapid clicks.
-    waveAmp = Math.min(waveAmp + waveStart, waveStart * 1.6);
+    if (elastic) waveAmp = Math.min(waveAmp + waveStart, waveStart * 1.6);
   }
 
   function drag(dx: number, dy: number, limit: number): void {
-    if (!held) return;
+    if (!held || !elastic) return;
     const len = Math.hypot(dx, dy);
     // Travel saturates rather than clips: near the limit the finger keeps moving while the field
     // barely does — that's how a thick liquid behaves once it hits its limit.
@@ -100,7 +112,7 @@ export function createDeform() {
     held = false;
     targetX = 0;
     targetY = 0;
-    waveAmp = Math.min(waveAmp + waveStart, waveStart * 2);
+    if (elastic) waveAmp = Math.min(waveAmp + waveStart, waveStart * 2);
   }
 
   function integrate(dt: number): void {
@@ -111,7 +123,7 @@ export function createDeform() {
     pullX += vx * dt;
     pullY += vy * dt;
 
-    const pressTarget = held ? 1 : 0;
+    const pressTarget = held ? pressCeiling : 0;
     const tau = held ? PRESS_ATTACK : PRESS_RELEASE;
     press += (pressTarget - press) * (1 - Math.exp(-dt / tau));
     active += (pressTarget - active) * (1 - Math.exp(-dt / 0.09));
@@ -167,11 +179,29 @@ export function createDeform() {
     );
   }
 
+  /** The setting can be turned on while the page is open, and a deformation already in flight has
+   *  to stop rather than finish. */
+  function setElastic(on: boolean): void {
+    if (on === elastic) return;
+    elastic = on;
+    pressCeiling = on ? 1 : ACCESSIBILITY.stillPress;
+    if (!on) {
+      pullX = 0;
+      pullY = 0;
+      vx = 0;
+      vy = 0;
+      targetX = 0;
+      targetY = 0;
+      waveAmp = 0;
+      wavePhase = 0;
+    }
+  }
+
   function sample(): DeformSample {
     return { touchX, touchY, pullX, pullY, press, active, waveAmp, wavePhase };
   }
 
-  return { grab, drag, release, step, idle, sample };
+  return { grab, drag, release, step, idle, sample, setElastic };
 }
 
 /**

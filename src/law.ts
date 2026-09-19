@@ -203,3 +203,37 @@ export const ACCENT = {
    *  to keep coming through: a fill "breaks the visual character of Liquid Glass" (@17:03). */
   amount: 0.8,
 } as const;
+
+/**
+ * The system accessibility settings (§9). They are modifiers on the material's layers, so their
+ * calibration belongs in the law next to the layers they move — not as private constants in the
+ * module that happens to apply them.
+ */
+export const ACCESSIBILITY = {
+  /** Frost floor under reduced transparency: the glass gets "frostier" (§9). */
+  frostMinDp: 14,
+  /**
+   * Body floor under reduced transparency. B @10:07 is the stricter statement of the two — a bar
+   * "gets a background when reduce transparency is enabled" — so this is a background, not a
+   * thicker haze. UNMEASURED: neither source gives a figure.
+   */
+  obscureMin: 0.82,
+  /** Under increased contrast the element is "predominantly black or white" (§9): the body goes to
+   *  whichever pole its ink already points at, at a density that leaves it reading as that pole. */
+  contrastDensity: 0.94,
+  /** …and separates from the backdrop on its own, whatever is behind it. */
+  contrastPresence: 0.5,
+  /**
+   * The contrasting border §9 asks for, in units of lightness away from the body's own pole. The
+   * rim stops taking its colour from the environment and takes it from the element instead — an
+   * ambient hairline is not a contrasting border. UNMEASURED.
+   */
+  contrastRim: 0.85,
+  /**
+   * Press that survives reduced motion. §9 "decreases the intensity of some effects and disables
+   * any elastic properties": the spring and the ripple are elastic and go to zero, the press is an
+   * ease that carries the element's light, so it is damped rather than removed — an element that
+   * stops answering a finger altogether is not reduced motion, it is no feedback. UNMEASURED.
+   */
+  stillPress: 0.6,
+} as const;
