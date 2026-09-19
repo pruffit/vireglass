@@ -253,7 +253,14 @@ content scrolls under a bar (219 @8:52).
 
 - Content under the bar isn't clipped — it goes into a BLUR that grows toward the edge and
   dissolves into the background; floating titles, meanwhile, stay crisp (219 @9:12, frames at
-  552–576 s).
+  552–576 s). It is NOT an overlay. 356 @11:32: "they don't block or darken like overlays. They
+  simply clarify where UI and content meet, and shouldn't be used where there aren't any floating
+  UI elements." The blur is the effect; nothing is laid over the content.
+- Two styles across the system, "soft and hard", and they must not be mixed or stacked (356
+  @11:48). Soft is the default and covers both adaptive forms below. Hard is "a stronger, more
+  opaque boundary", mostly macOS — pinned table headers, interactive text, controls without
+  backgrounds (356 @12:09). One per view; in a split view each pane may have its own, at the same
+  height (356 @12:22).
 - When dark content scrolls under the glass and it switches to the dark style, the dissolve is
   replaced by a light DARKENING (219 @9:28) — the same move as ink polarity.
 - With no scrolling, there's no effect at all: the bar sits on a plain background.

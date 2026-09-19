@@ -1,6 +1,6 @@
 # The law
 
-`src/law.ts` holds every calibrated number in the material — 113 of them, in 20 groups —
+`src/law.ts` holds every calibrated number in the material — 118 of them, in 20 groups —
 and nothing else in the source is allowed to hold one. Renderers, shaders and helpers read from
 it; the shader templates interpolate it into their GLSL and AGSL, so the same constant reaches
 the web, Android and the DOM path without being copied.
@@ -31,7 +31,7 @@ It checks three things, and reports a fourth:
 - no calibrated constant is left outside `law.ts`;
 - and it names every unmeasured value, every run.
 
-Today that last line reads **41 of 113**. That is the real state of the model, and it is meant to
+Today that last line reads **46 of 118**. That is the real state of the model, and it is meant to
 be uncomfortable. It was 9 until the constants hiding inside `optics.ts`, `geometry.ts` and
 `touch-response.ts` were brought in — the number did not get worse, the instrument got honest.
 

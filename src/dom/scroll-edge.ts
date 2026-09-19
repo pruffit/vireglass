@@ -1,6 +1,7 @@
 // The scroll edge (docs/reference.md §10). Not the material's job but the SCREEN's: it sits over
 // the content beneath a panel, and the glass sees a backdrop that is already dimmed. The rules are
 // the core's (`../scroll-edge`); this attaches them to a real scroller and a real element.
+import { SCROLL_EDGE } from '../law';
 import { scrollEdgeStrength, scrollEdgeStyle, type ScrollEdgeStyle } from '../scroll-edge';
 
 export type ScrollEdgeHandle = { update(): void; destroy(): void };
@@ -15,12 +16,40 @@ export type ScrollEdgeOptions = {
   ink?: () => number;
 };
 
-function gradientFor(style: ScrollEdgeStyle, side: 'top' | 'bottom', reach: number): string {
-  const direction = side === 'top' ? 'to bottom' : 'to top';
-  if (style === 'hard') return `linear-gradient(${direction}, rgba(0,0,0,0.18) 0 ${reach}px, transparent ${reach}px)`;
-  const tone = style === 'dim' ? '255,255,255' : '0,0,0';
-  const peak = style === 'dim' ? 0.1 : 0.22;
-  return `linear-gradient(${direction}, rgba(${tone},${peak}) 0%, rgba(${tone},0) 100%)`;
+/**
+ * What the effect actually is. 356 @11:32: "they don't block or darken like overlays."
+ *
+ * So the soft style is a BLUR with a mask, not a painted gradient: the content under the panel
+ * goes out of focus into the background, which is what 219 @9:16 means by dissolving it, and
+ * nothing is laid over it. The first version of this painted black at 22% down the ramp — an
+ * overlay, doing the one thing the reference names as wrong.
+ *
+ * `dim` is the other soft form and it does carry a tone, because 219 @9:33 asks for one: over dark
+ * content the glass turns dark and "the effect intelligently switches to apply a subtle dimming
+ * instead". Dimming is a reduction in luminance. This painted white, which lightened the content
+ * it was supposed to be pushing down.
+ */
+export type EdgePaint = { filter: string; mask: string; tone: string };
+
+export function paintFor(style: ScrollEdgeStyle, side: 'top' | 'bottom'): EdgePaint {
+  const direction = side === 'top' ? 'to top' : 'to bottom';
+  if (style === 'hard') {
+    // A flat band rather than a gradual fade (219 @9:41), and a stronger boundary (356 @12:12).
+    return {
+      filter: `blur(${SCROLL_EDGE.hardBlurDp}px)`,
+      mask: '',
+      tone: `linear-gradient(${direction}, rgba(0,0,0,${SCROLL_EDGE.hardAlpha}) 0 100%)`,
+    };
+  }
+  const ramp = `linear-gradient(${direction}, rgba(0,0,0,1) 0%, rgba(0,0,0,0) 100%)`;
+  return {
+    filter: `blur(${SCROLL_EDGE.dissolveBlurDp}px)`,
+    mask: ramp,
+    tone:
+      style === 'dim'
+        ? `linear-gradient(${direction}, rgba(0,0,0,${SCROLL_EDGE.dimAlpha}) 0%, rgba(0,0,0,0) 100%)`
+        : 'none',
+  };
 }
 
 /**
@@ -42,7 +71,18 @@ export function attachScrollEdge(
     const strength = scrollEdgeStrength(side, scroller.scrollTop, maxScroll);
     const inkLight = (opts.ink?.() ?? 1) > 0.5;
     const style = scrollEdgeStyle(inkLight, opts.pinned);
-    edgeEl.style.setProperty('background-image', gradientFor(style, side, 1));
+    const paint = paintFor(style, side);
+    // The blur is what dissolves the content; the mask is what makes it a ramp rather than a step.
+    edgeEl.style.setProperty('backdrop-filter', paint.filter);
+    edgeEl.style.setProperty('-webkit-backdrop-filter', paint.filter);
+    if (paint.mask) {
+      edgeEl.style.setProperty('mask-image', paint.mask);
+      edgeEl.style.setProperty('-webkit-mask-image', paint.mask);
+    } else {
+      edgeEl.style.removeProperty('mask-image');
+      edgeEl.style.removeProperty('-webkit-mask-image');
+    }
+    edgeEl.style.setProperty('background-image', paint.tone);
     edgeEl.style.setProperty('opacity', strength.toFixed(3));
   }
 
@@ -55,6 +95,10 @@ export function attachScrollEdge(
     destroy() {
       destroyed = true;
       scroller.removeEventListener('scroll', onScroll);
+      edgeEl.style.removeProperty('backdrop-filter');
+      edgeEl.style.removeProperty('-webkit-backdrop-filter');
+      edgeEl.style.removeProperty('mask-image');
+      edgeEl.style.removeProperty('-webkit-mask-image');
       edgeEl.style.removeProperty('background-image');
       edgeEl.style.removeProperty('opacity');
     },

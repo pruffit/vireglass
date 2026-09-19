@@ -278,7 +278,7 @@ timestamp so the claims can be checked. No Apple code, assets or footage is incl
 distributed with this package.
 
 Every calibrated number lives in `src/law.ts` with its provenance, and `check:law` names the ones
-that have none: **41 of 113** today. See [`docs/law.md`](docs/law.md).
+that have none: **46 of 118** today. See [`docs/law.md`](docs/law.md).
 
 ## License
 

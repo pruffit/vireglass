@@ -440,3 +440,29 @@ export const SCALE = {
   /** Body density at the fully tinted end: content under the glass has to be hidden. UNMEASURED. */
   tintedDensity: 0.9,
 } as const;
+
+/**
+ * The scroll edge (§10). 219 @9:16: as content scrolls under a glass element "the effect gently
+ * DISSOLVES the content into the background, lifting the glass visually above the moving content,
+ * and allowing floating elements like titles to always remain clear."
+ *
+ * 356 @11:32 says what it is not, and the first implementation here did exactly that: "they don't
+ * block or darken like overlays. They simply clarify where UI and content meet."
+ */
+export const SCROLL_EDGE = {
+  /** How far the content has to slide under the panel for the effect to fully engage, dp. */
+  engageDp: 24,
+  /** The blur the content dissolves into at the edge, dp. This is the effect itself — the content
+   *  goes out of focus into the background rather than being covered by anything. UNMEASURED. */
+  dissolveBlurDp: 10,
+  /**
+   * Over dark content the glass turns dark and 219 @9:33 switches the effect "to apply a subtle
+   * dimming instead". Dimming is a reduction in luminance: dark content under dark glass merges
+   * with it, and pushing the content down is what lets the glass sit above it. UNMEASURED.
+   */
+  dimAlpha: 0.1,
+  /** A pinned view under the panel (column headers) gets a flat band instead of a gradual fade
+   *  (219 @9:41) — "a stronger, more opaque boundary" (356 @12:12). UNMEASURED. */
+  hardBlurDp: 14,
+  hardAlpha: 0.18,
+} as const;
