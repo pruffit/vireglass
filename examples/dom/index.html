@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VireGlass over live DOM</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 14px/1.45 system-ui, -apple-system, Segoe UI, sans-serif;
+    background: #0b0d12;
+    color: #e9ecf4;
+  }
+  header { padding: 10px 20px 6px; }
+  h1 { font-size: 15px; margin: 0 0 4px; font-weight: 600; }
+  .sub { font-size: 12px; opacity: .6; }
+  .support { font-size: 11px; margin-top: 8px; font-family: ui-monospace, monospace; opacity: .8; }
+
+  /* The page behind the glass is ordinary markup: a scrolling list of real text and
+     real elements. Nothing is drawn into a canvas for the lens to read. */
+  .app { position: relative; height: 300px; margin: 0 20px 14px; border-radius: 14px;
+         overflow: hidden; background: #11141c; }
+  .scroll { position: absolute; inset: 0; overflow-y: auto; padding: 14px 14px 120px; }
+  .row { display: flex; gap: 11px; align-items: center; padding: 7px 8px; border-radius: 10px; }
+  .row:nth-child(odd) { background: rgba(255,255,255,.028); }
+  .art { width: 44px; height: 44px; border-radius: 8px; flex: none; }
+  .meta .t { font-weight: 600; font-size: 13px; }
+  .meta .a { font-size: 11.5px; opacity: .58; }
+  .band { height: 30px; margin: 10px 0; border-radius: 6px;
+          background: linear-gradient(90deg, #05070c, #f4f7ff); }
+
+  /* The glass itself: a normal element. attachGlass does the rest. */
+  .player {
+    position: absolute; left: 14px; right: 14px; bottom: 14px; height: 76px;
+    border-radius: 26px; display: flex; align-items: center; gap: 12px; padding: 0 18px;
+    color: var(--vireglass-ink-color, #fff);
+    background-color: var(--vireglass-body-color, transparent);
+  }
+  .player .art { width: 48px; height: 48px; }
+  .player .t { font-weight: 600; }
+  .player .a { font-size: 11.5px; opacity: .65; }
+
+  .controls { margin: 0 20px 24px; display: flex; gap: 8px; flex-wrap: wrap; }
+  button { font: inherit; font-size: 12px; padding: 6px 12px; border-radius: 8px;
+           border: 1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.06);
+           color: inherit; cursor: pointer; }
+  button:hover { background: rgba(255,255,255,.12); }
+</style>
+</head>
+<body>
+<header>
+  <h1>VireGlass over live DOM</h1>
+  <div class="sub">The bar at the bottom refracts the list behind it. The list is ordinary markup. Scroll it and watch the text bend at the rim; press and drag the bar to deform it.</div>
+  <div class="support" id="support">checking…</div>
+</header>
+
+<div class="app">
+  <div class="scroll" id="scroll"></div>
+  <div class="player" id="player">
+    <div class="art" style="background:linear-gradient(135deg,#7b5cff,#d14b9b)"></div>
+    <div>
+      <div class="t">A Love Supreme</div>
+      <div class="a">John Coltrane</div>
+    </div>
+  </div>
+</div>
+
+<div class="controls">
+  <button id="light">Light backdrop</button>
+  <button id="dark">Dark backdrop</button>
+  <button id="merge">Merge with a neighbour</button>
+  <button id="off">Detach glass</button>
+  <button id="on">Attach glass</button>
+</div>
+
+<script type="module">
+import { attachGlass, supportsBackdropFilter, supportsSvgBackdropFilter }
+  from '../../dist/dom.js';
+import { MATERIAL_PRESETS } from '../../dist/index.js';
+
+const ALBUMS = [
+  ['Kind of Blue', 'Miles Davis', '#e0553d'],
+  ['A Love Supreme', 'John Coltrane', '#3d8ae0'],
+  ['The Black Saint and the Sinner Lady', 'Charles Mingus', '#4fbf7a'],
+  ['Mingus Ah Um', 'Charles Mingus', '#c9a227'],
+  ['Out to Lunch!', 'Eric Dolphy', '#9b5de5'],
+  ['Blue Train', 'John Coltrane', '#f15bb5'],
+  ['Saxophone Colossus', 'Sonny Rollins', '#00bbf9'],
+  ['Money Jungle', 'Duke Ellington', '#ff8c42'],
+  ['Speak No Evil', 'Wayne Shorter', '#2ec4b6'],
+  ['Maiden Voyage', 'Herbie Hancock', '#e71d36'],
+];
+
+const scroll = document.getElementById('scroll');
+for (let i = 0; i < 4; i++) {
+  for (const [t, a, c] of ALBUMS) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.innerHTML =
+      `<div class="art" style="background:${c}"></div>` +
+      `<div class="meta"><div class="t">${t}</div><div class="a">${a}</div></div>`;
+    scroll.append(row);
+  }
+  // a hard black-to-white edge: the least forgiving thing to put under a lens
+  const band = document.createElement('div');
+  band.className = 'band';
+  scroll.append(band);
+}
+
+document.getElementById('support').textContent =
+  `backdrop-filter: ${supportsBackdropFilter()}   ` +
+  `svg filters in backdrop-filter: ${supportsSvgBackdropFilter()}   ` +
+  `dpr: ${window.devicePixelRatio}`;
+
+const player = document.getElementById('player');
+let handle = attachGlass(player, { material: MATERIAL_PRESETS.glass });
+
+scroll.addEventListener('scroll', () => handle?.update(), { passive: true });
+
+document.getElementById('light').onclick = () => {
+  document.querySelector('.app').style.background = '#eef1f7';
+  scroll.style.color = '#10131a';
+  handle?.update();
+};
+document.getElementById('dark').onclick = () => {
+  document.querySelector('.app').style.background = '#11141c';
+  scroll.style.color = '';
+  handle?.update();
+};
+let merged = false;
+document.getElementById('merge').onclick = () => {
+  merged = !merged;
+  handle?.setMorph(merged ? { smoothing: 34, shape: { offsetX: 150, offsetY: -78, width: 170, height: 92, cornerRadius: 28 } } : null);
+};
+
+document.getElementById('off').onclick = () => { handle?.destroy(); handle = null; };
+document.getElementById('on').onclick = () => {
+  if (!handle) handle = attachGlass(player, { material: MATERIAL_PRESETS.glass });
+};
+</script>
+</body>
+</html>

@@ -83,10 +83,72 @@ renderer.render({
 `render` also returns one backdrop probe per element — mean lightness, 10th/90th percentiles
 and variegation of what lies under it. That is what the adaptation layer reads.
 
-> **WebGL does not see the DOM.** The lens refracts only what the renderer drew itself, which is
-> why you hand it a `scene` callback that rasterises your backdrop into a 2D canvas. Glass over
-> live HTML is not supported in this release. If that is what you came for, this package does
-> not do it yet.
+> **WebGL does not see the DOM**, so this renderer refracts only what it drew itself — hence the
+> `scene` callback. For glass over your actual page, use `vireglass/dom` below.
+
+## Live DOM
+
+```ts
+import { attachGlass } from 'vireglass/dom';
+
+const glass = attachGlass(document.querySelector('.player'), {
+  material: MATERIAL_PRESETS.glass,
+});
+// glass.update() after a scroll or a theme change, glass.destroy() on unmount
+```
+
+The element now refracts the real page behind it. No canvas, no duplicate render of your UI.
+
+It works by handing `backdrop-filter` an SVG filter whose `feDisplacementMap` bends the backdrop
+along a map derived from the same material model the other renderers use. The browser never gives
+the page's pixels to script — that boundary is what stops a page reading your cross-origin frames
+and visited links — so the displacement happens inside the compositor, where the pixels already are.
+
+It carries the material, not a corner of it: refraction with per-channel dispersion, the rim with
+its two opposing arcs and dark edge, the adaptive shadow, the body under legibility and presence,
+and the finger response — press, drag, the release wave and the rise into glass.
+
+```ts
+glass.setMorph({ smoothing: 34, shape: { offsetX: 150, offsetY: -78, width: 170, height: 92, cornerRadius: 28 } });
+```
+
+Two shapes joined through the smooth union — §5's merging and splitting. What the shapes mean is
+your choreography; the material only knows how two silhouettes join.
+
+`attachGlass` writes CSS custom properties you can use directly:
+
+| | |
+|---|---|
+| `--vireglass-ink-color` | ink colour for this backdrop, already resolved |
+| `--vireglass-body-color` | the glass body: density from the model, hue from the surroundings |
+| `--vireglass-tint-color` | ambient colour alone |
+| `--vireglass-rim`, `--vireglass-rim-width` | the hairline's gradient, applied for you |
+| `--vireglass-shadow` | the adaptive shadow, also written to `box-shadow` unless you opt out |
+| `--vireglass-radius`, `--vireglass-radius-min` | for concentric children (§11) |
+| `--vireglass-ink`, `--vireglass-tint`, `--vireglass-body-density` | the model's raw numbers |
+
+The three system accessibility settings are read from the browser's own media queries and
+followed while the page is open — reduced transparency frosts the glass, increased contrast takes
+the element by its silhouette, reduced motion holds it still. A system setting outranks the
+material preset and the user's own clarity slider (`scale`), because the user needs contrast more
+than they need the look.
+
+Three things to know before you reach for it:
+
+- **It renders the whole material.** Refraction with per-channel dispersion, the rim with its two
+  opposing arcs and dark edge, the adaptive shadow, the body under legibility and presence, the
+  finger response, and the spectral edge — diffraction and interference baked into a hue map and
+  multiplied in, since a filter graph cannot evaluate a function per pixel but can multiply by an
+  image.
+
+- **The refraction is Chromium-only today.** Firefox does not support a filter reference in
+  `backdrop-filter` and has closed the request as not planned; Safari does not yet, though WebKit
+  has patches in flight. Elsewhere `attachGlass` falls back to blur, saturation and tint from the
+  same optics — detected by measurement, never by user-agent string.
+- **There is no pixel probe, so adaptation reads declared styles.** The grid under the element is
+  sampled through `elementsFromPoint` and the background stack is composited. That is exact for
+  colour-defined surfaces and blind to images, video and canvas — pass your own `sample` there,
+  since your app already knows its cover-art accent.
 
 ## Android / React Native
 
@@ -171,7 +233,9 @@ canvas, and that the rim gathers what is behind it.
 
 ## Limits — read these before adopting
 
-- **No glass over live DOM on the web.** See above.
+- **Glass over live DOM refracts in Chromium only**, and falls back to blur elsewhere. Its
+  adaptation reads declared styles rather than pixels, so images and video need a supplied
+  `sample`. See *Live DOM* above.
 - **Refraction needs Android 13+** (`RenderEffect`). Below that it degrades to an affine
   magnifier: a loupe, not a lens.
 - **No iOS.** There is no public API for reading what is behind a view.
@@ -200,6 +264,7 @@ canvas, and that the rim gathers what is behind it.
 | `docs/adr-001-rendering.md` | the rendering architecture decision and its evidence |
 | `docs/platform-parity.md` | how web and Android are kept numerically in agreement |
 | `docs/benchmarks.md` | measurement protocol, device, numbers |
+| `docs/dom.md` | the DOM renderer: the technique, what it renders, what it costs |
 | `docs/material-lab.md` | selected entries from the experiment journal |
 
 ## Calibration

@@ -472,6 +472,7 @@ const styles = StyleSheet.create({
   clip: { position: 'absolute', overflow: 'hidden' },
   canvas: { position: 'absolute' },
   scrim: { position: 'absolute', backgroundColor: '#0d0b09' },
-  // Opaque backdrop for the "glass off" state — color from the kit (§02, the reduced state).
+  // Opaque backdrop for the "glass off" state. The colour comes from the host kit's reduced
+  // state, which is not part of this package — a literal here rather than a dangling citation.
   opaque: { position: 'absolute', backgroundColor: '#0b0908' },
 });

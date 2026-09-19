@@ -1,6 +1,6 @@
 {
   "name": "vireglass",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A physically-derived liquid glass material for interfaces. One material model, one shader source, two render targets: WebGL2 and Android AGSL.",
   "license": "Apache-2.0",
   "author": "Danil Kotlaev",
@@ -45,6 +45,11 @@
       "import": "./dist/react.js",
       "require": "./dist/react.cjs"
     },
+    "./dom": {
+      "types": "./dist/dom.d.ts",
+      "import": "./dist/dom.js",
+      "require": "./dist/dom.cjs"
+    },
     "./native": {
       "types": "./src/native/index.ts",
       "default": "./src/native/index.ts"
@@ -56,6 +61,7 @@
   "types": "./dist/index.d.ts",
   "files": [
     "dist",
+    "docs",
     "src",
     "!src/__tests__",
     "android",
@@ -73,6 +79,9 @@
     "test:watch": "vitest",
     "check:glsl": "tsx scripts/check-glsl.mjs",
     "check:optics": "tsx scripts/check-optics.mjs",
+    "check:law": "node scripts/check-law.mjs",
+    "check:dom": "node scripts/check-dom.mjs",
+    "measure:dom": "node scripts/measure-dom.mjs",
     "prepare": "tsup"
   },
   "peerDependencies": {

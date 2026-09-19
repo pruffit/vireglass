@@ -33,5 +33,12 @@ jobs:
       - name: Optics stay within their envelope
         run: npm run check:optics
 
+      - name: Every calibrated value is written once
+        run: npm run check:law
+
       - name: Build
         run: npm run build
+
+      # After the build: it drives the published bundle in a real browser, not the source.
+      - name: The glass bends live DOM
+        run: npm run check:dom

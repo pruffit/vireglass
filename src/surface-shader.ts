@@ -1,3 +1,4 @@
+import { INK, MEDIUM, SHADOW_GAP } from './law';
 import { VG_FALLOFF, VG_SDF } from './sdf';
 
 /** Order matches `DEBUG_MODES` in `material.ts`: the index goes straight into `u_debug`. */
@@ -54,23 +55,23 @@ ${VG_SDF}
 const float VG_FALLOFF = ${VG_FALLOFF};
 
 // Tint density in the flat middle; at the bevel it's multiplied by u_edgeDensity.
-const float VG_BODY_DENSITY = 0.19;
+const float VG_BODY_DENSITY = ${MEDIUM.bodyDensityFlat};
 /* Fraction of the ambient hue in the shadow. The shadow has to stay a shadow, not a colored
  *  blob. */
-const float VG_SHADOW_TINT = 1.0;
+const float VG_SHADOW_TINT = ${SHADOW_GAP.tint}.0;
 // How much weaker the shadow is right at the outline than under the middle of the gap, and what
 // fraction of the offset it takes to reach full depth. In the reference the shadow's minimum
 // sits below the rim, not right at it.
-const float VG_GAP_LIGHT = 0.76;
-const float VG_GAP_REACH = 0.20;
+const float VG_GAP_LIGHT = ${SHADOW_GAP.light};
+const float VG_GAP_REACH = ${SHADOW_GAP.reach};
 /* Depth of the ink beneath the surface, dp. The normal displaces it by exactly this much right
  *  at the rim. */
-const float VG_INK_DEPTH = 4.0;
+const float VG_INK_DEPTH = ${INK.depth}.0;
 /* Ink defocus under the finger (reference §6): a glyph loses its edge and drowns in milk. Given
  * as a FRACTION of the touch blob, not a number: the blob already arrives in device units, so
  * the radius automatically follows both screen density and the element's size. At rest it's
  * zero, and the sample stays a single one. */
-const float VG_INK_DEFOCUS = 0.08;
+const float VG_INK_DEFOCUS = ${INK.defocus};
 
 half4 vgPack(half3 c, float a) { return half4(c * half(a), half(a)); }
 
