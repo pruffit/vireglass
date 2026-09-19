@@ -1,4 +1,5 @@
 import type { VireGlassOptics } from './material';
+import { SHADOW_DENSITY, SIZE } from './law';
 
 /** Glass shape in dp. Circle and capsule are special cases of a rounded rectangle. */
 export type VireGlassGeometry = {
@@ -37,13 +38,12 @@ export const MAX_STRETCH = 0.34;
  * and material thickness are specified for an element at a reference half-size and grow as the
  * square root of size.
  */
-const SIZE_REF_DP = 24;
 export const sizeGain = (g: VireGlassGeometry) =>
-  Math.min(Math.max(Math.sqrt(halfMinDp(g) / SIZE_REF_DP), 0.8), 2.4);
+  Math.min(Math.max(Math.sqrt(halfMinDp(g) / SIZE.referenceDp), SIZE.gainMin), SIZE.gainMax);
 
 /** A bevel wider than this fraction of the half-size breaks the SDF: the roundings converge in
  *  the middle. */
-export const MAX_BEVEL_FRACTION = 0.65;
+export const MAX_BEVEL_FRACTION = SIZE.maxBevelFraction;
 
 export const bevelFraction = (g: VireGlassGeometry, o: VireGlassOptics) =>
   Math.min(MAX_BEVEL_FRACTION, (o.bevelDp * sizeGain(g)) / halfMinDp(g));
@@ -135,17 +135,15 @@ export function surfacePadDp(
  * Android never adapted at all. The endpoints were checked against the reference by the depth of
  * the dip under the element — docs/benchmarks.md.
  */
-const SHADOW_FLAT = 0.8;
-const SHADOW_BUSY_GAIN = 6;
-const SHADOW_BUSY_RISE = 1.2;
-const SHADOW_STEP = 0.05;
-
 export function shadowOpacity(busy: number): number {
-  return SHADOW_FLAT + Math.min(Math.max(busy, 0) * SHADOW_BUSY_GAIN, SHADOW_BUSY_RISE);
+  return (
+    SHADOW_DENSITY.flat +
+    Math.min(Math.max(busy, 0) * SHADOW_DENSITY.busyGain, SHADOW_DENSITY.busyRise)
+  );
 }
 
 /** Same thing for platforms where the measurement flows through state: quantized coarsely, like
  *  the ambient color, otherwise every probe sample would trigger a surface repaint. */
 export function shadowOpacityFrom(sample: { busy: number }): number {
-  return Math.round(shadowOpacity(sample.busy) / SHADOW_STEP) * SHADOW_STEP;
+  return Math.round(shadowOpacity(sample.busy) / SHADOW_DENSITY.step) * SHADOW_DENSITY.step;
 }

@@ -102,6 +102,15 @@ export const TOUCH = {
    * across the screen does not.
    */
   glowReach: 3,
+  /**
+   * How much of an element's "active" state a touch alone raises — the fraction the glow and the
+   * ink lift ride on when nothing else is driving them. UNMEASURED.
+   *
+   * It was a private constant on the Android surface whose comment said it matched the web's, and
+   * nothing enforced that: the web renderer takes `active` from the host as a field and has no
+   * constant to match. Two renderers agreeing by a comment is exactly what this file is for.
+   */
+  activeOnTouch: 0.3,
 } as const;
 
 /** The bevel's profile — spherical, like a cap: `t / sqrt(1 - t² · k)`, clamped. A plain `t²` kept
@@ -262,4 +271,172 @@ export const MORPH = {
    * shapes kissing rather than one body. UNMEASURED.
    */
   fuse: 1.3,
+} as const;
+
+/**
+ * CAUSE TO EFFECT. The normalisations that turn what the medium IS — index, thickness, bevel,
+ * roughness, film — into what a renderer needs. They lived as literals inside `optics.ts`, half of
+ * them not even named, which meant the heart of the model was the one part of it the law could not
+ * see.
+ *
+ * Almost all of them are stylisations and say so. Literal physical values put every effect at the
+ * threshold of visibility: real glass reflects four per cent at normal incidence, and a rim drawn
+ * at four per cent is not a rim. Each is monotonic in its own cause, so "denser medium, brighter
+ * rim" holds whatever the constant is; what no one has measured is where on the scale Apple's
+ * material sits. Hence UNMEASURED on nearly all of it — that is the honest state of this file, and
+ * the gate now says so out loud instead of the number hiding in a module.
+ */
+export const DERIVE = {
+  /** Physical 4% reflectance into the render's working range. UNMEASURED. */
+  fresnelGain: 17.5,
+  /** Schlick's exponent. A constant of the approximation, not a knob. */
+  fresnelExponent: 5,
+  /** The index at which ray bending is at full strength, measured from air. UNMEASURED. */
+  iorFullBend: 0.6,
+  /** Magnification behind a plane-parallel plate, per dp of thickness. UNMEASURED. */
+  magnifyPerDp: 0.006,
+  /** In ordinary glasses the Abbe number falls as the index rises, so dispersion grows with it.
+   *  UNMEASURED slope. */
+  dispersionPerIor: 1.1,
+  /** Index spread between the red and blue channels. The physical value (~0.01 at an Abbe number
+   *  of 55) is at the threshold of visibility. UNMEASURED. */
+  iorSpreadPerDispersion: 0.045,
+  /** Beer–Lambert absorption per dp of path. UNMEASURED. */
+  absorbPerDp: 0.017,
+  /** Ceiling on how much denser the bevel may read than the body. The rim's ray travels further
+   *  through the medium; past this the rim is milk rather than glass. UNMEASURED. */
+  edgeDensityMax: 4,
+  /**
+   * Frost ceiling, dp. Deliberately low: blur is a SUPPORTING device here, and past about a dozen
+   * dp letters under the glass stop being letters. Separating content from ink is the body's job.
+   */
+  blurMaxDp: 12,
+  /** Highlight width from a smooth surface and from a fully rough one, as a specular exponent.
+   *  UNMEASURED. */
+  specularPowerSmooth: 160,
+  specularPowerRough: 8,
+  /** How much roughness damps the highlight's brightness. UNMEASURED. */
+  specularRoughDamping: 0.6,
+  /**
+   * The medium's own hue by density. Water absorbs red and skews cool, ordinary glass is nearly
+   * neutral with a faint green, dense high-index media skew warm. Glass has no colour of its own
+   * (HIG "Color"), so this is never set by hand — it is tied to the index.
+   */
+  hueCool: [0.86, 1.0, 1.08],
+  hueNeutral: [1.0, 1.02, 0.99],
+  hueWarm: [1.08, 1.0, 0.88],
+  /** The index range the hue sweeps across, and where it starts. UNMEASURED. */
+  hueFromIor: 1.2,
+  hueSpan: 0.55,
+  /** Body lightness follows reflectance: the denser the medium, the more of its surroundings it
+   *  returns. UNMEASURED base and slope. */
+  bodyLiftBase: 0.34,
+  bodyLiftPerF0: 2.4,
+  /**
+   * How far past the bevel the rim gathers its surroundings, as a multiple of the bevel. At a
+   * grazing angle the eye receives the vicinity rather than what is under the glass, and without
+   * this, glass on an empty black background has no source at all. UNMEASURED.
+   */
+  gatherPerBevel: 4,
+  /** Floor and ceiling on that radius, dp. Unbounded, a wide bevel gathers from fifty dp away and
+   *  a READABLE copy of the neighbourhood appears inside the glass — eight samples cannot blur a
+   *  disc that large (E-33, E-37). */
+  gatherMinDp: 4,
+  gatherMaxDp: 28,
+  /** The body's own density from absorption through its thickness. Small: the body only moves
+   *  toward the tint under the legibility requirement, otherwise it dims the content. UNMEASURED. */
+  bodyDensity: 0.05,
+  /**
+   * Rim light on the physical scale rather than the rim highlight's. `fresnelGain` saturates at one
+   * for dense media, and applying it here too would raise body lightness harder than the glass had
+   * just separated it from the ink — eating its own legibility work. UNMEASURED.
+   */
+  edgeLightGain: 6,
+  /** Iridescence rides the REFLECTED ray, so it is tied to Fresnel and has no knob of its own.
+   *  UNMEASURED gain. */
+  iridescencePerFresnel: 1.6,
+  /** Edge diffraction shares dispersion's λ-dependence, at the stylised amplitude: at the physical
+   *  one the fringes are not visible at all. UNMEASURED. */
+  diffractionPerDispersion: 0.5,
+  /** Multiple internal reflection — the denser the medium, the more light it circulates and the
+   *  more it is tinted by its surroundings. The ceiling keeps it a medium rather than a fill.
+   *  UNMEASURED. */
+  colorPickupPerFresnel: 0.9,
+  colorPickupMax: 0.42,
+} as const;
+
+/**
+ * SIZE AND SHADOW. What changes when an element gets bigger, and how dense its shadow reads over
+ * what is behind it. 219 @6:36: as glass "flexes and morphs to larger sizes, it simulates a
+ * thicker material with deeper shadows and more pronounced lensing and refraction".
+ */
+export const SIZE = {
+  /** Half-size at which bevel and thickness are specified as given; they grow as its square root
+   *  from there. UNMEASURED reference size. */
+  referenceDp: 24,
+  /** Floor and ceiling on that growth. UNMEASURED. */
+  gainMin: 0.8,
+  gainMax: 2.4,
+  /** A bevel wider than this fraction of the half-size breaks the SDF — the roundings converge in
+   *  the middle. A property of the geometry, not a taste. */
+  maxBevelFraction: 0.65,
+} as const;
+
+/**
+ * Shadow density by what is behind the element. 219 @11:47, verbatim: it "increases the opacity of
+ * its shadow when it is over text… lowers the opacity of its shadow when it is over a solid light
+ * background." About content BEHIND the element, so one value per element rather than a field over
+ * the shadow's area. Endpoints checked against the reference by the depth of the dip under the
+ * element (docs/benchmarks.md).
+ */
+export const SHADOW_DENSITY = {
+  /** Over a flat background. */
+  flat: 0.8,
+  /** How fast it rises with structure behind the element, and how far it may rise. */
+  busyGain: 6,
+  busyRise: 1.2,
+  /** Quantisation of the emitted value: a shadow that changes on every pixel of scroll re-lays-out
+   *  the native view every frame. */
+  step: 0.05,
+} as const;
+
+/**
+ * THE MEDIUM'S RESPONSE TO A FINGER (§5). Part of the material, exactly as `ior` is: keeping these
+ * with the consumer would mean web and Android ended up with two different glasses under one name.
+ *
+ * Press is viscous — it dents shallow and releases slowly. Drag is thick: the body noticeably lags
+ * the finger, travel is short, and on release it snaps back fast with almost no overshoot, because
+ * a wide springy overshoot would be liquid jelly rather than dense glass.
+ */
+export const SPRING = {
+  /** Stiffness and damping while the finger is down. UNMEASURED. */
+  holdStiffness: 260,
+  holdDamping: 46,
+  /** …and after it lifts. Stiffer, and damped hard: a dense medium snaps back without ringing. */
+  releaseStiffness: 420,
+  releaseDamping: 34,
+  /** Time constants for the press dent, in and out, seconds. UNMEASURED. */
+  pressAttack: 0.07,
+  pressRelease: 0.16,
+  /** How fast the touch point catches up to the finger. Not instant: an instant jump tears the
+   *  deformation, and on rapid taps that reads as jitter. */
+  pointFollow: 0.045,
+  /** …and how fast the element registers as being touched at all, which is what the glow rides. */
+  activeFollow: 0.09,
+  /** The ripple decays within a quarter second rather than oscillating: in a viscous medium ripples
+   *  are short and weak. UNMEASURED. */
+  waveDecay: 0.22,
+  waveTurnsPerSecond: 3,
+  /** Ceilings on the accumulated ripple, as multiples of a single impulse. Impulses add up rather
+   *  than restart — restarting cuts a running wave mid-period, which is what jolts on rapid taps. */
+  waveCapOnGrab: 1.6,
+  waveCapOnRelease: 2,
+} as const;
+
+/** The user's clear-to-tinted preference (§3). */
+export const SCALE = {
+  /** Where on the scale the material stays exactly as it is by default. */
+  default: 0.35,
+  /** Body density at the fully tinted end: content under the glass has to be hidden. UNMEASURED. */
+  tintedDensity: 0.9,
 } as const;

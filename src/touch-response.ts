@@ -18,7 +18,7 @@
 //   dense glass.
 //   WAVE: touch and lift-off each throw a short ring that decays within a quarter second.
 
-import { ACCESSIBILITY } from './law';
+import { ACCESSIBILITY, SPRING } from './law';
 
 export type DeformSample = {
   /** Touch point relative to the element's center, CSS pixels. */
@@ -32,21 +32,6 @@ export type DeformSample = {
   waveAmp: number;
   wavePhase: number;
 };
-
-const HOLD_STIFFNESS = 260;
-const HOLD_DAMPING = 46;
-/** Release is stiffer than hold, but damping is high: a dense medium snaps back fast with almost
- *  no overshoot. A visible overshoot would be liquid jelly, not dense glass. */
-const RELEASE_STIFFNESS = 420;
-const RELEASE_DAMPING = 34;
-
-const PRESS_ATTACK = 0.07;
-const PRESS_RELEASE = 0.16;
-
-/** The wave is short and weak: in a viscous medium ripples decay within a quarter second rather
- *  than oscillating. */
-const WAVE_DECAY = 0.22;
-const WAVE_TURNS_PER_SECOND = 3.0;
 
 /**
  * `elastic: false` is reduced motion (§9): the spring and the ripple are the material's elastic
@@ -94,7 +79,7 @@ export function createDeform(options: DeformOptions = {}) {
     targetY = 0;
     // Impulses ADD UP rather than restart, and phase isn't reset: resetting it would cut off a
     // running wave mid-period, which is exactly what causes a jolt on rapid clicks.
-    if (elastic) waveAmp = Math.min(waveAmp + waveStart, waveStart * 1.6);
+    if (elastic) waveAmp = Math.min(waveAmp + waveStart, waveStart * SPRING.waveCapOnGrab);
   }
 
   function drag(dx: number, dy: number, limit: number): void {
@@ -112,29 +97,29 @@ export function createDeform(options: DeformOptions = {}) {
     held = false;
     targetX = 0;
     targetY = 0;
-    if (elastic) waveAmp = Math.min(waveAmp + waveStart, waveStart * 2);
+    if (elastic) waveAmp = Math.min(waveAmp + waveStart, waveStart * SPRING.waveCapOnRelease);
   }
 
   function integrate(dt: number): void {
-    const k = held ? HOLD_STIFFNESS : RELEASE_STIFFNESS;
-    const c = held ? HOLD_DAMPING : RELEASE_DAMPING;
+    const k = held ? SPRING.holdStiffness : SPRING.releaseStiffness;
+    const c = held ? SPRING.holdDamping : SPRING.releaseDamping;
     vx += (k * (targetX - pullX) - c * vx) * dt;
     vy += (k * (targetY - pullY) - c * vy) * dt;
     pullX += vx * dt;
     pullY += vy * dt;
 
     const pressTarget = held ? pressCeiling : 0;
-    const tau = held ? PRESS_ATTACK : PRESS_RELEASE;
+    const tau = held ? SPRING.pressAttack : SPRING.pressRelease;
     press += (pressTarget - press) * (1 - Math.exp(-dt / tau));
-    active += (pressTarget - active) * (1 - Math.exp(-dt / 0.09));
+    active += (pressTarget - active) * (1 - Math.exp(-dt / SPRING.activeFollow));
 
     // The touch point catches up to the finger fast, but not instantly — see grab().
-    const follow = 1 - Math.exp(-dt / 0.045);
+    const follow = 1 - Math.exp(-dt / SPRING.pointFollow);
     touchX += (targetTouchX - touchX) * follow;
     touchY += (targetTouchY - touchY) * follow;
 
-    wavePhase += dt * WAVE_TURNS_PER_SECOND;
-    waveAmp *= Math.exp(-dt / WAVE_DECAY);
+    wavePhase += dt * SPRING.waveTurnsPerSecond;
+    waveAmp *= Math.exp(-dt / SPRING.waveDecay);
     if (waveAmp < 0.01) waveAmp = 0;
   }
 
