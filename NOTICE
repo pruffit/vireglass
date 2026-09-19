@@ -1,0 +1,10 @@
+VireGlass
+Copyright 2026 Danil Kotlaev
+
+This product includes software developed as part of the vireSpace platform
+(https://github.com/pruffit/vire).
+
+The material model was calibrated against publicly available reference material
+from Apple's WWDC 2025 sessions 219 and 356 and related design talks. No Apple
+code, assets, or footage is included in or distributed with this software; the
+references in the documentation are citations, not redistribution.

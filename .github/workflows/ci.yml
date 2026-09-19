@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Install Chromium for shader gates
+        run: npx playwright install --with-deps chromium chromium-headless-shell
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Shaders compile on both targets
+        run: npm run check:glsl
+
+      - name: Optics stay within their envelope
+        run: npm run check:optics
+
+      - name: Build
+        run: npm run build

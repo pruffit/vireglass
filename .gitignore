@@ -1,0 +1,23 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Android build output
+android/build/
+android/.gradle/
+.cxx/
+
+# Reference footage used while calibrating the material. Never committed:
+# it is third-party video, and it is gigabytes.
+.reference/
+*.mp4
+
+# Gate artefacts
+.glass-shots/
+test-results/
+playwright-report/
+
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
