@@ -35,6 +35,10 @@ jobs:
 
       - run: npm run build
 
+      # Needs the build: it drives the published bundle in a real browser, not the source.
+      - name: The glass bends live DOM
+        run: npm run check:dom
+
       # Skipped rather than failed when no token is configured: the gates above are the
       # point of this workflow, and a tag should not go red because publishing is not set up.
       - name: Check for an npm token

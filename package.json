@@ -80,6 +80,7 @@
     "check:glsl": "tsx scripts/check-glsl.mjs",
     "check:optics": "tsx scripts/check-optics.mjs",
     "check:law": "node scripts/check-law.mjs",
+    "check:dom": "node scripts/check-dom.mjs",
     "prepare": "tsup"
   },
   "peerDependencies": {
