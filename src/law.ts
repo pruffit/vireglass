@@ -108,3 +108,67 @@ export const BEVEL = {
 
 /** Where two shapes meet head-on their normals cancel exactly and the blend lands on zero. */
 export const EPSILON = 1e-5;
+
+/** What the medium does to light passing through it (§3). */
+export const MEDIUM = {
+  /** The lightness content under the glass is pulled toward, and how hard. The medium both removes
+   *  light and mixes scattered light back in: over a light backdrop the body darkens, over a dark
+   *  one it lightens. A layer that only ADDED light pushed the body the wrong way over light
+   *  backdrops (M 2:35). */
+  luma: 0.4,
+  pull: 0.07,
+  /** Ambient light reaching the body on top of that pull. */
+  ambientSpill: 0.01,
+  /** Glass concentrates light: the body is a touch lighter than what lies beneath it (M 2:29). */
+  concentrate: 0.01,
+  /** Scattered light on a frosted element is an ADDITION over the backdrop, not a fraction of the
+   *  way to the tint — a fraction goes to zero once the backdrop reaches the tint's lightness and
+   *  darkens past it (docs/benchmarks.md). */
+  matteLift: 0.1,
+  /** How far scattering reaches, as a fraction of the gather radius, over a busy backdrop under
+   *  ink. Set against the reference: structure under the capsule fades by a factor of nine or ten
+   *  there, not thirty (M 11:47). */
+  scatterMax: 0.2,
+  scatterBase: 0.1,
+  /** The response to structure saturates early: what competes with the ink is not the AREA of
+   *  foreign text but the fact of it — a line under a tile measures about 0.12 of busy. */
+  structureGain: 20,
+  /** Tint density in the flat middle; the bevel multiplies it by the edge density. */
+  bodyDensityFlat: 0.19,
+} as const;
+
+/** The lens itself (§1). */
+export const LENS = {
+  /** Backdrop compression at the rim goes to infinity at the silhouette, so the radius correction
+   *  is capped. */
+  footprintMax: 1.8,
+  /** Same reason, for the profile's slope. */
+  slopeMax: 40,
+  /** Every thin film on glass sits around this index. */
+  filmIor: 1.35,
+  /** Reference channel wavelengths in nm — red, green, blue — for diffraction and interference. */
+  lambdaR: 610,
+  lambdaG: 550,
+  lambdaB: 460,
+} as const;
+
+/** The shadow's shape in the gap under the element (§4). */
+export const SHADOW_GAP = {
+  /** How much weaker the shadow is right at the outline than under the middle of the gap, and what
+   *  fraction of the offset it takes to reach full depth. In the reference the shadow's minimum
+   *  sits BELOW the rim, not at it. */
+  light: 0.76,
+  reach: 0.2,
+  /** Fraction of the ambient hue the shadow carries. It has to stay a shadow, not a coloured blob. */
+  tint: 1,
+} as const;
+
+/** Ink drawn inside the material (§5). */
+export const INK = {
+  /** Depth beneath the surface, dp. The normal displaces it by exactly this much at the rim. */
+  depth: 4,
+  /** Defocus under a finger, as a FRACTION of the touch blob rather than a length: the blob
+   *  already arrives in device units, so this follows both screen density and element size. At
+   *  rest it is zero and the sample stays a single one. */
+  defocus: 0.08,
+} as const;

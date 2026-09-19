@@ -1,4 +1,4 @@
-import { BODY, DISPERSION, RIM } from './law';
+import { BODY, DISPERSION, LENS, MEDIUM, RIM } from './law';
 import { VG_SDF } from './sdf';
 
 // The lens source is assembled HERE and ships to the native view as a prop: AGSL and SKSL are one
@@ -84,7 +84,7 @@ const int   VG_FROST_TAPS = 20;
 const int   VG_FROST_TAPS_MAX = 64;
 // The radius correction for backdrop compression at the rim is capped: at the silhouette it goes
 // to infinity.
-const float VG_FOOTPRINT_MAX = 1.8;
+const float VG_FOOTPRINT_MAX = ${LENS.footprintMax};
 const float VG_TAU = 6.28318530718;
 // Ceiling on body lightness under light ink (and the mirrored floor under dark ink). This is a
 // ceiling, not a difference: "0.14 darker than white" is a lightness of 0.86, at which white text
@@ -95,20 +95,20 @@ const float VG_BODY_CAP_TIGHT = ${BODY.capTight};
 const float VG_TINT_DARK = ${BODY.tintDark};
 const float VG_TINT_LIGHT = ${BODY.tintLight};
 // Reference channel wavelengths, nm — for diffraction and interference.
-const float3 VG_LAMBDA = float3(610.0, 550.0, 460.0);
+const float3 VG_LAMBDA = float3(${LENS.lambdaR}.0, ${LENS.lambdaG}.0, ${LENS.lambdaB}.0);
 // Film index of refraction: every thin film on glass sits around this value.
-const float VG_FILM_IOR = 1.35;
+const float VG_FILM_IOR = ${LENS.filmIor};
 // Ceiling on the profile's slope right at the silhouette: it goes to infinity there.
-const float VG_SLOPE_MAX = 40.0;
+const float VG_SLOPE_MAX = ${LENS.slopeMax}.0;
 // Fraction of the gather radius that scattering reaches over a busy backdrop under ink (M 11:47).
 // Set against the reference: there, structure under the capsule fades by a factor of 9-10, not
 // thirty.
-const float VG_SCATTER_MAX = 0.20;
-const float VG_SCATTER_BASE = 0.1;
+const float VG_SCATTER_MAX = ${MEDIUM.scatterMax};
+const float VG_SCATTER_BASE = ${MEDIUM.scatterBase};
 // The response to structure under the glass saturates early: what competes with the ink isn't
 // the area of foreign text but the mere fact that it's there (a line under a tile gives a busy
 // of about 0.12).
-const float VG_STRUCTURE_GAIN = 20.0;
+const float VG_STRUCTURE_GAIN = ${MEDIUM.structureGain}.0;
 // How much denser the body with ink gets over a BUSY backdrop than over a calm one. There's no
 // flat floor here: legibility picks up its own targeted requirement further down, and base
 // frosting comes from VG_MATTE_LIFT.
@@ -116,19 +116,19 @@ const float VG_GROUND_SPAN = ${BODY.groundSpan};
 // Scattered light on a frosted element is an ADDITION on top of the backdrop, not a fraction of
 // the way to the tint: the fraction goes to zero once the canvas reaches the tint's lightness,
 // and darkens past it (docs/benchmarks.md).
-const float VG_MATTE_LIFT = 0.10;
+const float VG_MATTE_LIFT = ${MEDIUM.matteLift};
 // The fraction of backdrop spread that survives through to the body past scattering: the
 // legibility requirement is computed from this edge, not from the spot's average lightness.
 const float VG_BUSY_EDGE = ${BODY.busyEdge};
 // Light concentration: the body is a touch lighter than what's beneath it (M 2:29).
-const float VG_CONCENTRATE = 0.01;
+const float VG_CONCENTRATE = ${MEDIUM.concentrate};
 // The lightness the medium pulls content under the glass toward, and the strength of that pull.
 // The medium both removes light and mixes in scattered light: over a light backdrop the body
 // darkens, over a dark one it lightens.
-const float VG_MEDIUM_LUMA = 0.40;
-const float VG_MEDIUM_PULL = 0.07;
+const float VG_MEDIUM_LUMA = ${MEDIUM.luma};
+const float VG_MEDIUM_PULL = ${MEDIUM.pull};
 // How much ambient light reaches the body on top of the pull.
-const float VG_AMBIENT_SPILL = 0.01;
+const float VG_AMBIENT_SPILL = ${MEDIUM.ambientSpill};
 
 float vgLuma(float3 c) { return dot(c, float3(0.2126, 0.7152, 0.0722)); }
 

@@ -1,14 +1,15 @@
-// Keeps `src/law.ts` honest.
+// Keeps `src/law.ts` honest, and keeps the citations in the code pointing at something real.
 //
-// The first version of this check hunted for law VALUES appearing as bare literals elsewhere. It
-// found fourteen and every one was a false positive: `VG_MEDIUM_PULL = 0.07` is not the dark tint,
-// a debug colour's `0.42` is not the touch ridge. Two constants can share a value and mean nothing
-// to each other, and the text does not carry which is which. That check could never be made
-// correct, so it is not the check.
+// The first version of the value check hunted for law VALUES appearing as bare literals elsewhere.
+// It found fourteen and every one was a false positive: `VG_MEDIUM_PULL = 0.07` is not the dark
+// tint, a debug colour's `0.42` is not the touch ridge. Two constants can share a value and mean
+// nothing to each other, and the text does not carry which is which. That check could never be
+// made correct, so it is not the check.
 //
-// What IS checkable: every law is read by someone, and every debt is visible. A constant that
-// nothing imports is a law the material no longer obeys — which is exactly what a refactor leaves
-// behind.
+// What IS checkable, and is:
+//   - every law is read by someone (a law nothing imports is one the material no longer obeys);
+//   - every section citation in the code resolves to a section `docs/reference.md` actually has;
+//   - every value with no provenance is named out loud, every run.
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SRC = join(ROOT, 'src');
 const LAW = join(SRC, 'law.ts');
+const SECTION = '§';
 
 function sources(dir, out = []) {
   for (const entry of readdirSync(dir)) {
@@ -30,11 +32,12 @@ function sources(dir, out = []) {
 }
 
 const law = readFileSync(LAW, 'utf8');
+const lawLines = law.split(/\r?\n/);
 
 /** `GROUP = { name: value }` — the group is what call sites import, the name is what they read. */
 const entries = [];
 let group = null;
-for (const line of law.split(/\r?\n/)) {
+for (const line of lawLines) {
   const open = /^export const (\w+) = \{/.exec(line);
   if (open) {
     group = open[1];
@@ -46,11 +49,11 @@ for (const line of law.split(/\r?\n/)) {
   }
   const scalar = /^export const (\w+) = (-?[\d.e-]+);/.exec(line);
   if (scalar) {
-    entries.push({ group: null, name: scalar[1], ref: scalar[1] });
+    entries.push({ name: scalar[1], ref: scalar[1] });
     continue;
   }
   const field = /^\s{2}(\w+):\s*(-?[\d.]+),/.exec(line);
-  if (field && group) entries.push({ group, name: field[1], ref: `${group}.${field[1]}` });
+  if (field && group) entries.push({ name: field[1], ref: `${group}.${field[1]}` });
 }
 
 if (entries.length === 0) {
@@ -58,30 +61,11 @@ if (entries.length === 0) {
   process.exit(1);
 }
 
-const corpus = sources(SRC)
-  .map((f) => ({ file: relative(ROOT, f), text: readFileSync(f, 'utf8') }));
+const corpus = sources(SRC).map((f) => ({ file: relative(ROOT, f), text: readFileSync(f, 'utf8') }));
 
-const orphans = [];
-for (const entry of entries) {
-  // A reader either imports the value (`RIM.darkEdge`) or interpolates it into shader text
-  // (`${RIM.darkEdge}`) — the same reference either way.
-  const used = corpus.some(({ text }) => text.includes(entry.ref));
-  if (!used) orphans.push(entry);
-}
-
-// Debts are not failures, but they must not be quiet. A number the reference does not give is a
-// number someone chose, and the bench should eventually replace it.
-const unmeasured = [];
-{
-  const lines = law.split(/\r?\n/);
-  lines.forEach((line, i) => {
-    const field = /^\s{2}(\w+):/.exec(line);
-    if (!field) return;
-    const preamble = lines.slice(Math.max(0, i - 12), i).join('\n');
-    const block = preamble.slice(preamble.lastIndexOf('/**'));
-    if (/UNMEASURED/.test(block)) unmeasured.push(field[1]);
-  });
-}
+// A reader either imports the value or interpolates it into shader text — the same reference
+// either way.
+const orphans = entries.filter((e) => !corpus.some(({ text }) => text.includes(e.ref)));
 
 if (orphans.length > 0) {
   console.error('check-law: a law nothing reads is a law the material no longer obeys.\n');
@@ -89,7 +73,51 @@ if (orphans.length > 0) {
   process.exit(1);
 }
 
+// A citation that leads nowhere is worse than none, because it reads as evidence. Renumbering a
+// section of the reference now breaks the build instead of quietly orphaning every comment that
+// pointed at it.
+const referenceDoc = readFileSync(join(ROOT, 'docs/reference.md'), 'utf8');
+const sections = new Set([...referenceDoc.matchAll(/^## (\d+)\./gm)].map((m) => m[1]));
+
+if (sections.size === 0) {
+  console.error('check-law: docs/reference.md has no numbered sections — citations cannot be checked');
+  process.exit(1);
+}
+
+const citation = new RegExp(`${SECTION}(\\d+)`, 'g');
+const dangling = [];
+for (const { file, text } of corpus) {
+  text.split(/\r?\n/).forEach((line, index) => {
+    for (const match of line.matchAll(citation)) {
+      if (!sections.has(match[1])) {
+        dangling.push({ file, line: index + 1, section: match[1], text: line.trim() });
+      }
+    }
+  });
+}
+
+if (dangling.length > 0) {
+  console.error('check-law: a citation points at a section docs/reference.md does not have.\n');
+  for (const d of dangling) {
+    console.error(`  ${d.file}:${d.line}  ${SECTION}${d.section}`);
+    console.error(`    ${d.text}`);
+  }
+  process.exit(1);
+}
+
+// Debts are not failures, but they must not be quiet. A number the reference does not give is a
+// number someone chose, and the bench should eventually replace it.
+const unmeasured = [];
+lawLines.forEach((line, index) => {
+  const field = /^\s{2}(\w+):/.exec(line);
+  if (!field) return;
+  const preamble = lawLines.slice(Math.max(0, index - 12), index).join('\n');
+  const block = preamble.slice(preamble.lastIndexOf('/**'));
+  if (/UNMEASURED/.test(block)) unmeasured.push(field[1]);
+});
+
 console.log(`check-law: ${entries.length} calibrated values, all read from src/law.ts`);
+console.log(`check-law: every citation resolves into docs/reference.md (${sections.size} sections)`);
 if (unmeasured.length > 0) {
   console.log(`check-law: ${unmeasured.length} still unmeasured — ${unmeasured.join(', ')}`);
 }
