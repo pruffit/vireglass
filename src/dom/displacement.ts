@@ -2,6 +2,7 @@
 // GL/AGSL shaders, so a page refracting live content still reads as the same material. See
 // `docs/superpowers/specs/2026-09-19-vireglass-over-live-dom.md` for the technique this encodes.
 import { bevelDp, thicknessDp, type VireGlassGeometry } from '../geometry';
+import { BEVEL } from '../law';
 import type { VireGlassOptics } from '../material';
 import {
   sceneDistance,
@@ -42,8 +43,8 @@ function encode(displacement: number, scale: number): number {
  *  rim, the middle left flat. A plain linear ramp from `vgBevelT` alone reads as a chamfer, not a
  *  lens — the same reason the shader doesn't use it raw either. */
 function bevelProfile(t: number): number {
-  const raw = Math.min(t / Math.sqrt(Math.max(1 - t * t * 0.94, 0.02)), 3.2);
-  return raw / 3.2;
+  const raw = Math.min(t / Math.sqrt(Math.max(1 - t * t * BEVEL.sphere, BEVEL.floor)), BEVEL.slopeMax);
+  return raw / BEVEL.slopeMax;
 }
 
 export type DisplacementState = {

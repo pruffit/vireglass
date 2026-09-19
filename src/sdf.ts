@@ -3,6 +3,11 @@
 // view). AGSL and SKSL are the same language, so the SDF no longer needs duplicating in Kotlin:
 // before, the surface's circle and the lens's rounded rectangle described different pieces of
 // glass, and the bevel constant had to be kept in sync by hand (docs/adr-001-rendering.md §3).
+import { BEVEL, EPSILON, TOUCH } from './law';
+
+/** 2π. Structural, not a law — but the shader has no built-in for it. */
+const VG_TAU = 6.28318530718;
+
 export const VG_SDF = `
 float vgRoundRect(float2 p, float2 halfSize, float corner) {
   float2 q = abs(p) - halfSize + corner;
@@ -39,7 +44,7 @@ float2 vgTouchWarp(float2 p, float2 touch, float2 pull, float press, float radiu
                    float waveAmp, float wavePhase) {
   if (radius <= 0.0) { return p; }
   // Under the finger the whole element grows (M 3:51; HIG: interactive "expands").
-  p /= 1.0 + 0.06 * press;
+  p /= 1.0 + ${TOUCH.pressGrow} * press;
   float2 d = p - touch;
   float r = length(d);
 
@@ -57,16 +62,16 @@ float2 vgTouchWarp(float2 p, float2 touch, float2 pull, float press, float radiu
   // Without this ridge the shape just balloons, and a dense medium doesn't behave that way.
   float rim = k * k * (1.0 - k) * 4.0;
 
-  float2 q = p - pull * (core - 0.42 * rim);
-  q -= d * (press * 0.16 * core);
+  float2 q = p - pull * (core - ${TOUCH.ridge} * rim);
+  q -= d * (press * ${TOUCH.pressPull} * core);
 
   // The wave has its own scale, twice the drag radius: the ripple has to reach the far edge,
   // otherwise it reads as jitter under the finger rather than a wave across the surface. The
   // wavelength is short: in a dense medium ripples are frequent and small, long shallow swells
   // are water.
   if (waveAmp > 0.0 && r > 0.0001) {
-    float span = radius * 2.0;
-    float ring = sin(r / (span * 0.17) - wavePhase * 6.2831853) * exp(-r / (span * 0.7));
+    float span = radius * ${TOUCH.waveSpan}.0;
+    float ring = sin(r / (span * ${TOUCH.waveLength}) - wavePhase * ${VG_TAU}) * exp(-r / (span * ${TOUCH.waveDecay}));
     q -= (d / r) * ring * waveAmp;
   }
   return q;
@@ -100,14 +105,14 @@ float2 vgSceneNormal(float2 p, float2 halfSize, float corner,
   float a = vgRoundRect(p, halfSize, corner);
   float b = vgRoundRect(q, halfB, cornerB);
   float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
-  float2 nab = normalize(mix(vgRoundRectNormal(q, halfB, cornerB), na, h) + float2(1e-5, 1e-5));
+  float2 nab = normalize(mix(vgRoundRectNormal(q, halfB, cornerB), na, h) + float2(${EPSILON}, ${EPSILON}));
   if (halfC.x <= 0.0) { return nab; }
   // Same derivation as for the pair: normals blend with the same weight as the distances.
   float2 qc = p - offsetC;
   float ab = vgSmin(a, b, k);
   float c = vgRoundRect(qc, halfC, cornerC);
   float hc = clamp(0.5 + 0.5 * (c - ab) / k, 0.0, 1.0);
-  return normalize(mix(vgRoundRectNormal(qc, halfC, cornerC), nab, hc) + float2(1e-5, 1e-5));
+  return normalize(mix(vgRoundRectNormal(qc, halfC, cornerC), nab, hc) + float2(${EPSILON}, ${EPSILON}));
 }
 
 // Position within the bevel: 0 is the flat middle, 1 is the very edge. This one value feeds the
@@ -124,7 +129,7 @@ float vgBevelT(float sd, float bevel) {
 // This still doesn't control the field of view: only the bevel bends, the middle stays flat,
 // otherwise the surface reads as a soap bubble.
 float vgBevelSlope(float t) {
-  return min(t * inversesqrt(max(1.0 - t * t * 0.94, 0.02)), 3.2);
+  return min(t * inversesqrt(max(1.0 - t * t * ${BEVEL.sphere}, ${BEVEL.floor})), ${BEVEL.slopeMax});
 }
 
 // PROGRESS FRACTION. Progress is an active state turned into a FIELD: to the left of the boundary
@@ -261,10 +266,10 @@ export function sceneGradient(
     gx = nc[0] + (gx - nc[0]) * hc;
     gy = nc[1] + (gy - nc[1]) * hc;
   }
-  // The shader's `+ float2(1e-5, 1e-5)` before normalising, and it is not decoration: where two
+  // The shader's `+ float2(${EPSILON}, ${EPSILON})` before normalising, and it is not decoration: where two
   // shapes meet head-on their normals cancel exactly and the blend lands on zero.
-  gx += 1e-5;
-  gy += 1e-5;
+  gx += EPSILON;
+  gy += EPSILON;
   const len = Math.hypot(gx, gy) || 1;
   return [gx / len, gy / len];
 }
@@ -289,7 +294,7 @@ export type TouchWarp = {
  */
 export function touchWarp(x: number, y: number, t: TouchWarp): [number, number] {
   if (t.radius <= 0) return [x, y];
-  const grow = 1 + 0.06 * t.press;
+  const grow = 1 + TOUCH.pressGrow * t.press;
   let px = x / grow;
   let py = y / grow;
   const dx = px - t.x;
@@ -302,14 +307,14 @@ export function touchWarp(x: number, y: number, t: TouchWarp): [number, number] 
   // The ridge around the blob: material pushed out from under the finger has to go somewhere.
   const rim = k * k * (1 - k) * 4;
 
-  px -= t.pullX * (core - 0.42 * rim);
-  py -= t.pullY * (core - 0.42 * rim);
-  px -= dx * (t.press * 0.16 * core);
-  py -= dy * (t.press * 0.16 * core);
+  px -= t.pullX * (core - TOUCH.ridge * rim);
+  py -= t.pullY * (core - TOUCH.ridge * rim);
+  px -= dx * (t.press * TOUCH.pressPull * core);
+  py -= dy * (t.press * TOUCH.pressPull * core);
 
   if (t.waveAmp > 0 && r > 0.0001) {
-    const span = t.radius * 2;
-    const ring = Math.sin(r / (span * 0.17) - t.wavePhase * 6.2831853) * Math.exp(-r / (span * 0.7));
+    const span = t.radius * TOUCH.waveSpan;
+    const ring = Math.sin(r / (span * TOUCH.waveLength) - t.wavePhase * VG_TAU) * Math.exp(-r / (span * TOUCH.waveDecay));
     px -= (dx / r) * ring * t.waveAmp;
     py -= (dy / r) * ring * t.waveAmp;
   }

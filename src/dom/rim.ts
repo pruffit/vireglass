@@ -6,15 +6,10 @@
 // verbatim (exponent 3, opposing arc at 0.45), and the dark edge is its line 528 (a 0.22
 // darkening at the silhouette). The only thing that differs is the primitive: a conic gradient
 // sampled at fixed angles instead of a per-pixel normal.
+import { RIM } from '../law';
 import type { VireGlassOptics } from '../material';
 
-/** Matches `pow(max(facing, 0.0), 3.0) + 0.45 * pow(max(-facing, 0.0), 3.0)` in the lens. */
-const LOBE_EXPONENT = 3;
-const OPPOSING_ARC = 0.45;
-
-/** `rgb *= 1.0 - 0.22 * outline` — the dark edge iOS 27 made a layer of its own, which does not
- *  rule out the highlight sitting on top of it (§2). */
-const DARK_EDGE = 0.22;
+const { lobeExponent: LOBE_EXPONENT, opposingArc: OPPOSING_ARC, darkEdge: DARK_EDGE } = RIM;
 
 /** One stop every 7.5°. Fine enough that a cubic lobe reads as a smooth arc rather than a fan. */
 const STOPS = 48;
@@ -82,6 +77,4 @@ export function rimGradientCss(
   return `conic-gradient(from ${start.toFixed(1)}deg, ${stops.join(', ')})`;
 }
 
-/** §2 calls for about a point, not a band. Kept at a physical hairline rather than scaled with the
- *  element: a bigger button does not get a thicker outline in the reference. */
-export const RIM_WIDTH_PX = 1;
+export const RIM_WIDTH_PX = RIM.widthPx;

@@ -33,5 +33,8 @@ jobs:
       - name: Optics stay within their envelope
         run: npm run check:optics
 
+      - name: Every calibrated value is written once
+        run: npm run check:law
+
       - name: Build
         run: npm run build

@@ -1,3 +1,4 @@
+import { BODY, DISPERSION, RIM } from './law';
 import { VG_SDF } from './sdf';
 
 // The lens source is assembled HERE and ships to the native view as a prop: AGSL and SKSL are one
@@ -88,11 +89,11 @@ const float VG_TAU = 6.28318530718;
 // Ceiling on body lightness under light ink (and the mirrored floor under dark ink). This is a
 // ceiling, not a difference: "0.14 darker than white" is a lightness of 0.86, at which white text
 // is invisible.
-const float VG_BODY_CAP_LOOSE = 0.62;
-const float VG_BODY_CAP_TIGHT = 0.38;
+const float VG_BODY_CAP_LOOSE = ${BODY.capLoose};
+const float VG_BODY_CAP_TIGHT = ${BODY.capTight};
 // Tint lightness in both directions: real glass is never coal-black or paper-white.
-const float VG_TINT_DARK = 0.07;
-const float VG_TINT_LIGHT = 0.94;
+const float VG_TINT_DARK = ${BODY.tintDark};
+const float VG_TINT_LIGHT = ${BODY.tintLight};
 // Reference channel wavelengths, nm — for diffraction and interference.
 const float3 VG_LAMBDA = float3(610.0, 550.0, 460.0);
 // Film index of refraction: every thin film on glass sits around this value.
@@ -111,14 +112,14 @@ const float VG_STRUCTURE_GAIN = 20.0;
 // How much denser the body with ink gets over a BUSY backdrop than over a calm one. There's no
 // flat floor here: legibility picks up its own targeted requirement further down, and base
 // frosting comes from VG_MATTE_LIFT.
-const float VG_GROUND_SPAN = 0.06;
+const float VG_GROUND_SPAN = ${BODY.groundSpan};
 // Scattered light on a frosted element is an ADDITION on top of the backdrop, not a fraction of
 // the way to the tint: the fraction goes to zero once the canvas reaches the tint's lightness,
 // and darkens past it (docs/benchmarks.md).
 const float VG_MATTE_LIFT = 0.10;
 // The fraction of backdrop spread that survives through to the body past scattering: the
 // legibility requirement is computed from this edge, not from the spot's average lightness.
-const float VG_BUSY_EDGE = 0.75;
+const float VG_BUSY_EDGE = ${BODY.busyEdge};
 // Light concentration: the body is a touch lighter than what's beneath it (M 2:29).
 const float VG_CONCENTRATE = 0.01;
 // The lightness the medium pulls content under the glass toward, and the strength of that pull.
@@ -280,8 +281,8 @@ half4 main(float2 xy) {
   float spread = max(footprint - 1.0, 0.0) * 0.5 * on;
 
   // Dispersion: the same ray with each channel's own index. Blue bends more than red.
-  float2 dR = vgShift(N, z, u_ior - 0.4 * u_iorSpread) * lens - shift;
-  float2 dB = vgShift(N, z, u_ior + 0.6 * u_iorSpread) * lens - shift;
+  float2 dR = vgShift(N, z, u_ior + ${DISPERSION.redShift} * u_iorSpread) * lens - shift;
+  float2 dB = vgShift(N, z, u_ior + ${DISPERSION.blueShift} * u_iorSpread) * lens - shift;
   float chroma = length(dB - dR);
 
   float3 rgb;
@@ -372,9 +373,9 @@ half4 main(float2 xy) {
   // up, and there's nothing there for direction to depend on. Using the SDF normal instead
   // painted the body as a cone.
   float facing = dot(N.xy, L);
-  float key = u_specular * (pow(max(facing, 0.0), 3.0) + 0.45 * pow(max(-facing, 0.0), 3.0));
+  float key = u_specular * (pow(max(facing, 0.0), ${RIM.lobeExponent}.0) + ${RIM.opposingArc} * pow(max(-facing, 0.0), ${RIM.lobeExponent}.0));
   float rimFacing = dot(n, L);
-  float rimKey = u_specular * (pow(max(rimFacing, 0.0), 3.0) + 0.45 * pow(max(-rimFacing, 0.0), 3.0));
+  float rimKey = u_specular * (pow(max(rimFacing, 0.0), ${RIM.lobeExponent}.0) + ${RIM.opposingArc} * pow(max(-rimFacing, 0.0), ${RIM.lobeExponent}.0));
   // Wherever the key light doesn't fall, the face reflects its shaded surroundings — hence the
   // dark outline.
   float3 env = refl * (0.55 + 0.45 * min(key, 1.0)) + float3(1.2 * key);
@@ -456,7 +457,7 @@ half4 main(float2 xy) {
   // Where there's no ink, the glass tints away from the backdrop. The direction is chosen by the
   // average lightness under the element, not the local spot's lightness: otherwise on a gradient
   // the threshold cuts across the body as a diagonal step.
-  float darkSide = smoothstep(0.42, 0.58, mean);
+  float darkSide = smoothstep(${BODY.darkSideFrom}, ${BODY.darkSideTo}, mean);
   float away = mix(VG_TINT_LIGHT, VG_TINT_DARK, darkSide);
   float tintLuma = mix(away, mix(VG_TINT_LIGHT, VG_TINT_DARK, pol), demand);
 
@@ -468,10 +469,10 @@ half4 main(float2 xy) {
   float inkHi = min(local + edge, 1.0);
   float inkLo = max(local - edge, 0.0);
   float needForLight = inkHi > capLight
-    ? clamp((inkHi - capLight) / max(inkHi - VG_TINT_DARK, 1e-4), 0.0, 0.92)
+    ? clamp((inkHi - capLight) / max(inkHi - VG_TINT_DARK, 1e-4), 0.0, ${BODY.maxDemand})
     : 0.0;
   float needForDark = inkLo < floorDark
-    ? clamp((floorDark - inkLo) / max(VG_TINT_LIGHT - inkLo, 1e-4), 0.0, 0.92)
+    ? clamp((floorDark - inkLo) / max(VG_TINT_LIGHT - inkLo, 1e-4), 0.0, ${BODY.maxDemand})
     : 0.0;
   float needForInk = mix(needForDark, needForLight, pol) * demand;
 
@@ -525,7 +526,7 @@ half4 main(float2 xy) {
   // The dark rim is its own layer around the whole silhouette, and the highlight sits ON TOP of
   // it (iOS 27). While the outline used to fade via a (1 − lit) multiplier, the silhouette read
   // as a single arc: highlight OR shadow.
-  rgb *= 1.0 - 0.22 * outline;
+  rgb *= 1.0 - ${RIM.darkEdge} * outline;
   rgb = mix(rgb, mix(refl, float3(1.0), 0.75), line * lit);
 
   if (u_debug > 9.5 && u_debug < 10.5) { rgb = spectral * 0.5; }

@@ -4,14 +4,20 @@
 // The law is the lens shader's, lines 444–482, ported to one value per element instead of one per
 // pixel — the DOM path has a single backdrop sample, not a plane. Constants keep their names from
 // the shader so the two stay comparable.
+import { BODY } from '../law';
 import type { VireGlassOptics } from '../material';
 
-const BODY_CAP_LOOSE = 0.62;
-const BODY_CAP_TIGHT = 0.38;
-const TINT_DARK = 0.07;
-const TINT_LIGHT = 0.94;
-const GROUND_SPAN = 0.06;
-const BUSY_EDGE = 0.75;
+const {
+  capLoose: BODY_CAP_LOOSE,
+  capTight: BODY_CAP_TIGHT,
+  tintDark: TINT_DARK,
+  tintLight: TINT_LIGHT,
+  groundSpan: GROUND_SPAN,
+  busyEdge: BUSY_EDGE,
+  darkSideFrom: DARK_SIDE_FROM,
+  darkSideTo: DARK_SIDE_TO,
+  maxDemand: MAX_DEMAND,
+} = BODY;
 
 const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
 const mix = (a: number, b: number, t: number) => a + (b - a) * t;
@@ -50,7 +56,7 @@ export function resolveBody(optics: VireGlassOptics, sample: BodyBackdrop, ink: 
 
   // Direction of the tint follows the element's AVERAGE lightness, not a local spot: on a
   // gradient a local threshold cuts a diagonal step across the body.
-  const darkSide = smoothstep(0.42, 0.58, mean);
+  const darkSide = smoothstep(DARK_SIDE_FROM, DARK_SIDE_TO, mean);
   const away = mix(TINT_LIGHT, TINT_DARK, darkSide);
   const tintLuma = mix(away, mix(TINT_LIGHT, TINT_DARK, pol), demand);
 
@@ -60,8 +66,8 @@ export function resolveBody(optics: VireGlassOptics, sample: BodyBackdrop, ink: 
   const edge = busy * BUSY_EDGE;
   const inkHi = Math.min(mean + edge, 1);
   const inkLo = Math.max(mean - edge, 0);
-  const needForLight = inkHi > capLight ? clamp((inkHi - capLight) / Math.max(inkHi - TINT_DARK, 1e-4), 0, 0.92) : 0;
-  const needForDark = inkLo < floorDark ? clamp((floorDark - inkLo) / Math.max(TINT_LIGHT - inkLo, 1e-4), 0, 0.92) : 0;
+  const needForLight = inkHi > capLight ? clamp((inkHi - capLight) / Math.max(inkHi - TINT_DARK, 1e-4), 0, MAX_DEMAND) : 0;
+  const needForDark = inkLo < floorDark ? clamp((floorDark - inkLo) / Math.max(TINT_LIGHT - inkLo, 1e-4), 0, MAX_DEMAND) : 0;
   const needForInk = mix(needForDark, needForLight, pol) * demand;
 
   // Fine texture the body has to stop being a window for, the same way roughness does it.
@@ -86,7 +92,7 @@ export function withPresence(body: GlassBody, optics: VireGlassOptics, sample: B
   if (reached >= separation) return body;
   const needed = separation / Math.max(Math.abs((lighter ? TINT_LIGHT : TINT_DARK) - mean), 1e-4);
   return {
-    density: Math.max(body.density, Math.min(needed, 0.92)),
+    density: Math.max(body.density, Math.min(needed, MAX_DEMAND)),
     tintLuma: lighter ? Math.max(body.tintLuma, mean) : Math.min(body.tintLuma, mean),
   };
 }

@@ -31,6 +31,7 @@ jobs:
           npm test
           npm run check:glsl
           npm run check:optics
+          npm run check:law
 
       - run: npm run build
 

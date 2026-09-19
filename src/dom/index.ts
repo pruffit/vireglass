@@ -21,6 +21,7 @@ import { resolveBody, withPresence } from './body';
 import { RIM_WIDTH_PX, rimGradientCss } from './rim';
 import { REST_LIGHT } from '../adapters';
 import { refractionStrength } from '../optics';
+import { DISPERSION, TOUCH } from '../law';
 import type { MorphShape } from '../sdf';
 import { createDeform, raiseIntoGlass, type DeformSample } from '../touch-response';
 import { halfMinDp, MAX_STRETCH } from '../geometry';
@@ -41,18 +42,10 @@ let filterCounter = 0;
  *  its filter. Weak: a detached element takes its entry with it. */
 const attached = new WeakMap<HTMLElement, GlassHandle>();
 
-/** Contact radius as a fraction of the half-size: the finger is a blob covering a good part of a
- *  small control, which is the whole reason §5 asks for the response to be visible UNDER it. */
-const TOUCH_RADIUS_FRACTION = 1.1;
+const TOUCH_RADIUS_FRACTION = TOUCH.radiusOfHalfSize;
 
-/**
- * Wave impulse thrown by a touch, in CSS px. The ONE number in the interaction path the model
- * does not give: the core carries the ripple's decay and frequency, but not how hard a finger
- * strikes it. Tied to the same travel limit the drag saturates against, so it scales with the
- * element instead of being an absolute. Unmeasured — a bench pass should replace it.
- */
-const WAVE_OF_TRAVEL = 0.18;
-const RELEASE_WAVE = 0.6;
+const WAVE_OF_TRAVEL = TOUCH.waveOfTravel;
+const RELEASE_WAVE = TOUCH.releaseWave;
 
 function waveImpulse(g: VireGlassGeometry): number {
   return halfMinDp(g) * MAX_STRETCH * WAVE_OF_TRAVEL;
@@ -138,9 +131,9 @@ function buildFilterElement(id: string, mapUrl: string, optics: VireGlassOptics,
     const base = refractionStrength(optics.ior);
     const ratio = (shift: number) => (base > 0 ? refractionStrength(optics.ior + shift) / base : 1);
     const channels: Array<[string, number, string]> = [
-      ['dR', scale * ratio(-0.4 * spread), '1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0'],
+      ['dR', scale * ratio(DISPERSION.redShift * spread), '1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0'],
       ['dG', scale, '0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0'],
-      ['dB', scale * ratio(0.6 * spread), '0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0'],
+      ['dB', scale * ratio(DISPERSION.blueShift * spread), '0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0'],
     ];
     for (const [name, chScale, matrix] of channels) {
       const pass = document.createElementNS(SVG_NS, 'feDisplacementMap');

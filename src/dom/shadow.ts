@@ -1,6 +1,7 @@
 // Adaptive shadow (docs/reference.md §4). The law itself — density keyed to what's behind the
 // element, size keyed to its own half-size — lives in `../geometry` as `shadowOpacityFrom` and
 // `shadowReachDp`; this only turns those two numbers into a CSS `box-shadow`.
+import { SHADOW } from '../law';
 import { shadowOpacity, shadowOpacityFrom, shadowReachDp, type VireGlassGeometry } from '../geometry';
 
 /**
@@ -11,8 +12,8 @@ import { shadowOpacity, shadowOpacityFrom, shadowReachDp, type VireGlassGeometry
  */
 const FLAT_DENSITY = shadowOpacity(0);
 const BUSY_DENSITY = shadowOpacity(1);
-const FLAT_ALPHA = 0.04;
-const BUSY_ALPHA = 0.199;
+const FLAT_ALPHA = SHADOW.alphaFlat;
+const BUSY_ALPHA = SHADOW.alphaBusy;
 
 export function shadowAlphaFrom(sample: { busy: number }): number {
   const t = (shadowOpacityFrom(sample) - FLAT_DENSITY) / (BUSY_DENSITY - FLAT_DENSITY);
