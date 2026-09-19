@@ -6,7 +6,7 @@ import type { GlassHandle } from '../dom/index';
 const sample = (luma: number): BackdropSample => ({ luma, lo: luma, hi: luma, busy: 0, r: luma, g: luma, b: luma });
 
 function member(x: number, width = 44) {
-  const handle: GlassHandle = { update: vi.fn(), setMorph: vi.fn(), destroy: vi.fn() };
+  const handle: GlassHandle = { update: vi.fn(), setAppear: vi.fn(), setMorph: vi.fn(), destroy: vi.fn() };
   const el = {
     getBoundingClientRect: () => ({ left: x, top: 0, width, height: 44 }),
   } as unknown as HTMLElement;

@@ -24,6 +24,7 @@ import { resolveBody, withPresence } from './body';
 import { systemAccessibility, watchAccessibility } from './preferences';
 import { applyAccessibility, type VireGlassAccessibility } from '../accessibility';
 import { applyGlassScale, GLASS_SCALE_DEFAULT } from '../glass-scale';
+import { applyAppear } from '../appear';
 import { concentricRadius } from '../concentric';
 import { RIM_WIDTH_PX, rimGradientCss } from './rim';
 import { REST_LIGHT } from '../adapters';
@@ -285,6 +286,8 @@ export type AttachGlassOptions = {
   scale?: number;
   /** System accessibility (§9). Read from the browser's own media queries unless supplied. */
   accessibility?: VireGlassAccessibility;
+  /** Initial presence, 0 to 1 (§1). Defaults to fully present. */
+  appear?: number;
   /** Pointer response (§5). On by default. */
   interactive?: boolean;
   /** Overrides the probe entirely — images and video are invisible to it, and the host app
@@ -308,6 +311,13 @@ export type GlassMorph = {
 
 export type GlassHandle = {
   update(): void;
+  /**
+   * How present the material is, 0 to 1 (docs/reference.md §1). Drive this to bring glass in and
+   * out — NOT opacity. "Instead of fading, Liquid Glass objects materialize in and out by
+   * gradually modulating the light bending and lensing" (219 @2:55). A faded element shows the
+   * backdrop through a veil; one that is still arriving shows it undistorted.
+   */
+  setAppear(t: number): void;
   setMorph(morph: GlassMorph | null): void;
   destroy(): void;
 };
@@ -329,6 +339,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   let destroyed = false;
   let mapKey = '';
   let morph: GlassMorph | null = null;
+  let appear = opts.appear ?? 1;
   // Read once at attach, then followed: a setting turned on while the page is open has to reach
   // the material, not wait for a reload.
   let a11y = systemAccessibility();
@@ -354,7 +365,10 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   function optics(patch?: Partial<VireGlassMaterial>): VireGlassOptics {
     const base = resolveOptics(patch ?? opts.material);
     const scaled = applyGlassScale(base, opts.scale ?? GLASS_SCALE_DEFAULT);
-    return applyAccessibility(scaled, opts.accessibility ?? a11y);
+    const settled = applyAccessibility(scaled, opts.accessibility ?? a11y);
+    // Appearance last, and by modulating the lens rather than by fading the element: §1 is
+    // explicit that opacity is the wrong instrument for this.
+    return applyAppear(settled, appear);
   }
 
   function morphState() {
@@ -379,7 +393,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       // The map depends only on geometry, optics and density — never on the backdrop. Rebuilding
       // it on every scroll would re-run a per-pixel loop and a PNG encode for a picture that did
       // not change; the refraction itself updates in the compositor with no JS at all.
-      const key = `m${morphKey()}|${geometry.width}x${geometry.height}r${geometry.cornerRadius}@${devicePixelRatio()}:${opticsNow.refraction}:${opticsNow.refractionScale}:${opticsNow.bevelDp}:${opticsNow.blur}`;
+      const key = `a${appear.toFixed(3)}|m${morphKey()}|${geometry.width}x${geometry.height}r${geometry.cornerRadius}@${devicePixelRatio()}:${opticsNow.refraction}:${opticsNow.refractionScale}:${opticsNow.bevelDp}:${opticsNow.blur}`;
       if (key !== mapKey || !filterEl) {
         // Keyed by exactly what the maps are functions of, which is exactly the cache key above.
         const map = cached(`d|${key}`, () => buildDisplacementMap(opticsNow, geometry, devicePixelRatio(), morphState()));
@@ -608,6 +622,12 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
 
   const handle: GlassHandle = {
     update: apply,
+    setAppear(t) {
+      const next = t < 0 ? 0 : t > 1 ? 1 : t;
+      if (next === appear) return;
+      appear = next;
+      apply();
+    },
     setMorph(next) {
       morph = next && next.smoothing > 0 ? next : null;
       mapKey = '';
