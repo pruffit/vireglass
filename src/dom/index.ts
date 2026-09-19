@@ -18,6 +18,10 @@ import { probeBackdrop } from './probe';
 import { supportsSvgBackdropFilter } from './support';
 import { boxShadowCss } from './shadow';
 import { resolveBody, withPresence } from './body';
+import { systemAccessibility, watchAccessibility } from './preferences';
+import { applyAccessibility, type VireGlassAccessibility } from '../accessibility';
+import { applyGlassScale, GLASS_SCALE_DEFAULT } from '../glass-scale';
+import { concentricRadius } from '../concentric';
 import { RIM_WIDTH_PX, rimGradientCss } from './rim';
 import { REST_LIGHT } from '../adapters';
 import { refractionStrength } from '../optics';
@@ -32,6 +36,9 @@ export * from './displacement';
 export * from './rim';
 export * from './shadow';
 export * from './body';
+export * from './preferences';
+export * from './scroll-edge';
+export * from './group';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const FILTER_HOST_ATTR = 'data-vireglass-filters';
@@ -235,6 +242,13 @@ export type AttachGlassOptions = {
   /** Whether `attachGlass` writes `box-shadow` itself. Turn it off if the host owns that property —
    *   is always emitted either way. */
   shadow?: boolean;
+  /**
+   * The user's clear-to-tinted preference (§3). iOS 27 made it continuous and apps get it without
+   * recompiling, so the material has to stay usable across the WHOLE range, not at one point.
+   */
+  scale?: number;
+  /** System accessibility (§9). Read from the browser's own media queries unless supplied. */
+  accessibility?: VireGlassAccessibility;
   /** Pointer response (§5). On by default. */
   interactive?: boolean;
   /** Overrides the probe entirely — images and video are invisible to it, and the host app
@@ -279,6 +293,14 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   let destroyed = false;
   let mapKey = '';
   let morph: GlassMorph | null = null;
+  // Read once at attach, then followed: a setting turned on while the page is open has to reach
+  // the material, not wait for a reload.
+  let a11y = systemAccessibility();
+  const stopWatchingA11y = watchAccessibility((next) => {
+    a11y = next;
+    mapKey = '';
+    apply();
+  });
 
   ensureRimStyles();
   el.setAttribute(GLASS_ATTR, '');
@@ -286,6 +308,18 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   // the initial value, and put back on destroy.
   const positionWasStatic = getComputedStyle(el).position === 'static';
   if (positionWasStatic) el.style.setProperty('position', 'relative');
+
+  /**
+   * Causes to effects, then the user's scale, then accessibility — in that order. §9 is explicit
+   * that a system setting outranks the material preset: even a transparent preset moves to the
+   * edge of the scale under increased contrast, because the user needs contrast more than they
+   * need the aesthetic.
+   */
+  function optics(patch?: Partial<VireGlassMaterial>): VireGlassOptics {
+    const base = resolveOptics(patch ?? opts.material);
+    const scaled = applyGlassScale(base, opts.scale ?? GLASS_SCALE_DEFAULT);
+    return applyAccessibility(scaled, opts.accessibility ?? a11y);
+  }
 
   function morphState() {
     if (!morph) return {};
@@ -302,18 +336,18 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   function apply(): void {
     if (destroyed) return;
     const geometry = opts.geometry ?? measureGeometry(el);
-    const optics = resolveOptics(opts.material);
+    const opticsNow = optics();
     const sample = opts.sample ?? probeBackdrop(el);
 
     if (svgSupported) {
       // The map depends only on geometry, optics and density — never on the backdrop. Rebuilding
       // it on every scroll would re-run a per-pixel loop and a PNG encode for a picture that did
       // not change; the refraction itself updates in the compositor with no JS at all.
-      const key = `m${morphKey()}|${geometry.width}x${geometry.height}r${geometry.cornerRadius}@${devicePixelRatio()}:${optics.refraction}:${optics.refractionScale}:${optics.bevelDp}:${optics.blur}`;
+      const key = `m${morphKey()}|${geometry.width}x${geometry.height}r${geometry.cornerRadius}@${devicePixelRatio()}:${opticsNow.refraction}:${opticsNow.refractionScale}:${opticsNow.bevelDp}:${opticsNow.blur}`;
       if (key !== mapKey || !filterEl) {
-        const map = buildDisplacementMap(optics, geometry, devicePixelRatio(), morphState());
+        const map = buildDisplacementMap(opticsNow, geometry, devicePixelRatio(), morphState());
         const defs = getFilterHost().querySelector('defs') as SVGDefsElement;
-        const next = buildFilterElement(id, map.url, optics, map.scale);
+        const next = buildFilterElement(id, map.url, opticsNow, map.scale);
         if (filterEl?.parentNode) defs.replaceChild(next, filterEl);
         else defs.appendChild(next);
         filterEl = next;
@@ -322,9 +356,9 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       el.style.setProperty('backdrop-filter', `url(#${id})`);
       el.style.setProperty('-webkit-backdrop-filter', `url(#${id})`);
     } else {
-      el.style.setProperty('backdrop-filter', fallbackFilterCss(optics));
-      el.style.setProperty('-webkit-backdrop-filter', fallbackFilterCss(optics));
-      el.style.backgroundColor = bodyCss(optics, sample, wasLight ? 1 : 0);
+      el.style.setProperty('backdrop-filter', fallbackFilterCss(opticsNow));
+      el.style.setProperty('-webkit-backdrop-filter', fallbackFilterCss(opticsNow));
+      el.style.backgroundColor = bodyCss(opticsNow, sample, wasLight ? 1 : 0);
     }
 
     const light = shouldInkBeLight(sample, wasLight);
@@ -332,7 +366,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     const [tr, tg, tb] = ambientFrom(sample);
     el.style.setProperty('--vireglass-ink', light ? '1' : '0');
     el.style.setProperty('--vireglass-tint', `${tr} ${tg} ${tb}`);
-    el.style.setProperty('--vireglass-body-density', String(optics.bodyDensity));
+    el.style.setProperty('--vireglass-body-density', String(opticsNow.bodyDensity));
 
     // The raw numbers above are the model's own values; these are the same thing in a form CSS
     // can actually consume. Without them a host has to convert in script, which is the work this
@@ -340,13 +374,18 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     const inkLevel = Math.round((light ? INK_LIGHT : INK_DARK) * 255);
     el.style.setProperty('--vireglass-ink-color', `rgb(${inkLevel} ${inkLevel} ${inkLevel})`);
     el.style.setProperty('--vireglass-tint-color', rgbCss(tr, tg, tb));
-    el.style.setProperty('--vireglass-body-color', bodyCss(optics, sample, light ? 1 : 0));
+    el.style.setProperty('--vireglass-body-color', bodyCss(opticsNow, sample, light ? 1 : 0));
 
     // Rim and shadow follow the SAMPLE, not just the geometry, so they sit outside the map's
     // cache key: the environment they take their colour and density from moves under a scroll
     // while the silhouette does not.
-    el.style.setProperty('--vireglass-rim', rimGradientCss(optics, [tr, tg, tb], opts.light ?? REST_LIGHT));
+    el.style.setProperty('--vireglass-rim', rimGradientCss(opticsNow, [tr, tg, tb], opts.light ?? REST_LIGHT));
     el.style.setProperty('--vireglass-rim-width', `${RIM_WIDTH_PX}px`);
+
+    // §11: a rounded child inside glass has to be concentric with it, or the two curves fight.
+    // Emitted rather than applied — the inset is the host's, and CSS can do the arithmetic.
+    el.style.setProperty('--vireglass-radius', `${geometry.cornerRadius}px`);
+    el.style.setProperty('--vireglass-radius-min', `${concentricRadius(geometry.cornerRadius, geometry.cornerRadius, 0)}px`);
 
     const shadow = boxShadowCss(geometry, sample);
     el.style.setProperty('--vireglass-shadow', shadow);
@@ -370,15 +409,17 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
 
   function paintInteraction(sampleOut: DeformSample): void {
     const geometry = opts.geometry ?? measureGeometry(el);
-    const base = resolveOptics(opts.material);
+    const base = optics();
     // Under the finger a matte control stops being frosted and becomes a lens (§5, M 4:10–4:30).
     const rise = raiseIntoGlass(sampleOut.press);
-    const optics = resolveOptics({ ...opts.material, roughness: (opts.material?.roughness ?? VIREGLASS_MATERIAL.roughness) * rise.solid });
+    // The same chain as at rest — the user's scale and the system's settings do not stop
+    // applying because a finger is down.
+    const risen = optics({ ...opts.material, roughness: (opts.material?.roughness ?? VIREGLASS_MATERIAL.roughness) * rise.solid });
 
     // A reduced-resolution map while the finger is down: `feImage` stretches it over the element
     // regardless, the displacement is smooth, and a full device-pixel rebuild plus a PNG encode
     // every frame does not hold a frame budget.
-    const map = buildDisplacementMap(optics, geometry, interacting ? 1 : devicePixelRatio(), {
+    const map = buildDisplacementMap(risen, geometry, interacting ? 1 : devicePixelRatio(), {
       ...morphState(),
       touch: {
         x: sampleOut.touchX,
@@ -432,6 +473,9 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   }
 
   function run(): void {
+    // §9: reduced motion turns the material's springiness off. It is the one accessibility setting
+    // that leaves optics alone — it is about motion, so it applies where motion is computed.
+    if ((opts.accessibility ?? a11y).reduceMotion) return;
     if (frame === null && !destroyed) frame = requestAnimationFrame(tick);
   }
 
@@ -487,6 +531,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
 
   function destroy(): void {
     destroyed = true;
+    stopWatchingA11y();
     if (attached.get(el) === handle) attached.delete(el);
     if (frame !== null) cancelAnimationFrame(frame);
     frame = null;
@@ -514,6 +559,8 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     el.style.removeProperty('--vireglass-rim');
     el.style.removeProperty('--vireglass-rim-width');
     el.style.removeProperty('--vireglass-shadow');
+    el.style.removeProperty('--vireglass-radius');
+    el.style.removeProperty('--vireglass-radius-min');
     el.style.removeProperty('box-shadow');
     el.removeAttribute(GLASS_ATTR);
     if (positionWasStatic) el.style.removeProperty('position');

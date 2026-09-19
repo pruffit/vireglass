@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### The core modules the DOM path was ignoring
+
+Six of them, five of which are product: accessibility, the user's clarity scale, the scroll edge,
+concentricity, and groups. They existed in the core and nothing on the web read them.
+
+**Accessibility (§9)** now comes from the browser's own media queries — `prefers-reduced-
+transparency`, `prefers-contrast`, `prefers-reduced-motion` — and is followed while the page is
+open, not only as it loaded. The order is fixed and it matters: causes to effects, then the user's
+scale, then the system. §9 is explicit that a system setting outranks the material preset, because
+the user needs contrast more than they need the look.
+
+**The clarity scale (§3)** is a `scale` option. iOS 27 made this continuous and apps get it
+without recompiling, so the material has to stay usable across the whole range rather than at one
+point.
+
+**The scroll edge (§10)** binds the core's rules to a real scroller. It is the screen's job, not
+the material's — the glass has to SEE an already-dimmed backdrop, so the effect sits behind it.
+
+**Concentricity (§11)** is emitted as `--vireglass-radius` and `--vireglass-radius-min`, because
+the inset belongs to the host and CSS can do the arithmetic.
+
+**Groups (§3)** make a row of glass agree with itself. Each element probing alone is not merely
+wasteful but wrong: neighbouring pieces of one control sit over different patches, reach different
+polarities, and a tab bar ends up with two light glyphs and two dark ones. §3 says small elements
+switch WHOLESALE, and a group is what that means when the element is really four of them.
+
 ### The material, not a part of it — `vireglass/dom`
 
 The DOM renderer read six of the model's twenty-eight derived values. It now reads fourteen, and

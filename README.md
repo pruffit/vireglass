@@ -104,6 +104,17 @@ along a map derived from the same material model the other renderers use. The br
 the page's pixels to script — that boundary is what stops a page reading your cross-origin frames
 and visited links — so the displacement happens inside the compositor, where the pixels already are.
 
+It carries the material, not a corner of it: refraction with per-channel dispersion, the rim with
+its two opposing arcs and dark edge, the adaptive shadow, the body under legibility and presence,
+and the finger response — press, drag, the release wave and the rise into glass.
+
+```ts
+glass.setMorph({ smoothing: 34, shape: { offsetX: 150, offsetY: -78, width: 170, height: 92, cornerRadius: 28 } });
+```
+
+Two shapes joined through the smooth union — §5's merging and splitting. What the shapes mean is
+your choreography; the material only knows how two silhouettes join.
+
 `attachGlass` writes CSS custom properties you can use directly:
 
 | | |
@@ -111,7 +122,16 @@ and visited links — so the displacement happens inside the compositor, where t
 | `--vireglass-ink-color` | ink colour for this backdrop, already resolved |
 | `--vireglass-body-color` | the glass body: density from the model, hue from the surroundings |
 | `--vireglass-tint-color` | ambient colour alone |
+| `--vireglass-rim`, `--vireglass-rim-width` | the hairline's gradient, applied for you |
+| `--vireglass-shadow` | the adaptive shadow, also written to `box-shadow` unless you opt out |
+| `--vireglass-radius`, `--vireglass-radius-min` | for concentric children (§11) |
 | `--vireglass-ink`, `--vireglass-tint`, `--vireglass-body-density` | the model's raw numbers |
+
+The three system accessibility settings are read from the browser's own media queries and
+followed while the page is open — reduced transparency frosts the glass, increased contrast takes
+the element by its silhouette, reduced motion holds it still. A system setting outranks the
+material preset and the user's own clarity slider (`scale`), because the user needs contrast more
+than they need the look.
 
 Three things to know before you reach for it:
 
