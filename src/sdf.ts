@@ -205,6 +205,20 @@ export function smin(a: number, b: number, k: number): number {
   return b + (a - b) * h - k * h * (1 - h);
 }
 
+/**
+ * The smallest `k` at which `smin` joins two surfaces `gap` apart into one body. Exact for this
+ * smin rather than fitted: at the midpoint the two distances are both gap/2, so h = 0.5 and the
+ * result is gap/2 − k/4, which reaches zero at k = 2·gap.
+ *
+ * It is the number `morphBetween` was missing. A neck sized only as a fraction of the element's
+ * own half-size has nothing to do with the distance it has to span, so two controls a hundred
+ * pixels apart stayed two controls at every t — including t = 1, where the contract says they are
+ * one shared medium.
+ */
+export function neckToBridge(gap: number): number {
+  return gap > 0 ? gap * 2 : 0;
+}
+
 export type MorphShape = {
   offsetX: number;
   offsetY: number;

@@ -237,3 +237,29 @@ export const ACCESSIBILITY = {
    */
   stillPress: 0.6,
 } as const;
+
+/**
+ * Morphing (§5). Apple's design leads name their own model for it out loud (S 1:25:30, fireside
+ * chat with the Apple design team): "we also had a refresher from biology class. It's called
+ * mitosis and meiosis. When these things are coming together or materialization and
+ * dematerialization and morphing."
+ *
+ * Which is the right physics and not a metaphor: a dividing cell is one body throughout. It never
+ * has a moment of being two bodies that happen to touch, and it never pops a second body into
+ * existence beside the first. The neck is continuous from start to finish, and it is the neck that
+ * carries the whole transition.
+ */
+export const MORPH = {
+  /**
+   * Width of the neck between two lobes, as a fraction of the smaller one's half-size. On a large
+   * element the bridge has to be wider or the seam keeps a sharp corner, which a liquid does not
+   * have. UNMEASURED: the reference names the behaviour and no figure.
+   */
+  neck: 0.35,
+  /**
+   * How far past merely touching a completed fusion goes, as a multiple of the bridge width that
+   * just closes the gap. At exactly the bridge width the two surfaces meet at a point, which is two
+   * shapes kissing rather than one body. UNMEASURED.
+   */
+  fuse: 1.3,
+} as const;

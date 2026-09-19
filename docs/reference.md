@@ -127,9 +127,13 @@ slider knob over white measures 10.5%.
   team): the menu unfolds right where the button was, so you don't have to regrip the phone for an
   action near the bottom of the screen. So the menu must grow OUT OF its button and stay under the
   same finger.
-- The team describes the material's motion with biological metaphors — merging and dividing,
-  appearing and vanishing (S). That's also where our two mechanics come from: shapes fusing
-  through a bridge, and splitting apart.
+- The design team names their own model out loud (S 1:25:30): "we also had a refresher from biology
+  class. It's called MITOSIS AND MEIOSIS. When these things are coming together or materialization
+  and dematerialization and morphing." Which is physics, not decoration: a dividing cell is one
+  body from beginning to end. It never has a frame in which it is two bodies that happen to touch,
+  and it never pops a second body into existence beside the first. Both of our mechanics follow
+  from that — a lobe grows OUT of its parent and travels while attached, and two shapes fuse
+  through a bridge wide enough to actually span what is between them.
 - A menu unfolding from a panel (M 5:11, frame-by-frame at 15 fps) happens in TWO PHASES. The
   panel first contracts into a droplet, glyphs go out of focus (~0.15 s); a ridge grows from the
   droplet's side toward where the menu will be. Then the droplet grows into the menu with a slight

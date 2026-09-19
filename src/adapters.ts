@@ -1,4 +1,4 @@
-import { ACCENT } from './law';
+import { ACCENT, MORPH } from './law';
 import {
   bevelDp,
   bevelFraction,
@@ -10,6 +10,7 @@ import {
   type VireGlassGeometry,
 } from './geometry';
 import { LENS_SHADER } from './lens-shader';
+import { neckToBridge } from './sdf';
 import { debugIndex, type VireGlassDebugMode, type VireGlassOptics } from './material';
 
 /** Smooth union with a second shape — bench morphing experiment only. */
@@ -341,7 +342,33 @@ export const OVERLAY_UNIFORMS = ['u_overlayOn'] as const;
  * large elements the bridge has to be wider, otherwise the seam is left with a sharp corner,
  * which doesn't happen in a liquid.
  */
-const MORPH_NECK = 0.35;
+
+
+/**
+ * How wide the neck between two lobes has to be: enough to soften the seam on a large element, and
+ * enough to actually SPAN whatever is between them. The second term is the one that was missing.
+ */
+function neckFor(
+  half: number,
+  aw: number,
+  ah: number,
+  bw: number,
+  bh: number,
+  offsetX: number,
+  offsetY: number,
+): number {
+  // Surface-to-surface, measured between the bounding boxes. The rounded corners put the true
+  // surfaces slightly further apart, so this errs toward a wider neck, which is the safe side.
+  const gx = Math.abs(offsetX) - (aw + bw) / 2;
+  const gy = Math.abs(offsetY) - (ah + bh) / 2;
+  const gap = Math.hypot(Math.max(gx, 0), Math.max(gy, 0));
+  // Capped at the narrowest of the two bodies. A neck wider than what it joins is not a neck, and
+  // past that width the honest answer is that these are two things rather than one — a menu that
+  // has finished leaving its button, two controls too far apart to be a segmented control. Being
+  // separate is a legitimate state; being joined by a blob larger than either shape is not.
+  const widest = Math.min(aw, ah, bw, bh);
+  return Math.min(Math.max(half * MORPH.neck, neckToBridge(gap) * MORPH.fuse), widest);
+}
 
 export function morphBetween(
   a: VireGlassGeometry,
@@ -358,6 +385,46 @@ export function morphBetween(
     width: b.width,
     height: b.height,
     cornerRadius: b.cornerRadius,
-    smoothing: half * MORPH_NECK * Math.min(t, 1),
+    smoothing: neckFor(half, a.width, a.height, b.width, b.height, offsetX, offsetY) * Math.min(t, 1),
+  };
+}
+
+/**
+ * MITOSIS: the second shape grows OUT OF the first and travels to its place, instead of appearing
+ * beside it at full size. A menu coming out of its button, a control dividing into segments.
+ *
+ * `morphBetween` is the other half — two shapes that are both already where they belong, fusing
+ * into one body — and run backwards it is meiosis, the neck thinning until it breaks. What neither
+ * of them may do is pop: at any `t` above zero this returns one continuous body, because that is
+ * the whole of what the reference says a material transition is.
+ *
+ * The choreography stays the host's: what the shapes MEAN is the app's business. How a silhouette
+ * emerges from another silhouette is the material's, the same way the spring under a finger is.
+ */
+export function morphOutOf(
+  source: VireGlassGeometry,
+  target: VireGlassGeometry,
+  offsetX: number,
+  offsetY: number,
+  t: number,
+): VireGlassMorph | undefined {
+  if (t <= 0) return undefined;
+  const k = Math.min(t, 1);
+  // At t = 0 the lobe IS the parent, in the parent's place: the transition starts from one body and
+  // never has a first frame in which a second one exists. The parent's own surface is what the neck
+  // attaches to, so nothing has to be budded off to give it something to hold.
+  const width = source.width + (target.width - source.width) * k;
+  const height = source.height + (target.height - source.height) * k;
+  const cornerRadius = source.cornerRadius + (target.cornerRadius - source.cornerRadius) * k;
+  const half = Math.min(halfMinDp(source), Math.min(width, height) / 2);
+  return {
+    offsetX: offsetX * k,
+    offsetY: offsetY * k,
+    width,
+    height,
+    cornerRadius,
+    // The lobe travels as it grows, so the span changes every frame and the neck is measured
+    // against where the lobe actually is, not against where it will end up.
+    smoothing: neckFor(half, source.width, source.height, width, height, offsetX * k, offsetY * k),
   };
 }
