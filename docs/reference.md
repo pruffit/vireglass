@@ -283,6 +283,25 @@ content scrolls under a bar (219 @8:52).
   shape drops out of the family. SwiftUI has `concentric(minimum:)` for this case — a radius floor
   that breaks concentricity on purpose.
 
+### Three shape types
+
+356 @3:42 names what concentric layouts are built from: "fixed shapes have a constant corner
+radius. Capsules use a radius that's half the height of the container. And concentric shapes
+calculate their radius by subtracting padding from the parent's." @3:59: "the capsule's geometry
+naturally supports concentricity", which is why it runs through sliders, switches, bars, buttons
+and the corners of grouped table views.
+
+- For a component that has to work both nested and alone, 356 @6:00 gives a concentric shape a
+  FALLBACK radius: "the concentric value adapts when nested, and the fallback kicks in when the
+  component stands alone." Not the same as `minimum`, which is a floor that applies while nested
+  and breaks concentricity on purpose. A fallback never overrides a parent that exists.
+- Near a device edge the choice is by platform (356 @5:44): on phone, a capsule with extra margin
+  to create space at the screen edge; on iPad and Mac, a concentric shape aligned with the window
+  edge.
+- The defect has two directions and 356 @5:19 names them: corners that feel "too pinched — or
+  flared". Pinched is an inner radius smaller than concentricity asks for, so the gap widens
+  through the curve; flared is larger, so the corners crowd each other.
+
 ## 12. Where mistakes happen most often
 
 | Mistake | What the reference actually shows |
@@ -293,4 +312,5 @@ content scrolls under a bar (219 @8:52).
 | opacity fade on appearance | the lens builds up from zero |
 | solid color fill | tint keyed to backdrop lightness |
 | glass nested inside glass | one pane, or glass that arrives on touch |
+| a scroll edge painted as a scrim | a blur the content dissolves into |
 | permanent glass on a content control | the interactive variant — nothing at rest |
