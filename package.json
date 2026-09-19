@@ -73,8 +73,7 @@
     "test:watch": "vitest",
     "check:glsl": "tsx scripts/check-glsl.mjs",
     "check:optics": "tsx scripts/check-optics.mjs",
-    "prepare": "tsup",
-    "prepublishOnly": "npm run build"
+    "prepare": "tsup"
   },
   "peerDependencies": {
     "@shopify/react-native-skia": ">=2.0.0",
