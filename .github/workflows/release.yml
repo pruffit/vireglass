@@ -34,7 +34,18 @@ jobs:
 
       - run: npm run build
 
+      # Skipped rather than failed when no token is configured: the gates above are the
+      # point of this workflow, and a tag should not go red because publishing is not set up.
+      - name: Check for an npm token
+        id: token
+        run: echo "present=${{ secrets.NPM_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
+
       - name: Publish to npm
+        if: steps.token.outputs.present == 'true'
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publishing skipped
+        if: steps.token.outputs.present != 'true'
+        run: echo "::warning::NPM_TOKEN is not set — the package was built and gated but not published."
