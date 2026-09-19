@@ -135,6 +135,18 @@ and become a painted plate, and the decision passes to the app. Contrast is the 
 it also collapses on saturated yellow, and light icons kept flipping to dark over coloured
 blocks.
 
+## React
+
+The core is dependency-free on purpose, so the one piece that needs hooks lives behind its own
+entry point:
+
+```ts
+import { useGlassAdaptation } from 'vireglass/react';
+```
+
+It carries the confirmation policy and the recolor fade. The decision itself —
+`shouldInkBeLight` — is a pure function in the core, shared by every platform.
+
 ## Accessibility
 
 `applyAccessibility` maps the three system settings — reduced transparency, increased contrast,
