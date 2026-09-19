@@ -135,11 +135,11 @@ than they need the look.
 
 Three things to know before you reach for it:
 
-- **Diffraction is the one thing it cannot render.** Everything else the model derives comes
-  through: refraction with per-channel dispersion, the rim with its two opposing arcs and dark
-  edge, the adaptive shadow, the body under legibility and presence, and the finger response.
-  Edge diffraction needs a wavelength term at the silhouette, and a filter graph has no way to
-  express one.
+- **It renders the whole material.** Refraction with per-channel dispersion, the rim with its two
+  opposing arcs and dark edge, the adaptive shadow, the body under legibility and presence, the
+  finger response, and the spectral edge — diffraction and interference baked into a hue map and
+  multiplied in, since a filter graph cannot evaluate a function per pixel but can multiply by an
+  image.
 
 - **The refraction is Chromium-only today.** Firefox does not support a filter reference in
   `backdrop-filter` and has closed the request as not planned; Safari does not yet, though WebKit

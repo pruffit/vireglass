@@ -32,6 +32,24 @@ const SCALE_GAIN = 0.75;
 const MAX_STEP_PX = 0.09;
 const MAX_SCALE = 255 * MAX_STEP_PX;
 
+/**
+ * Samples across the bevel band, which is the only place the map carries anything. Everything
+ * inside it is a constant, and `feImage` stretches whatever it is given over the element anyway,
+ * so resolving the element is wasted work: a sheet at device resolution is 197 000 pixels of
+ * per-pixel maths and a PNG encode, 120 ms on attach and far past a frame during interaction.
+ *
+ * Eight samples describe a profile that is smooth by construction. The measured cost falls with
+ * the square of the reduction, and `check:dom` measures the displacement afterwards to say
+ * whether anything was lost.
+ */
+const BEVEL_SAMPLES = 8;
+
+/** Resolution the map is built at: enough to resolve the bevel, never more than the element. */
+function mapDensity(geometry: VireGlassGeometry, bevel: number, dpr: number): number {
+  if (bevel <= 0) return dpr;
+  return Math.min(dpr, BEVEL_SAMPLES / bevel);
+}
+
 /** True neutral is the unrepresentable 127.5; 128 is the nearest byte and leaves a residual
  *  0.002 of the scale, far below one step and below a pixel at any usable scale. */
 function encode(displacement: number, scale: number): number {
@@ -72,9 +90,10 @@ export function renderDisplacementPixels(
   dpr: number,
   state: DisplacementState = {},
 ): { data: Uint8ClampedArray; width: number; height: number; scale: number } {
-  const width = Math.max(1, Math.round(geometry.width * dpr));
-  const height = Math.max(1, Math.round(geometry.height * dpr));
   const bevel = bevelDp(geometry, optics);
+  const density = mapDensity(geometry, bevel, dpr);
+  const width = Math.max(1, Math.round(geometry.width * density));
+  const height = Math.max(1, Math.round(geometry.height * density));
   const rawScale = optics.refraction * thicknessDp(geometry, optics) * SCALE_GAIN;
   const scale = Math.min(rawScale, MAX_SCALE);
   const smoothing = state.smoothing ?? 0;
@@ -84,9 +103,9 @@ export function renderDisplacementPixels(
   const halfH = geometry.height / 2;
 
   for (let py = 0; py < height; py += 1) {
-    const y = (py + 0.5) / dpr - halfH;
+    const y = (py + 0.5) / density - halfH;
     for (let px = 0; px < width; px += 1) {
-      const x = (px + 0.5) / dpr - halfW;
+      const x = (px + 0.5) / density - halfW;
       const i = (py * width + px) * 4;
       // Warp the FIELD first, then read the scene at the warped point — the shader's own order.
       const [wx, wy] = state.touch ? touchWarp(x, y, state.touch) : [x, y];

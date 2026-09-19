@@ -1,4 +1,4 @@
-import { BODY, DISPERSION, LENS, MEDIUM, RIM } from './law';
+import { BODY, DISPERSION, LENS, MEDIUM, RIM, SPECTRAL } from './law';
 import { VG_SDF } from './sdf';
 
 // The lens source is assembled HERE and ships to the native view as a prop: AGSL and SKSL are one
@@ -193,8 +193,8 @@ float3 vgInterference(float cosI) {
 
 // Edge diffraction: fringes get denser the sharper the bevel. Also a hue, not a brightness.
 float3 vgDiffraction(float distFromEdge, float bevel) {
-  float phase = VG_TAU * 4.0 * distFromEdge / max(bevel, 1.0);
-  float3 d = 0.5 + 0.5 * cos(phase * (550.0 / VG_LAMBDA));
+  float phase = VG_TAU * ${SPECTRAL.diffractionFringes}.0 * distFromEdge / max(bevel, 1.0);
+  float3 d = 0.5 + 0.5 * cos(phase * (${SPECTRAL.referenceLambda}.0 / VG_LAMBDA));
   return d / max((d.r + d.g + d.b) / 3.0, 0.001);
 }
 
@@ -387,7 +387,7 @@ half4 main(float2 xy) {
     spectral *= mix(float3(1.0), vgInterference(cosT), u_iridescence);
   }
   if (u_diffraction > 0.001) {
-    float w = u_diffraction * smoothstep(0.45, 1.0, t);
+    float w = u_diffraction * smoothstep(${SPECTRAL.diffractionOnset}, 1.0, t);
     spectral *= mix(float3(1.0), vgDiffraction(e, bevel), w);
   }
 

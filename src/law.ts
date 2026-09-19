@@ -172,3 +172,16 @@ export const INK = {
    *  rest it is zero and the sample stays a single one. */
   defocus: 0.08,
 } as const;
+
+/** The spectral edge (§1): dispersion, diffraction and interference are one cause — a dependence
+ *  on wavelength — and one hue multiplier, normalised to its own mean. They colour the reflection
+ *  without brightening it. */
+export const SPECTRAL = {
+  /** How far into the bevel the fringes reach, as a fraction of it measured from the silhouette.
+   *  Diffraction is an EDGE effect; past this the bevel is plain glass. */
+  diffractionOnset: 0.45,
+  /** Fringes across the bevel. Denser as the bevel sharpens, which is what the phase term does. */
+  diffractionFringes: 4,
+  /** The channel the hue is measured against, nm. Green is the eye's own reference. */
+  referenceLambda: 550,
+} as const;

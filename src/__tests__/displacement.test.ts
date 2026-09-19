@@ -31,12 +31,23 @@ describe('renderDisplacementPixels', () => {
     expect(data[i + 1]).toBe(128);
   });
 
-  it('map dimensions equal the element size times dpr', () => {
+  // The map resolves the BEVEL, not the element. Everything inside the bevel band is a constant
+  // and `feImage` stretches whatever it is given, so resolving the element is work nobody sees:
+  // a sheet at device resolution was 197 000 pixels of maths and a PNG encode on every attach.
+  it('samples the bevel rather than the element, and never exceeds it', () => {
     const dpr = 2.5;
     const geometry = roundedRectGeometry(37, 52, 6);
     const { width, height } = renderDisplacementPixels(OPTICS, geometry, dpr);
-    expect(width).toBe(Math.round(37 * dpr));
-    expect(height).toBe(Math.round(52 * dpr));
+    expect(width).toBeLessThanOrEqual(Math.round(37 * dpr));
+    expect(height).toBeLessThanOrEqual(Math.round(52 * dpr));
+    // The aspect has to survive, or the profile stretches differently along each axis.
+    expect(width / height).toBeCloseTo(37 / 52, 1);
+  });
+
+  it('lets a large element with a wide bevel cost less than its own pixel count', () => {
+    const big = roundedRectGeometry(400, 400, 60);
+    const { width } = renderDisplacementPixels(OPTICS, big, 1);
+    expect(width).toBeLessThan(400);
   });
 
   it('stays at the no-shift value across the flat middle, away from the bevel band', () => {

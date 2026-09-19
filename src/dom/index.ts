@@ -6,12 +6,15 @@
 // the lens's own key-light lobe, the shadow is `shadowOpacityFrom`, dispersion is the shader's
 // per-channel index shift, and the finger response is `createDeform` driving the same `touchWarp`.
 //
-// Diffraction is the one thing left out: it needs a wavelength-dependent term at the very edge,
-// and a filter graph has no way to express one.
+// Even the spectral edge, which looked impossible: a filter graph cannot evaluate a function per
+// pixel, but it can MULTIPLY by an image, so diffraction and interference are baked into one and
+// applied with an arithmetic composite.
 // See `docs/superpowers/specs/2026-09-19-vireglass-over-live-dom.md` for the technique and the
 // three findings that make it work (objectBoundingBox, prefiltering the source, the 8-bit step).
 import { ambientFrom, INK_DARK, INK_LIGHT, shouldInkBeLight, type BackdropSample } from '../adaptation';
 import { buildDisplacementMap } from './displacement';
+import { buildSpectralMap, hasSpectralEdge, type SpectralMap } from './spectral-map';
+import { cached } from './map-cache';
 import { roundedRectGeometry, type VireGlassGeometry } from '../geometry';
 import { resolveOptics, VIREGLASS_MATERIAL, type VireGlassMaterial, type VireGlassOptics } from '../material';
 import { probeBackdrop } from './probe';
@@ -39,6 +42,8 @@ export * from './body';
 export * from './preferences';
 export * from './scroll-edge';
 export * from './group';
+export * from './spectral-map';
+export * from './map-cache';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const FILTER_HOST_ATTR = 'data-vireglass-filters';
@@ -101,7 +106,13 @@ function getFilterHost(): SVGSVGElement {
  * measures from something other than the element's own box and the displacement smears across
  * the page instead of staying at the rim.
  */
-function buildFilterElement(id: string, mapUrl: string, optics: VireGlassOptics, scale: number): SVGFilterElement {
+function buildFilterElement(
+  id: string,
+  mapUrl: string,
+  optics: VireGlassOptics,
+  scale: number,
+  spectral: SpectralMap | null,
+): SVGFilterElement {
   const filter = document.createElementNS(SVG_NS, 'filter');
   filter.setAttribute('id', id);
   filter.setAttribute('filterUnits', 'objectBoundingBox');
@@ -176,8 +187,9 @@ function buildFilterElement(id: string, mapUrl: string, optics: VireGlassOptics,
     rgb.setAttribute('k2', '1');
     rgb.setAttribute('k3', '1');
     rgb.setAttribute('k4', '0');
+    rgb.setAttribute('result', 'refracted');
     filter.append(rg, rgb);
-    return filter;
+    return withSpectral(filter, spectral);
   }
 
   const feDisplace = document.createElementNS(SVG_NS, 'feDisplacementMap');
@@ -186,7 +198,31 @@ function buildFilterElement(id: string, mapUrl: string, optics: VireGlassOptics,
   feDisplace.setAttribute('scale', String(scale));
   feDisplace.setAttribute('xChannelSelector', 'R');
   feDisplace.setAttribute('yChannelSelector', 'G');
+  feDisplace.setAttribute('result', 'refracted');
   filter.append(feDisplace);
+  return withSpectral(filter, spectral);
+}
+
+/**
+ * Multiplies the refracted frame by the baked hue (docs/reference.md §1). `feComposite` in
+ * arithmetic mode with `k1` is a per-pixel product, which is the only way a filter graph can apply
+ * a function of position. The headroom the bake divided by is multiplied back here.
+ */
+function withSpectral(filter: SVGFilterElement, spectral: SpectralMap | null): SVGFilterElement {
+  if (!spectral) return filter;
+  const image = document.createElementNS(SVG_NS, 'feImage');
+  image.setAttribute('href', spectral.url);
+  image.setAttribute('preserveAspectRatio', 'none');
+  image.setAttribute('result', 'hue');
+  const product = document.createElementNS(SVG_NS, 'feComposite');
+  product.setAttribute('in', 'refracted');
+  product.setAttribute('in2', 'hue');
+  product.setAttribute('operator', 'arithmetic');
+  product.setAttribute('k1', String(spectral.headroom));
+  product.setAttribute('k2', '0');
+  product.setAttribute('k3', '0');
+  product.setAttribute('k4', '0');
+  filter.append(image, product);
   return filter;
 }
 
@@ -345,9 +381,13 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       // not change; the refraction itself updates in the compositor with no JS at all.
       const key = `m${morphKey()}|${geometry.width}x${geometry.height}r${geometry.cornerRadius}@${devicePixelRatio()}:${opticsNow.refraction}:${opticsNow.refractionScale}:${opticsNow.bevelDp}:${opticsNow.blur}`;
       if (key !== mapKey || !filterEl) {
-        const map = buildDisplacementMap(opticsNow, geometry, devicePixelRatio(), morphState());
+        // Keyed by exactly what the maps are functions of, which is exactly the cache key above.
+        const map = cached(`d|${key}`, () => buildDisplacementMap(opticsNow, geometry, devicePixelRatio(), morphState()));
         const defs = getFilterHost().querySelector('defs') as SVGDefsElement;
-        const next = buildFilterElement(id, map.url, opticsNow, map.scale);
+        const hue = hasSpectralEdge(opticsNow)
+          ? cached(`h|${key}`, () => buildSpectralMap(opticsNow, geometry, devicePixelRatio()))
+          : null;
+        const next = buildFilterElement(id, map.url, opticsNow, map.scale, hue);
         if (filterEl?.parentNode) defs.replaceChild(next, filterEl);
         else defs.appendChild(next);
         filterEl = next;
