@@ -3,7 +3,13 @@
 // `docs/superpowers/specs/2026-09-19-vireglass-over-live-dom.md` for the technique this encodes.
 import { bevelDp, thicknessDp, type VireGlassGeometry } from '../geometry';
 import type { VireGlassOptics } from '../material';
-import { sdfRoundedRect, sdfRoundedRectGradient } from '../sdf';
+import {
+  sceneDistance,
+  sceneGradient,
+  touchWarp,
+  type MorphShape,
+  type TouchWarp,
+} from '../sdf';
 
 export type DisplacementMap = { url: string; width: number; height: number; scale: number };
 
@@ -40,6 +46,16 @@ function bevelProfile(t: number): number {
   return raw / 3.2;
 }
 
+export type DisplacementState = {
+  /** Finger response (docs/reference.md §5): the field around the touch deforms, so the silhouette
+   *  the backdrop bends along deforms with it. */
+  touch?: TouchWarp;
+  /** Smooth-union neighbours (§5): shapes merging into one and splitting apart. */
+  smoothing?: number;
+  morph?: MorphShape;
+  morph2?: MorphShape;
+};
+
 /**
  * The raw pixel buffer, with no canvas involved — the part actually worth unit-testing.
  * `buildDisplacementMap` below is a thin DOM wrapper around this.
@@ -53,12 +69,14 @@ export function renderDisplacementPixels(
   optics: VireGlassOptics,
   geometry: VireGlassGeometry,
   dpr: number,
+  state: DisplacementState = {},
 ): { data: Uint8ClampedArray; width: number; height: number; scale: number } {
   const width = Math.max(1, Math.round(geometry.width * dpr));
   const height = Math.max(1, Math.round(geometry.height * dpr));
   const bevel = bevelDp(geometry, optics);
   const rawScale = optics.refraction * thicknessDp(geometry, optics) * SCALE_GAIN;
   const scale = Math.min(rawScale, MAX_SCALE);
+  const smoothing = state.smoothing ?? 0;
 
   const data = new Uint8ClampedArray(width * height * 4);
   const halfW = geometry.width / 2;
@@ -69,7 +87,9 @@ export function renderDisplacementPixels(
     for (let px = 0; px < width; px += 1) {
       const x = (px + 0.5) / dpr - halfW;
       const i = (py * width + px) * 4;
-      const sd = sdfRoundedRect(x, y, geometry.width, geometry.height, geometry.cornerRadius);
+      // Warp the FIELD first, then read the scene at the warped point — the shader's own order.
+      const [wx, wy] = state.touch ? touchWarp(x, y, state.touch) : [x, y];
+      const sd = sceneDistance(wx, wy, geometry.width, geometry.height, geometry.cornerRadius, smoothing, state.morph, state.morph2);
       const t = Math.min(Math.max((sd + bevel) / bevel, 0), 1);
       if (t <= 0 || scale <= 0) {
         data[i] = 128;
@@ -78,7 +98,7 @@ export function renderDisplacementPixels(
         data[i + 3] = 255;
         continue;
       }
-      const [gx, gy] = sdfRoundedRectGradient(x, y, geometry.width, geometry.height, geometry.cornerRadius);
+      const [gx, gy] = sceneGradient(wx, wy, geometry.width, geometry.height, geometry.cornerRadius, smoothing, state.morph, state.morph2);
       // The rim reaches half the scale: the encoding can only span ±scale/2, so the derived
       // displacement is expressed as a fraction of that half-range.
       const magnitude = bevelProfile(t) * (scale / 2);
@@ -105,11 +125,12 @@ export function buildDisplacementMap(
   optics: VireGlassOptics,
   geometry: VireGlassGeometry,
   dpr: number,
+  state: DisplacementState = {},
 ): DisplacementMap {
   if (!hasCanvasSupport()) {
     throw new Error('vireglass/dom: buildDisplacementMap requires a DOM (canvas)');
   }
-  const { data, width, height, scale } = renderDisplacementPixels(optics, geometry, dpr);
+  const { data, width, height, scale } = renderDisplacementPixels(optics, geometry, dpr, state);
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;

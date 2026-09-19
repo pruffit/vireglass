@@ -35,7 +35,6 @@
   .player {
     position: absolute; left: 14px; right: 14px; bottom: 14px; height: 76px;
     border-radius: 26px; display: flex; align-items: center; gap: 12px; padding: 0 18px;
-    box-shadow: 0 16px 40px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.22);
     color: var(--vireglass-ink-color, #fff);
     background-color: var(--vireglass-body-color, transparent);
   }
@@ -53,8 +52,7 @@
 <body>
 <header>
   <h1>VireGlass over live DOM</h1>
-  <div class="sub">The bar at the bottom refracts the list behind it. The list is ordinary
-    markup — scroll it and watch the text bend at the rim.</div>
+  <div class="sub">The bar at the bottom refracts the list behind it. The list is ordinary markup. Scroll it and watch the text bend at the rim; press and drag the bar to deform it.</div>
   <div class="support" id="support">checking…</div>
 </header>
 
@@ -72,6 +70,7 @@
 <div class="controls">
   <button id="light">Light backdrop</button>
   <button id="dark">Dark backdrop</button>
+  <button id="merge">Merge with a neighbour</button>
   <button id="off">Detach glass</button>
   <button id="on">Attach glass</button>
 </div>
@@ -130,6 +129,12 @@ document.getElementById('dark').onclick = () => {
   scroll.style.color = '';
   handle?.update();
 };
+let merged = false;
+document.getElementById('merge').onclick = () => {
+  merged = !merged;
+  handle?.setMorph(merged ? { smoothing: 34, shape: { offsetX: 150, offsetY: -78, width: 170, height: 92, cornerRadius: 28 } } : null);
+};
+
 document.getElementById('off').onclick = () => { handle?.destroy(); handle = null; };
 document.getElementById('on').onclick = () => {
   if (!handle) handle = attachGlass(player, { material: MATERIAL_PRESETS.glass });

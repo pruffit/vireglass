@@ -186,3 +186,132 @@ export function sdfRoundedRectGradient(x: number, y: number, w: number, h: numbe
   }
   return [gx * Math.sign(x), gy * Math.sign(y)];
 }
+
+// ---------------------------------------------------------------------------
+// JS twins of the shader functions above. The DOM renderer needs this geometry
+// as numbers, not as a string it hands to a compiler. Each mirrors its `vg*`
+// counterpart term for term — a second geometry that drifts is the failure the
+// platform-parity gate exists to catch.
+// ---------------------------------------------------------------------------
+
+/** Mirrors `vgSmin`. */
+export function smin(a: number, b: number, k: number): number {
+  const h = Math.min(Math.max(0.5 + (0.5 * (b - a)) / k, 0), 1);
+  return b + (a - b) * h - k * h * (1 - h);
+}
+
+export type MorphShape = {
+  offsetX: number;
+  offsetY: number;
+  width: number;
+  height: number;
+  cornerRadius: number;
+};
+
+/** Mirrors the scene distance: one shape, smoothly unioned with up to two neighbours when
+ *  `smoothing` is positive. §5's merging and splitting are this union opening and closing. */
+export function sceneDistance(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+  smoothing = 0,
+  b?: MorphShape,
+  c?: MorphShape,
+): number {
+  const a = sdfRoundedRect(x, y, w, h, r);
+  if (smoothing <= 0 || !b || b.width <= 0) return a;
+  const db = sdfRoundedRect(x - b.offsetX, y - b.offsetY, b.width, b.height, b.cornerRadius);
+  const ab = smin(a, db, smoothing);
+  if (!c || c.width <= 0) return ab;
+  const dc = sdfRoundedRect(x - c.offsetX, y - c.offsetY, c.width, c.height, c.cornerRadius);
+  return smin(ab, dc, smoothing);
+}
+
+/** Mirrors `vgSceneNormal`: normals blend with the same weight that blends the distances, which
+ *  the shader derives rather than approximates. */
+export function sceneGradient(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+  smoothing = 0,
+  b?: MorphShape,
+  c?: MorphShape,
+): [number, number] {
+  const na = sdfRoundedRectGradient(x, y, w, h, r);
+  if (smoothing <= 0 || !b || b.width <= 0) return na;
+  const bx = x - b.offsetX;
+  const by = y - b.offsetY;
+  const da = sdfRoundedRect(x, y, w, h, r);
+  const db = sdfRoundedRect(bx, by, b.width, b.height, b.cornerRadius);
+  const hb = Math.min(Math.max(0.5 + (0.5 * (db - da)) / smoothing, 0), 1);
+  const nb = sdfRoundedRectGradient(bx, by, b.width, b.height, b.cornerRadius);
+  let gx = nb[0] + (na[0] - nb[0]) * hb;
+  let gy = nb[1] + (na[1] - nb[1]) * hb;
+  if (c && c.width > 0) {
+    const cx = x - c.offsetX;
+    const cy = y - c.offsetY;
+    const dab = smin(da, db, smoothing);
+    const dc = sdfRoundedRect(cx, cy, c.width, c.height, c.cornerRadius);
+    const hc = Math.min(Math.max(0.5 + (0.5 * (dc - dab)) / smoothing, 0), 1);
+    const nc = sdfRoundedRectGradient(cx, cy, c.width, c.height, c.cornerRadius);
+    gx = nc[0] + (gx - nc[0]) * hc;
+    gy = nc[1] + (gy - nc[1]) * hc;
+  }
+  // The shader's `+ float2(1e-5, 1e-5)` before normalising, and it is not decoration: where two
+  // shapes meet head-on their normals cancel exactly and the blend lands on zero.
+  gx += 1e-5;
+  gy += 1e-5;
+  const len = Math.hypot(gx, gy) || 1;
+  return [gx / len, gy / len];
+}
+
+export type TouchWarp = {
+  x: number;
+  y: number;
+  pullX: number;
+  pullY: number;
+  press: number;
+  radius: number;
+  waveAmp: number;
+  wavePhase: number;
+};
+
+/**
+ * Mirrors `vgTouchWarp`. The FIELD around the finger deforms, not the bounding box: scaling the
+ * width to pull the right edge would pull the left one too, and liquid does not do that.
+ *
+ * Term order is load-bearing — drag shifts the field, press pulls it toward the finger, the wave
+ * rides on the already-shifted field. Reordered, the ripple decouples and lives its own life.
+ */
+export function touchWarp(x: number, y: number, t: TouchWarp): [number, number] {
+  if (t.radius <= 0) return [x, y];
+  const grow = 1 + 0.06 * t.press;
+  let px = x / grow;
+  let py = y / grow;
+  const dx = px - t.x;
+  const dy = py - t.y;
+  const r = Math.hypot(dx, dy);
+
+  const k = Math.min(Math.max((t.radius - r) / t.radius, 0), 1);
+  const s = k * k * (3 - 2 * k);
+  const core = s * s * (3 - 2 * s);
+  // The ridge around the blob: material pushed out from under the finger has to go somewhere.
+  const rim = k * k * (1 - k) * 4;
+
+  px -= t.pullX * (core - 0.42 * rim);
+  py -= t.pullY * (core - 0.42 * rim);
+  px -= dx * (t.press * 0.16 * core);
+  py -= dy * (t.press * 0.16 * core);
+
+  if (t.waveAmp > 0 && r > 0.0001) {
+    const span = t.radius * 2;
+    const ring = Math.sin(r / (span * 0.17) - t.wavePhase * 6.2831853) * Math.exp(-r / (span * 0.7));
+    px -= (dx / r) * ring * t.waveAmp;
+    py -= (dy / r) * ring * t.waveAmp;
+  }
+  return [px, py];
+}

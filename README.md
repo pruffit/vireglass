@@ -115,10 +115,11 @@ and visited links — so the displacement happens inside the compositor, where t
 
 Three things to know before you reach for it:
 
-- **It renders part of the material, not all of it.** Refraction, the roughness prefilter, body
-  density and ambient pickup come through; the Fresnel rim, specular highlight, dispersion,
-  iridescence and diffraction do not — an SVG filter graph has nowhere to put them. The web lab
-  and the Android renderer remain the full article.
+- **Diffraction is the one thing it cannot render.** Everything else the model derives comes
+  through: refraction with per-channel dispersion, the rim with its two opposing arcs and dark
+  edge, the adaptive shadow, the body under legibility and presence, and the finger response.
+  Edge diffraction needs a wavelength term at the silhouette, and a filter graph has no way to
+  express one.
 
 - **The refraction is Chromium-only today.** Firefox does not support a filter reference in
   `backdrop-filter` and has closed the request as not planned; Safari does not yet, though WebKit

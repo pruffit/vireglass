@@ -1,9 +1,13 @@
 // The third VireGlass renderer: refracts LIVE DOM via `backdrop-filter: url(#svg-filter)` with an
 // `feDisplacementMap`, instead of drawing its own backdrop like the WebGL2 and AGSL renderers do.
 //
-// It carries PART of the material: refraction, the roughness prefilter, body density and ambient
-// pickup. Fresnel, specular, dispersion, iridescence and diffraction have nowhere to live in an
-// SVG filter graph and are absent here by construction, not by oversight.
+// Everything is derived from the same model the shaders read, and where a law already exists in
+// the core or in the shader text, this mirrors it rather than restating it: the rim's two arcs are
+// the lens's own key-light lobe, the shadow is `shadowOpacityFrom`, dispersion is the shader's
+// per-channel index shift, and the finger response is `createDeform` driving the same `touchWarp`.
+//
+// Diffraction is the one thing left out: it needs a wavelength-dependent term at the very edge,
+// and a filter graph has no way to express one.
 // See `docs/superpowers/specs/2026-09-19-vireglass-over-live-dom.md` for the technique and the
 // three findings that make it work (objectBoundingBox, prefiltering the source, the 8-bit step).
 import { ambientFrom, INK_DARK, INK_LIGHT, shouldInkBeLight, type BackdropSample } from '../adaptation';
@@ -12,10 +16,21 @@ import { roundedRectGeometry, type VireGlassGeometry } from '../geometry';
 import { resolveOptics, VIREGLASS_MATERIAL, type VireGlassMaterial, type VireGlassOptics } from '../material';
 import { probeBackdrop } from './probe';
 import { supportsSvgBackdropFilter } from './support';
+import { boxShadowCss } from './shadow';
+import { resolveBody, withPresence } from './body';
+import { RIM_WIDTH_PX, rimGradientCss } from './rim';
+import { REST_LIGHT } from '../adapters';
+import { refractionStrength } from '../optics';
+import type { MorphShape } from '../sdf';
+import { createDeform, raiseIntoGlass, type DeformSample } from '../touch-response';
+import { halfMinDp, MAX_STRETCH } from '../geometry';
 
 export * from './support';
 export * from './probe';
 export * from './displacement';
+export * from './rim';
+export * from './shadow';
+export * from './body';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const FILTER_HOST_ATTR = 'data-vireglass-filters';
@@ -25,6 +40,46 @@ let filterCounter = 0;
 /** Live instances keyed by element, so a second attach can retire the first rather than orphan
  *  its filter. Weak: a detached element takes its entry with it. */
 const attached = new WeakMap<HTMLElement, GlassHandle>();
+
+/** Contact radius as a fraction of the half-size: the finger is a blob covering a good part of a
+ *  small control, which is the whole reason §5 asks for the response to be visible UNDER it. */
+const TOUCH_RADIUS_FRACTION = 1.1;
+
+/**
+ * Wave impulse thrown by a touch, in CSS px. The ONE number in the interaction path the model
+ * does not give: the core carries the ripple's decay and frequency, but not how hard a finger
+ * strikes it. Tied to the same travel limit the drag saturates against, so it scales with the
+ * element instead of being an absolute. Unmeasured — a bench pass should replace it.
+ */
+const WAVE_OF_TRAVEL = 0.18;
+const RELEASE_WAVE = 0.6;
+
+function waveImpulse(g: VireGlassGeometry): number {
+  return halfMinDp(g) * MAX_STRETCH * WAVE_OF_TRAVEL;
+}
+
+const STYLE_ATTR = 'data-vireglass-styles';
+const GLASS_ATTR = 'data-vireglass';
+
+/**
+ * The hairline rim (docs/reference.md §2) needs a layer of its own over the element. A stylesheet
+ * rule on `::after` keeps it out of the host's markup — injecting a child node would fight any
+ * framework that owns these children.
+ *
+ * The mask pair is what makes it a ring rather than a fill: the same box painted twice, once
+ * clipped to the content box, composited so only the padding band survives.
+ */
+function ensureRimStyles(): void {
+  if (document.querySelector(`style[${STYLE_ATTR}]`)) return;
+  const style = document.createElement('style');
+  style.setAttribute(STYLE_ATTR, '');
+  style.textContent =
+    `[${GLASS_ATTR}]::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;padding:var(--vireglass-rim-width,1px);background:var(--vireglass-rim,none);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);mask-composite:exclude}` +
+    // The touch glow (§5) lights the material from the point of contact. Below the content, above
+    // the refraction — it is light inside the glass, not a film over the label.
+    `[${GLASS_ATTR}]::before{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--vireglass-glow,none);opacity:var(--vireglass-glow-opacity,0)}`;
+  document.head.appendChild(style);
+}
 
 function getFilterHost(): SVGSVGElement {
   const existing = document.querySelector<SVGSVGElement>(`svg[${FILTER_HOST_ATTR}]`);
@@ -46,7 +101,7 @@ function getFilterHost(): SVGSVGElement {
  * measures from something other than the element's own box and the displacement smears across
  * the page instead of staying at the rim.
  */
-function buildFilterElement(id: string, mapUrl: string, blurPx: number, scale: number): SVGFilterElement {
+function buildFilterElement(id: string, mapUrl: string, optics: VireGlassOptics, scale: number): SVGFilterElement {
   const filter = document.createElementNS(SVG_NS, 'filter');
   filter.setAttribute('id', id);
   filter.setAttribute('filterUnits', 'objectBoundingBox');
@@ -68,8 +123,62 @@ function buildFilterElement(id: string, mapUrl: string, blurPx: number, scale: n
   // without it, fine texture (1px diagonals) resamples into chevrons under the displacement.
   const feBlur = document.createElementNS(SVG_NS, 'feGaussianBlur');
   feBlur.setAttribute('in', 'SourceGraphic');
-  feBlur.setAttribute('stdDeviation', String(Math.max(blurPx, 0)));
+  feBlur.setAttribute('stdDeviation', String(Math.max(optics.blur, 0)));
   feBlur.setAttribute('result', 'blurred');
+
+  filter.append(feImage, feBlur);
+
+  // DISPERSION (docs/reference.md §1, and `lens-shader.ts` lines 283–284 for the law): the channels
+  // refract at different indices — red at `ior - 0.4 * iorSpread`, blue at `ior + 0.6 * iorSpread`,
+  // green at the base. One displacement pass cannot do that, so each channel gets its own and they
+  // are summed back. Three passes instead of one, so it only runs when the spread is worth paying
+  // for.
+  const spread = optics.iorSpread;
+  if (spread > 1e-4) {
+    const base = refractionStrength(optics.ior);
+    const ratio = (shift: number) => (base > 0 ? refractionStrength(optics.ior + shift) / base : 1);
+    const channels: Array<[string, number, string]> = [
+      ['dR', scale * ratio(-0.4 * spread), '1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0'],
+      ['dG', scale, '0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0'],
+      ['dB', scale * ratio(0.6 * spread), '0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0'],
+    ];
+    for (const [name, chScale, matrix] of channels) {
+      const pass = document.createElementNS(SVG_NS, 'feDisplacementMap');
+      pass.setAttribute('in', 'blurred');
+      pass.setAttribute('in2', 'map');
+      pass.setAttribute('scale', String(chScale));
+      pass.setAttribute('xChannelSelector', 'R');
+      pass.setAttribute('yChannelSelector', 'G');
+      pass.setAttribute('result', `${name}raw`);
+      const only = document.createElementNS(SVG_NS, 'feColorMatrix');
+      only.setAttribute('in', `${name}raw`);
+      only.setAttribute('type', 'matrix');
+      only.setAttribute('values', matrix);
+      only.setAttribute('result', name);
+      filter.append(pass, only);
+    }
+    // Arithmetic add, not a blend: every channel is isolated, so the sum is the recombined colour.
+    // Alpha stays at 1 on all three and clamps, which is what an opaque backdrop wants.
+    const rg = document.createElementNS(SVG_NS, 'feComposite');
+    rg.setAttribute('in', 'dR');
+    rg.setAttribute('in2', 'dG');
+    rg.setAttribute('operator', 'arithmetic');
+    rg.setAttribute('k1', '0');
+    rg.setAttribute('k2', '1');
+    rg.setAttribute('k3', '1');
+    rg.setAttribute('k4', '0');
+    rg.setAttribute('result', 'dRG');
+    const rgb = document.createElementNS(SVG_NS, 'feComposite');
+    rgb.setAttribute('in', 'dRG');
+    rgb.setAttribute('in2', 'dB');
+    rgb.setAttribute('operator', 'arithmetic');
+    rgb.setAttribute('k1', '0');
+    rgb.setAttribute('k2', '1');
+    rgb.setAttribute('k3', '1');
+    rgb.setAttribute('k4', '0');
+    filter.append(rg, rgb);
+    return filter;
+  }
 
   const feDisplace = document.createElementNS(SVG_NS, 'feDisplacementMap');
   feDisplace.setAttribute('in', 'blurred');
@@ -77,8 +186,7 @@ function buildFilterElement(id: string, mapUrl: string, blurPx: number, scale: n
   feDisplace.setAttribute('scale', String(scale));
   feDisplace.setAttribute('xChannelSelector', 'R');
   feDisplace.setAttribute('yChannelSelector', 'G');
-
-  filter.append(feImage, feBlur, feDisplace);
+  filter.append(feDisplace);
   return filter;
 }
 
@@ -112,28 +220,54 @@ function rgbCss(r: number, g: number, b: number): string {
   return `rgb(${to255(r)} ${to255(g)} ${to255(b)})`;
 }
 
-/** The body: the material's own presence over the backdrop. Density comes from the model, the
- *  hue from the surroundings — a flat fill in place of a tint is what breaks the material. */
-function bodyCss(optics: VireGlassOptics, r: number, g: number, b: number): string {
-  const alpha = Math.min(Math.max(optics.bodyDensity * 4, 0), 0.35);
-  return `rgba(${to255(r)}, ${to255(g)}, ${to255(b)}, ${alpha})`;
-}
-
-function fallbackTintCss(optics: VireGlassOptics, sample: BackdropSample): string {
+/**
+ * The body, from the model's own law (`./body`, ported from the lens shader §3): density is what
+ * legibility and presence demand over THIS backdrop, `tintLuma` is the lightness it tints toward,
+ * and the hue is the surroundings' — glass has no colour of its own, only the colour of what lies
+ * beneath it. A flat fill in place of a tint is what breaks the material.
+ */
+function bodyCss(optics: VireGlassOptics, sample: BackdropSample, ink: number): string {
+  const body = withPresence(resolveBody(optics, sample, ink), optics, sample);
   const [r, g, b] = ambientFrom(sample);
-  return bodyCss(optics, r, g, b);
+  const hue = (c: number) => body.tintLuma + (c - body.tintLuma) * optics.colorPickup;
+  return `rgba(${to255(hue(r))}, ${to255(hue(g))}, ${to255(hue(b))}, ${body.density.toFixed(3)})`;
 }
 
 export type AttachGlassOptions = {
   material?: Partial<VireGlassMaterial>;
   /** Defaults to the element's measured box (size + `border-radius`). */
   geometry?: VireGlassGeometry;
+  /** Key-light direction in screen space; defaults to the light at rest. */
+  light?: readonly [number, number];
+  /** Whether `attachGlass` writes `box-shadow` itself. Turn it off if the host owns that property —
+   *   is always emitted either way. */
+  shadow?: boolean;
+  /** Pointer response (§5). On by default. */
+  interactive?: boolean;
   /** Overrides the probe entirely — images and video are invisible to it, and the host app
    *  already knows its own cover-art accent. */
   sample?: BackdropSample;
 };
 
-export type GlassHandle = { update(): void; destroy(): void };
+/**
+ * Shapes this element flows into (docs/reference.md §5): merging with a neighbour, or splitting
+ * into parts across two bridges. Offsets and sizes are CSS px relative to this element's centre.
+ *
+ * `smoothing` is the width of the bridge — zero leaves the element alone. What each shape MEANS
+ * (a menu growing out of its button, a control breaking into segments) is the host's choreography;
+ * the material only knows how two silhouettes join.
+ */
+export type GlassMorph = {
+  smoothing: number;
+  shape?: MorphShape;
+  shape2?: MorphShape;
+};
+
+export type GlassHandle = {
+  update(): void;
+  setMorph(morph: GlassMorph | null): void;
+  destroy(): void;
+};
 
 export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): GlassHandle {
   if (typeof document === 'undefined') {
@@ -151,6 +285,26 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   let filterEl: SVGFilterElement | null = null;
   let destroyed = false;
   let mapKey = '';
+  let morph: GlassMorph | null = null;
+
+  ensureRimStyles();
+  el.setAttribute(GLASS_ATTR, '');
+  // `inset: 0` on the rim needs a positioned ancestor. Only taken over when the host left it at
+  // the initial value, and put back on destroy.
+  const positionWasStatic = getComputedStyle(el).position === 'static';
+  if (positionWasStatic) el.style.setProperty('position', 'relative');
+
+  function morphState() {
+    if (!morph) return {};
+    return { smoothing: morph.smoothing, morph: morph.shape, morph2: morph.shape2 };
+  }
+
+  function morphKey(): string {
+    if (!morph) return '0';
+    const part = (s?: MorphShape) =>
+      s ? `${s.offsetX},${s.offsetY},${s.width},${s.height},${s.cornerRadius}` : '-';
+    return `${morph.smoothing}/${part(morph.shape)}/${part(morph.shape2)}`;
+  }
 
   function apply(): void {
     if (destroyed) return;
@@ -162,11 +316,11 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       // The map depends only on geometry, optics and density — never on the backdrop. Rebuilding
       // it on every scroll would re-run a per-pixel loop and a PNG encode for a picture that did
       // not change; the refraction itself updates in the compositor with no JS at all.
-      const key = `${geometry.width}x${geometry.height}r${geometry.cornerRadius}@${devicePixelRatio()}:${optics.refraction}:${optics.refractionScale}:${optics.bevelDp}:${optics.blur}`;
+      const key = `m${morphKey()}|${geometry.width}x${geometry.height}r${geometry.cornerRadius}@${devicePixelRatio()}:${optics.refraction}:${optics.refractionScale}:${optics.bevelDp}:${optics.blur}`;
       if (key !== mapKey || !filterEl) {
-        const map = buildDisplacementMap(optics, geometry, devicePixelRatio());
+        const map = buildDisplacementMap(optics, geometry, devicePixelRatio(), morphState());
         const defs = getFilterHost().querySelector('defs') as SVGDefsElement;
-        const next = buildFilterElement(id, map.url, optics.blur, map.scale);
+        const next = buildFilterElement(id, map.url, optics, map.scale);
         if (filterEl?.parentNode) defs.replaceChild(next, filterEl);
         else defs.appendChild(next);
         filterEl = next;
@@ -177,7 +331,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     } else {
       el.style.setProperty('backdrop-filter', fallbackFilterCss(optics));
       el.style.setProperty('-webkit-backdrop-filter', fallbackFilterCss(optics));
-      el.style.backgroundColor = fallbackTintCss(optics, sample);
+      el.style.backgroundColor = bodyCss(optics, sample, wasLight ? 1 : 0);
     }
 
     const light = shouldInkBeLight(sample, wasLight);
@@ -193,10 +347,141 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     const inkLevel = Math.round((light ? INK_LIGHT : INK_DARK) * 255);
     el.style.setProperty('--vireglass-ink-color', `rgb(${inkLevel} ${inkLevel} ${inkLevel})`);
     el.style.setProperty('--vireglass-tint-color', rgbCss(tr, tg, tb));
-    el.style.setProperty('--vireglass-body-color', bodyCss(optics, tr, tg, tb));
+    el.style.setProperty('--vireglass-body-color', bodyCss(optics, sample, light ? 1 : 0));
+
+    // Rim and shadow follow the SAMPLE, not just the geometry, so they sit outside the map's
+    // cache key: the environment they take their colour and density from moves under a scroll
+    // while the silhouette does not.
+    el.style.setProperty('--vireglass-rim', rimGradientCss(optics, [tr, tg, tb], opts.light ?? REST_LIGHT));
+    el.style.setProperty('--vireglass-rim-width', `${RIM_WIDTH_PX}px`);
+
+    const shadow = boxShadowCss(geometry, sample);
+    el.style.setProperty('--vireglass-shadow', shadow);
+    if (opts.shadow !== false) el.style.setProperty('box-shadow', shadow);
   }
 
   apply();
+
+  // INTERACTION (docs/reference.md §5). The physics is the core's — `createDeform` carries the
+  // spring, the press attack and the wave, at its own fixed step. What lives here is only the
+  // plumbing: pointer in, map and glow out.
+  const deform = createDeform();
+  let frame: number | null = null;
+  let lastFrameAt = 0;
+  let interacting = false;
+
+  function localPoint(e: PointerEvent): [number, number] {
+    const rect = el.getBoundingClientRect();
+    return [e.clientX - rect.left - rect.width / 2, e.clientY - rect.top - rect.height / 2];
+  }
+
+  function paintInteraction(sampleOut: DeformSample): void {
+    const geometry = opts.geometry ?? measureGeometry(el);
+    const base = resolveOptics(opts.material);
+    // Under the finger a matte control stops being frosted and becomes a lens (§5, M 4:10–4:30).
+    const rise = raiseIntoGlass(sampleOut.press);
+    const optics = resolveOptics({ ...opts.material, roughness: (opts.material?.roughness ?? VIREGLASS_MATERIAL.roughness) * rise.solid });
+
+    // A reduced-resolution map while the finger is down: `feImage` stretches it over the element
+    // regardless, the displacement is smooth, and a full device-pixel rebuild plus a PNG encode
+    // every frame does not hold a frame budget.
+    const map = buildDisplacementMap(optics, geometry, interacting ? 1 : devicePixelRatio(), {
+      ...morphState(),
+      touch: {
+        x: sampleOut.touchX,
+        y: sampleOut.touchY,
+        pullX: sampleOut.pullX,
+        pullY: sampleOut.pullY,
+        press: sampleOut.press,
+        radius: halfMinDp(geometry) * TOUCH_RADIUS_FRACTION,
+        waveAmp: sampleOut.waveAmp,
+        wavePhase: sampleOut.wavePhase,
+      },
+    });
+    if (filterEl) {
+      const feImage = filterEl.querySelector('feImage');
+      const feDisplace = filterEl.querySelector('feDisplacementMap');
+      feImage?.setAttribute('href', map.url);
+      feDisplace?.setAttribute('scale', String(map.scale));
+    }
+    mapKey = '';
+
+    // The glow is a CONCENTRATION of the surroundings, not the glass's own whiteness: over a dark
+    // backdrop the element lightens but never turns white, and ink over it stays legible.
+    const [gr, gg, gb] = ambientFrom(opts.sample ?? probeBackdrop(el));
+    const cx = ((sampleOut.touchX + geometry.width / 2) / geometry.width) * 100;
+    const cy = ((sampleOut.touchY + geometry.height / 2) / geometry.height) * 100;
+    const reach = halfMinDp(geometry) * TOUCH_RADIUS_FRACTION;
+    el.style.setProperty(
+      '--vireglass-glow',
+      `radial-gradient(circle ${reach.toFixed(0)}px at ${cx.toFixed(1)}% ${cy.toFixed(1)}%, rgba(${to255(gr)},${to255(gg)},${to255(gb)},1) 0%, rgba(${to255(gr)},${to255(gg)},${to255(gb)},0) 100%)`,
+    );
+    el.style.setProperty('--vireglass-glow-opacity', (sampleOut.active * base.edgeLight).toFixed(3));
+  }
+
+  function tick(now: number): void {
+    if (destroyed) return;
+    const dt = lastFrameAt ? (now - lastFrameAt) / 1000 : 1 / 60;
+    lastFrameAt = now;
+    deform.step(dt);
+    const s = deform.sample();
+    paintInteraction(s);
+    if (deform.idle()) {
+      interacting = false;
+      frame = null;
+      lastFrameAt = 0;
+      // Settled: put the full-resolution map back and drop the glow.
+      el.style.setProperty('--vireglass-glow-opacity', '0');
+      apply();
+      return;
+    }
+    frame = requestAnimationFrame(tick);
+  }
+
+  function run(): void {
+    if (frame === null && !destroyed) frame = requestAnimationFrame(tick);
+  }
+
+  let grabX = 0;
+  let grabY = 0;
+
+  function onDown(e: PointerEvent): void {
+    const [x, y] = localPoint(e);
+    const geometry = opts.geometry ?? measureGeometry(el);
+    interacting = true;
+    grabX = x;
+    grabY = y;
+    // Pointer capture, or a drag that leaves the element stops reporting and the deformation
+    // freezes mid-pull with the finger still down.
+    el.setPointerCapture?.(e.pointerId);
+    deform.grab(x, y, waveImpulse(geometry));
+    run();
+  }
+  function onMove(e: PointerEvent): void {
+    if (!interacting) return;
+    const [x, y] = localPoint(e);
+    const geometry = opts.geometry ?? measureGeometry(el);
+    // `drag` takes the travel FROM the grab point, and saturates it against the limit itself.
+    deform.drag(x - grabX, y - grabY, halfMinDp(geometry) * MAX_STRETCH);
+    run();
+  }
+  function onUp(e?: PointerEvent): void {
+    if (!interacting) return;
+    const geometry = opts.geometry ?? measureGeometry(el);
+    if (e) el.releasePointerCapture?.(e.pointerId);
+    // Lifting throws a second, weaker ring (§5) — the core caps the sum, so this only has to be
+    // the smaller impulse.
+    deform.release(waveImpulse(geometry) * RELEASE_WAVE);
+    run();
+  }
+
+  if (opts.interactive !== false) {
+    el.addEventListener('pointerdown', onDown);
+    el.addEventListener('pointermove', onMove);
+    el.addEventListener('pointerup', onUp);
+    el.addEventListener('pointercancel', onUp);
+    el.addEventListener('pointerleave', onUp);
+  }
 
   // The "listener" `destroy()` has to remove: geometry defaults to the measured box, so a resize
   // of the element itself has to rebuild the map, or the displacement drifts from the element's
@@ -210,6 +495,15 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   function destroy(): void {
     destroyed = true;
     if (attached.get(el) === handle) attached.delete(el);
+    if (frame !== null) cancelAnimationFrame(frame);
+    frame = null;
+    el.removeEventListener('pointerdown', onDown);
+    el.removeEventListener('pointermove', onMove);
+    el.removeEventListener('pointerup', onUp);
+    el.removeEventListener('pointercancel', onUp);
+    el.removeEventListener('pointerleave', onUp);
+    el.style.removeProperty('--vireglass-glow');
+    el.style.removeProperty('--vireglass-glow-opacity');
     resizeObserver?.disconnect();
     resizeObserver = null;
     if (filterEl?.parentNode) filterEl.parentNode.removeChild(filterEl);
@@ -224,9 +518,23 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     el.style.removeProperty('--vireglass-ink-color');
     el.style.removeProperty('--vireglass-tint-color');
     el.style.removeProperty('--vireglass-body-color');
+    el.style.removeProperty('--vireglass-rim');
+    el.style.removeProperty('--vireglass-rim-width');
+    el.style.removeProperty('--vireglass-shadow');
+    el.style.removeProperty('box-shadow');
+    el.removeAttribute(GLASS_ATTR);
+    if (positionWasStatic) el.style.removeProperty('position');
   }
 
-  const handle: GlassHandle = { update: apply, destroy };
+  const handle: GlassHandle = {
+    update: apply,
+    setMorph(next) {
+      morph = next && next.smoothing > 0 ? next : null;
+      mapKey = '';
+      apply();
+    },
+    destroy,
+  };
   attached.set(el, handle);
   return handle;
 }

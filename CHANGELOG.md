@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+### The material, not a part of it — `vireglass/dom`
+
+The DOM renderer read six of the model's twenty-eight derived values. It now reads fourteen, and
+what it left out was the half that makes the material recognisable.
+
+**Rim light** (§2): a hairline along the silhouette with two opposing arcs, the far one weaker,
+the rest of it outlined by a dark edge — and its colour taken from the environment the probe
+measured. The lobe is the lens shader's own, exponent and 0.45 ratio included; the dark edge is
+its 0.22 darkening. Rendered as a masked conic gradient rather than per-pixel, but the numbers
+behind every stop are the model's.
+
+**Adaptive shadow** (§4): denser over text, weaker over a flat light backdrop. The law was
+already in the core as `shadowOpacityFrom`; the conversion to a CSS alpha is anchored to the two
+densities measured off the reference frames, 4.0% and 19.9%, rather than to a chosen gain.
+
+**Dispersion** (§1): three displacement passes, one per channel, at the indices the shader uses —
+red at `ior - 0.4 * iorSpread`, blue at `ior + 0.6 * iorSpread` — recombined arithmetically.
+
+**The body** (§3): density is what legibility and presence demand over this backdrop, ported from
+the lens shader. It replaces a flat `bodyDensity * 4` that answered to nothing.
+
+**Finger response** (§5): press, drag with saturating travel, the release wave, and the rise into
+glass — all from the core's `createDeform` and `raiseIntoGlass`, driving the same `touchWarp`
+the shader uses. The glow at the contact point is a concentration of the surroundings, not the
+glass's own whiteness.
+
+**Morphing** (§5): `setMorph` bridges the element to one or two neighbouring shapes through the
+smooth union. What each shape means is the host's choreography; the material only knows how two
+silhouettes join.
+
+The core gains the JS twins these needed: `smin`, `sceneDistance`, `sceneGradient` and
+`touchWarp`, each mirroring its shader counterpart term for term.
+
+Diffraction is the one thing still missing. It needs a wavelength term at the silhouette, and a
+filter graph has no way to express one.
+
 ### Glass over live DOM — `vireglass/dom`
 
 `attachGlass(el)` refracts the real page behind an element. No canvas, no second render of your
