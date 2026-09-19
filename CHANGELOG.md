@@ -1,9 +1,13 @@
 # Changelog
 
-## 0.1.0
+## 1.0.0
 
-First public release. The material had been developed inside a private product since
+First stable release. The material had been developed inside a private product since
 August 2026; this is its extraction, unchanged in behaviour.
+
+Supersedes 0.1.0, which was published briefly and then corrected: the core turned out to
+require React through a single hook, a git install produced no `dist/`, and publishing built
+the package twice. All three are fixed here. Use 1.0.0.
 
 ### Entry points
 

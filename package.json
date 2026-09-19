@@ -1,6 +1,6 @@
 {
   "name": "vireglass",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "A physically-derived liquid glass material for interfaces. One material model, one shader source, two render targets: WebGL2 and Android AGSL.",
   "license": "Apache-2.0",
   "author": "Danil Kotlaev",
