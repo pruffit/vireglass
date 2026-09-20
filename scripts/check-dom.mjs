@@ -50,6 +50,7 @@ const FIXTURE = `<!doctype html>
 </style>
 <div id="page"></div>
 <div id="glass"></div>
+<div id="host"></div>
 <script type="module">
   import { attachGlass } from '/dist/dom.js';
   import { MATERIAL_PRESETS } from '/dist/index.js';
@@ -58,12 +59,29 @@ const FIXTURE = `<!doctype html>
   // displacement behind a tint. This measurement is about geometry, so the backdrop is stated.
   const sample = { luma: 0.5, lo: 0.04, hi: 0.96, busy: 0.4, r: 0.5, g: 0.5, b: 0.5 };
   let live = null;
+  // A widget in a shadow root is how you survive a page full of global "!important", and it is
+  // where the material used to render nothing at all: "backdrop-filter: url(#id)" resolves in the
+  // element's own tree, so a filter parked on the page is not found — silently, because the
+  // reference is valid CSS.
+  const shadow = document.getElementById('host').attachShadow({ mode: 'open' });
+  // Styled from inside: a page stylesheet does not cross into a shadow root, which is the whole
+  // point of one. The first version of this fixture put the class on it and measured an element of
+  // no size, then reported the product broken.
+  const shadowed = document.createElement('div');
+  shadowed.style.cssText =
+    'position:absolute;left:${BOX.x}px;top:${BOX.y}px;width:${BOX.w}px;height:${BOX.h}px;border-radius:${BOX.r}px';
+  shadow.append(shadowed);
 
   globalThis.__mount = (which) => {
     document.body.classList.toggle('colour', which === 'colour' || which === 'colour-none');
     live?.destroy();
     live = null;
+    shadowed.style.display = which === 'shadow' ? 'block' : 'none';
     if (which === 'none' || which === 'colour-none') return;
+    if (which === 'shadow') {
+      live = attachGlass(shadowed, { material: MATERIAL_PRESETS.glass, sample, interactive: false, shadow: false });
+      return;
+    }
     const material = which === 'flat'
       ? { ...MATERIAL_PRESETS.glass, ior: 1 }
       : MATERIAL_PRESETS.glass;
@@ -73,10 +91,23 @@ const FIXTURE = `<!doctype html>
       sample,
       // 'rest' keeps the pointer listeners — the claim is that an ATTACHED interactive element
       // shows nothing until it is touched, and detaching them would prove a different thing.
-      interactive: which === 'rest',
+      interactive: which === 'rest' || which === 'press',
       shadow: which === 'rest' ? false : false,
       variant: which === 'rest' ? 'interactive' : 'present',
     });
+  };
+
+  // Every frame above is static, so nothing here ever exercised the interaction path. The
+  // dispersion bug lived exactly there: three displacement passes, only the first one updated.
+  globalThis.__press = () => {
+    const el = document.getElementById('glass');
+    const box = el.getBoundingClientRect();
+    const at = { clientX: box.left + box.width / 2, clientY: box.top + box.height / 2, pointerId: 1, bubbles: true };
+    el.dispatchEvent(new PointerEvent('pointerdown', at));
+  };
+  globalThis.__scales = () => {
+    const filter = document.querySelector('svg[data-vireglass-filters] filter');
+    return filter ? [...filter.querySelectorAll('feDisplacementMap')].map((n) => Number(n.getAttribute('scale'))) : [];
   };
 
   globalThis.__mount('full');
@@ -230,7 +261,57 @@ try {
   //    around, and it stays invisible until someone looks outside the element.
   if (leak > 0.5) fail(`the page changed outside the element (${leak.toFixed(2)}) — the filter is leaking past its box`);
 
-  // 4. Glass moves light, it does not make it. Over a saturated page the material's own pixels
+  // 4. A widget in a shadow root has to get the same material as one on the page. It used to get
+  //    none: the filter lives on the page, the reference resolves in the shadow tree, and the
+  //    failure is silent because the reference is valid CSS. Measured against 'none' — the same
+  //    page with no glass anywhere — so "the same as nothing" is exactly what fails.
+  const shadow = await shoot('shadow');
+  const inShadow = await diff(shadow, none, rimBand);
+  console.log(`check-dom: in a shadow root the rim reads ${inShadow.toFixed(2)} (on the page: ${alive.toFixed(2)})`);
+  if (inShadow < alive * 0.5) {
+    fail(
+      `glass in a shadow root is doing ${inShadow < 2 ? 'nothing' : 'far less than on the page'} ` +
+        `(${inShadow.toFixed(2)} against ${alive.toFixed(2)}) — its filter is not being found`,
+    );
+  }
+
+  // 5. Under a finger every displacement pass has to keep following it. With dispersion there are
+  //    three, at three scales, and only the first was being updated: red got the undispersed scale
+  //    and green and blue kept whatever they had at attach time.
+  // Mounted with its pointer listeners on: 'full' attaches with interactive: false, so a
+  // pointerdown there lands on nothing and the check would pass whatever the code did.
+  await page.evaluate((w) => globalThis.__mount(w), 'press');
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const restScales = await page.evaluate(() => globalThis.__scales());
+  await page.evaluate(() => globalThis.__press());
+  await page.evaluate(() => new Promise((r) => setTimeout(r, 120)));
+  const pressed = await page.evaluate(() => globalThis.__scales());
+  console.log(`check-dom: displacement scales at rest ${restScales.map((v) => v.toFixed(1)).join(' / ')} ` +
+    `-> under a finger ${pressed.map((v) => v.toFixed(1)).join(' / ')}`);
+  if (pressed.length === 0) {
+    fail('no displacement pass was found under a finger — the filter is not being rebuilt');
+  } else if (pressed.length !== restScales.length) {
+    fail(`the filter changed shape under a finger (${restScales.length} passes -> ${pressed.length})`);
+  } else if (pressed.length > 1) {
+    // The scale itself does not move under a finger — pressing changes what the map CONTAINS, not
+    // how far it displaces. What must survive is the spread between the channels: the bug set one
+    // pass to the undispersed scale and left the others at whatever they had, so the ratios broke
+    // while every absolute value still looked plausible.
+    const ratio = (all) => all.map((v) => v / all[Math.floor(all.length / 2)]);
+    const before = ratio(restScales);
+    const after = ratio(pressed);
+    const drift = Math.max(...after.map((v, i) => Math.abs(v - before[i])));
+    console.log(`check-dom: channel spread across the passes holds to ${drift.toFixed(4)} under a finger`);
+    if (drift > 0.002) {
+      fail(`the channels stopped diverging by the same ratios under a finger (drift ${drift.toFixed(4)}) — ` +
+        'a pass is being given a scale that is not its own');
+    }
+    if (Math.max(...pressed) - Math.min(...pressed) <= 0.01) {
+      fail('every pass ended on the same scale under a finger — dispersion switched itself off');
+    }
+  }
+
+  // 6. Glass moves light, it does not make it. Over a saturated page the material's own pixels
   //    must not be more saturated than the page's — measured where the material is strongest,
   //    which is the rim band, against the same band with no glass on it.
   const colour = await shoot('colour');
@@ -252,7 +333,7 @@ try {
     );
   }
 
-  // 5. §7: the way to put glass on a content control is for there to be no glass until a finger
+  // 7. §7: the way to put glass on a content control is for there to be no glass until a finger
   //    arrives. An element that shows anything at rest is permanent glass in the content layer.
   if (atRest > 0.5) fail(`the interactive variant is visible untouched (${atRest.toFixed(2)}) — that is glass in the content layer`);
 
