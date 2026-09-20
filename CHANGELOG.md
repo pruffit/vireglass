@@ -1,5 +1,63 @@
 # Changelog
 
+## 2.2.0
+
+Four bugs from the first real integration, and a gate for the target that had none.
+
+### Glass in a shadow root rendered nothing at all
+
+The filter went on `document.body` and the rim styles on `document.head`, but
+`backdrop-filter: url(#id)` resolves the reference in the element's OWN tree. From inside a shadow
+root the filter is not found — and the failure is silent, because the reference is valid CSS: the
+element gets no backdrop whatsoever, not even the blur fallback. A widget in a shadow root, which
+is how you survive a page full of global `!important`, came out with no material.
+
+The host is now the element's own `getRootNode()`: the shadow root when there is one, the document
+otherwise. Nothing to configure.
+
+### A white page read as black
+
+With no opaque layer in the stack, the probe fell back to the topmost element's `color` — its TEXT
+colour. On a white page with black text that reads black, and the material dressed itself for a
+dark backdrop over a light one.
+
+Not an edge case. CSS propagates the body's background to the CANVAS, so `getComputedStyle` reports
+`<html>`, and often `<body>`, as transparent on a perfectly ordinary page. Any element past the end
+of the body's box — a widget pinned to a corner — sees a stack of nothing. The propagation rule
+says where to look instead: the root element's background, then the body's, then the user agent's
+white.
+
+### Presence put the body exactly on the backdrop
+
+`withPresence` picked its direction from the backdrop alone — lighter over dark — and then, when
+the body disagreed, clamped `tintLuma` to the backdrop's mean, which is the one value that
+separates from nothing. Light ink over a dark backdrop puts the body at 0.07 against a backdrop of
+0.12: already separating, downward, and the clamp pulled it back. Measured on the default material
+at `presence: 0.08`, the delivered separation was exactly 0.0000 at backdrops of 0.12, 0.20 and
+0.35.
+
+It takes the side the body is already on now. Presence also gains a density ceiling of its own,
+below the general one: it is a floor on visibility, not a licence to stop being a window.
+
+### Dispersion left two channels behind under a finger
+
+`paintInteraction` called `querySelector('feDisplacementMap')` where dispersion builds three, each
+with its own scale. Red got the undispersed scale and green and blue kept whatever they had at
+attach time, so the coloured edge stopped following the finger. All three are updated now, each
+at its own fraction.
+
+### check:agsl
+
+`check:glsl` proves the TRANSPILER works — it converts the source to GLSL ES 3.0 and compiles that
+in Chromium. It says nothing about whether the source is valid SkSL, which is what Android runs. So
+one of the three targets this package claims had no gate at all, and a shader change could only be
+found out about in somebody's app.
+
+`check:agsl` compiles the same text with Skia's own compiler through CanvasKit. Both shaders are
+valid, so there was nothing latent. The check is verified able to fail: a shader referencing an
+undeclared name is rejected.
+
+
 ## 2.1.0
 
 ### Several elements flowing into one whole, however many there are
