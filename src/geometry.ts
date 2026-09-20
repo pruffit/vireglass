@@ -34,12 +34,41 @@ export const halfMinDp = (g: VireGlassGeometry) => Math.max(Math.min(g.width, g.
 export const MAX_STRETCH = 0.34;
 
 /**
- * Bigger element, thicker glass: a stronger lens, a deeper shadow (docs/reference.md §1). Bevel
- * and material thickness are specified for an element at a reference half-size and grow as the
- * square root of size.
+ * How big this element reads, for the purpose of how thick its glass is.
+ *
+ * Not `halfMinDp`, which is half the narrower side and is the right measure for a bevel limit or a
+ * contact radius but not for this: a 390x420 sheet and a 390x780 one have the same narrow side and
+ * are not the same surface. Not the area either: a 900x8 rule has more area than a toolbar button
+ * and is the thinnest glass in the interface.
+ *
+ * The geometric mean of the two respects both facts — the narrow side caps how much glass there
+ * can be, and among shapes that share it, more surface reads as more glass. Derived, not
+ * calibrated: it introduces no constant.
  */
-export const sizeGain = (g: VireGlassGeometry) =>
-  Math.min(Math.max(Math.sqrt(halfMinDp(g) / SIZE.referenceDp), SIZE.gainMin), SIZE.gainMax);
+export const sizeDp = (g: VireGlassGeometry) =>
+  Math.sqrt(halfMinDp(g) * Math.max(Math.sqrt(g.width * g.height) / 2, 1));
+
+/**
+ * Bigger element, thicker glass: a stronger lens, a deeper shadow (219 @6:36 — as glass "flexes and
+ * morphs to larger sizes, it simulates a thicker material with deeper shadows and more pronounced
+ * lensing and refraction effects"). Bevel and material thickness are specified for an element at a
+ * reference size and grow as the square root of it.
+ *
+ * The ceiling is approached, never reached. A hard clip made every surface above it the same glass,
+ * and above it was where the interface lives: a half-open sheet, a full-screen sheet, an iPad
+ * sidebar and a 900px Mac panel all sat at exactly 2.4. The reference names sidebars as the LARGE
+ * end of the range, so a model that stops responding before them has stopped obeying it.
+ *
+ * The curve below is the same square root; the join at `gainMin` is continuous in value and in
+ * slope, and the asymptote is `gainMax` exactly as before. Both constants keep their values —
+ * what changed is that saturation is smooth instead of a clip.
+ */
+export const sizeGain = (g: VireGlassGeometry) => {
+  const raw = Math.sqrt(sizeDp(g) / SIZE.referenceDp);
+  if (raw <= SIZE.gainMin) return SIZE.gainMin;
+  const span = SIZE.gainMax - SIZE.gainMin;
+  return SIZE.gainMin + span * (1 - Math.exp(-(raw - SIZE.gainMin) / span));
+};
 
 /** A bevel wider than this fraction of the half-size breaks the SDF: the roundings converge in
  *  the middle. */

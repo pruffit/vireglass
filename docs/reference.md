@@ -50,6 +50,21 @@ code — only structural rules do.
   scattering (M 7:02–7:25). Bevel and thickness scale with size, they aren't a fixed constant.
 - **Appearance is by modulating the lens, not by fading opacity** (M 2:55).
 
+### What counts as "larger"
+
+219 @6:36: as glass "flexes and morphs to larger sizes, it simulates a thicker material with deeper
+shadows and more pronounced lensing and refraction effects, enhancing perceived depth", and the
+session's own summary names the large end — "larger controls like iPadOS and macOS sidebars".
+
+That range has to stay continuous across it. A model that saturates partway stops obeying the rule
+exactly where the reference points: a half-open sheet, a full-screen sheet, an iPad sidebar and a
+900 px Mac panel are four different surfaces, and they must not be one glass.
+
+Size here is neither the narrower side nor the area. Half the narrower side makes a 390x780 sheet
+the same as a 390x420 one; area makes a 900x8 rule larger than a toolbar button. The measure has to
+respect both facts — the narrow side caps how much glass there can be, and among shapes sharing it,
+more surface is more glass.
+
 ## 2. Rim light
 
 - **A thin line along the silhouette**, ~1 pt, not a band and not a bevel (M 2:36, 4K crop).
@@ -309,6 +324,7 @@ and the corners of grouped table views.
 | sampling outward at the rim | the rim shows what's under the center |
 | highlight as a wide bevel | a ~1 pt line along the silhouette |
 | one bevel size for every element | bigger element, thicker glass |
+| a size response that saturates | sidebars are the large end, not past it |
 | opacity fade on appearance | the lens builds up from zero |
 | solid color fill | tint keyed to backdrop lightness |
 | glass nested inside glass | one pane, or glass that arrives on touch |
