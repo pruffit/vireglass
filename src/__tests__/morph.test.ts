@@ -106,3 +106,44 @@ describe('two shapes fusing in place (docs/reference.md §5)', () => {
     }
   });
 });
+
+// Measured off frames/morph/s03 — the one panel in the reference where the necks are still
+// attached. Apple's silhouette: lobes 72 and 82 px with their centres 92 px apart, joined by a
+// neck 28 px tall. This is the only place in the model where a shape's actual geometry can be
+// checked against a frame rather than against a sentence.
+describe('the neck, against the reference frame (docs/reference.md §5)', () => {
+  const circle = roundedRectGeometry(72, 72, 36);
+  const lobe = roundedRectGeometry(82, 82, 41);
+
+  /** The narrowest point of the silhouette between the two lobes. */
+  function neckHeight(m: NonNullable<ReturnType<typeof morphBetween>>): number {
+    let narrowest = Infinity;
+    for (let x = 20; x < 75; x += 0.5) {
+      let top: number | null = null;
+      let bottom = 0;
+      for (let y = -80; y <= 80; y += 0.25) {
+        if (sceneDistance(x, y, circle.width, circle.height, circle.cornerRadius, m.smoothing, m) <= 0) {
+          if (top === null) top = y;
+          bottom = y;
+        }
+      }
+      const height = top === null ? 0 : bottom - top;
+      if (height < narrowest) narrowest = height;
+    }
+    return narrowest;
+  }
+
+  it('renders the neck the reference frame shows', () => {
+    const neck = neckHeight(morphBetween(circle, lobe, 92, 0, 1)!);
+    expect(neck).toBeGreaterThan(25);
+    expect(neck).toBeLessThan(31);
+  });
+
+  it('is a measurement that discriminates, not one anything would satisfy', () => {
+    // Same geometry, bridge scaled as if the fusion margin were 1.2 and 1.4. Both miss.
+    const at = (fuse: number) =>
+      neckHeight({ offsetX: 92, offsetY: 0, width: 82, height: 82, cornerRadius: 41, smoothing: 15 * 2 * fuse });
+    expect(at(1.2)).toBeLessThan(25);
+    expect(at(1.4)).toBeGreaterThan(31);
+  });
+});

@@ -268,7 +268,13 @@ export const MORPH = {
   /**
    * How far past merely touching a completed fusion goes, as a multiple of the bridge width that
    * just closes the gap. At exactly the bridge width the two surfaces meet at a point, which is two
-   * shapes kissing rather than one body. UNMEASURED.
+   * shapes kissing rather than one body.
+   *
+   * MEASURED, frames/morph/s03, the one panel where the necks are still attached. Apple's
+   * silhouette there: lobes 72 and 82 px with their centres 92 px apart — 15 px of space between
+   * their surfaces — joined by a neck 28 px tall. Rendering the same geometry through this model
+   * gives 29.0. The measurement discriminates: 1.2 gives 23.5, 1.4 gives 33.5, and at 1.0 the neck
+   * closes to nothing.
    */
   fuse: 1.3,
 } as const;

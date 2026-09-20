@@ -155,6 +155,10 @@ slider knob over white measures 10.5%.
   overshoot (~0.4 s), and as it nears full size the content emerges — first as a blurred, clipped
   body. Closing runs in reverse: the menu flows into a droplet, which flows back into the panel and
   leaves a ridge on top that dissolves away.
+- Measured off the frame (frames/morph/s03, the panel where the necks are still attached): lobes
+  72 and 82 px, centres 92 px apart — 15 px of space between their surfaces — joined by a neck 28
+  px tall, about 0.39 of the smaller lobe. Our bridge law renders 29.0 on the same geometry. The
+  measurement is sharp: a fusion margin of 1.2 gives 23.5 and 1.4 gives 33.5.
 - A control splitting into parts (M 5:02, frame-by-frame at 12 fps): "Select" whitens, the label
   goes out of focus, the body STRETCHES and bulges out its future parts, bridges stretch taut
   between them, and only then do they tear. The reverse is the same: the parts flow back into one
