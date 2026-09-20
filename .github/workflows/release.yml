@@ -47,16 +47,25 @@ jobs:
 
       # Skipped rather than failed when no token is configured: the gates above are the
       # point of this workflow, and a tag should not go red because publishing is not set up.
-      - name: Check for an npm token
-        id: token
-        run: echo "present=${{ secrets.NPM_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
-
+      # A tag is a request to release. If it cannot, that is a failure, not a condition to
+      # tolerate: this step used to skip on a missing token and the job stayed green, so v1.1.0
+      # passed every gate, published nothing, and reported success. The README then documented a
+      # surface the registry did not have, which is the worst thing an open package can do to
+      # someone following its quickstart.
       - name: Publish to npm
-        if: steps.token.outputs.present == 'true'
-        run: npm publish --provenance --access public
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::error::NPM_TOKEN is not set, so $GITHUB_REF_NAME cannot be published."
+            echo "A tag is a request to release. Add the NPM_TOKEN secret under Settings," >> "$GITHUB_STEP_SUMMARY"
+            echo "Secrets and variables, Actions - then re-run this workflow." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Publishing skipped
-        if: steps.token.outputs.present != 'true'
-        run: echo "::warning::NPM_TOKEN is not set — the package was built and gated but not published."
+      - name: Say what went out
+        run: |
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          echo "Published $NAME@$VERSION" >> "$GITHUB_STEP_SUMMARY"
