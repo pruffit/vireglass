@@ -41,6 +41,12 @@ const FIXTURE = `<!doctype html>
     background-image: repeating-linear-gradient(90deg, #f4f7ff 0 1px, #0b0d12 1px 8px); }
   #glass { position: absolute; left: ${BOX.x}px; top: ${BOX.y}px;
            width: ${BOX.w}px; height: ${BOX.h}px; border-radius: ${BOX.r}px; }
+  /* A saturated page, for the promise that glass does not invent colour. The hairlines cannot
+     test it: they are nearly grey, so a material that saturates everything looks fine on them. */
+  body.colour #page { background-image:
+    radial-gradient(circle at 30% 35%, #ffd34d 0 22%, transparent 48%),
+    radial-gradient(circle at 72% 68%, #ff5d8f 0 20%, transparent 46%),
+    linear-gradient(140deg, #0e1220, #203055 45%, #0b1020); }
 </style>
 <div id="page"></div>
 <div id="glass"></div>
@@ -54,13 +60,15 @@ const FIXTURE = `<!doctype html>
   let live = null;
 
   globalThis.__mount = (which) => {
+    document.body.classList.toggle('colour', which === 'colour' || which === 'colour-none');
     live?.destroy();
     live = null;
-    if (which === 'none') return;
+    if (which === 'none' || which === 'colour-none') return;
     const material = which === 'flat'
       ? { ...MATERIAL_PRESETS.glass, ior: 1 }
       : MATERIAL_PRESETS.glass;
     live = attachGlass(document.getElementById('glass'), {
+      ...(which === 'colour' ? { sample: undefined } : {}),
       material,
       sample,
       // 'rest' keeps the pointer listeners — the claim is that an ATTACHED interactive element
@@ -124,6 +132,35 @@ const DIFF = `(a, b, rect) => {
     let sum = 0;
     for (let i = 0; i < pa.length; i += 4) sum += Math.abs(pa[i] - pb[i]);
     return sum / (pa.length / 4);
+  });
+}`;
+
+/**
+ * The 98th percentile of pixel saturation over a rectangle, and the mean, both 0..1.
+ *
+ * Glass moves light around. It cannot invent colour that is not in the page, so the material's own
+ * pixels must not be more saturated than the page's. The spectral overlay did exactly that — it
+ * multiplied the backdrop channel by channel, and a multiplier of 1.68 on red against 0.05 on blue
+ * turns a soft yellow into a neon tube. Every other gate passed while it did.
+ */
+const SATURATION = `(src, rect) => {
+  const load = (s) => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = s; });
+  return load(src).then((img) => {
+    const c = document.createElement('canvas');
+    c.width = rect.w; c.height = rect.h;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(img, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.h);
+    const d = ctx.getImageData(0, 0, rect.w, rect.h).data;
+    const v = [];
+    let sum = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      const mx = Math.max(d[i], d[i + 1], d[i + 2]);
+      const mn = Math.min(d[i], d[i + 1], d[i + 2]);
+      const s = mx > 8 ? (mx - mn) / mx : 0;
+      v.push(s); sum += s;
+    }
+    v.sort((a, b) => a - b);
+    return { hi: v[Math.floor(v.length * 0.98)], mean: sum / v.length };
   });
 }`;
 
@@ -193,7 +230,29 @@ try {
   //    around, and it stays invisible until someone looks outside the element.
   if (leak > 0.5) fail(`the page changed outside the element (${leak.toFixed(2)}) — the filter is leaking past its box`);
 
-  // 4. §7: the way to put glass on a content control is for there to be no glass until a finger
+  // 4. Glass moves light, it does not make it. Over a saturated page the material's own pixels
+  //    must not be more saturated than the page's — measured where the material is strongest,
+  //    which is the rim band, against the same band with no glass on it.
+  const colour = await shoot('colour');
+  const colourNone = await shoot('colour-none');
+  const sat = (img, rect) =>
+    page.evaluate(([s, r, fn]) => new Function(`return ${fn}`)()(s, r), [img, rect, SATURATION]);
+  const band = { x: BOX.x, y: BOX.y, w: BOX.w, h: BOX.h };
+  const withGlass = await sat(colour, band);
+  const bare = await sat(colourNone, band);
+  console.log(
+    `check-dom: saturation over a coloured page — glass ${(withGlass.hi * 100).toFixed(0)}% hi / ` +
+      `${(withGlass.mean * 100).toFixed(0)}% mean, the page alone ${(bare.hi * 100).toFixed(0)}% / ` +
+      `${(bare.mean * 100).toFixed(0)}%`,
+  );
+  if (withGlass.hi > bare.hi + 0.06) {
+    fail(
+      `the glass is more saturated than the page it stands on (${(withGlass.hi * 100).toFixed(0)}% vs ` +
+        `${(bare.hi * 100).toFixed(0)}%) — it is inventing colour, not moving it`,
+    );
+  }
+
+  // 5. §7: the way to put glass on a content control is for there to be no glass until a finger
   //    arrives. An element that shows anything at rest is permanent glass in the content layer.
   if (atRest > 0.5) fail(`the interactive variant is visible untouched (${atRest.toFixed(2)}) — that is glass in the content layer`);
 

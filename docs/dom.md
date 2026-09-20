@@ -117,6 +117,23 @@ behind an element, so a nested pane's backdrop is the outer pane's output — th
 twice on the same pixels and the blurs multiply. Overlapping panes are fine and are not warned
 about; that is what two sheets of glass do.
 
+## The gate looks at the picture
+
+`check:dom` renders the material over a saturated page and compares its own pixels' saturation
+against the same page with no glass on it. Glass moves light; it cannot make colour that is not
+already there, so the material must not read as more saturated than what it stands on.
+
+That assertion exists because everything else passed while the default preset wrapped every
+control in a neon tube. The spectral overlay multiplied the backdrop channel by channel — 1.68 on
+red against 0.05 on blue — and 286 unit tests, a shader compile, an optics sweep and a
+displacement measurement all stayed green. The hairline fixture the other assertions use is nearly
+grey, so a material that saturates everything looks fine on it.
+
+It also corrupted the measurement next to it. `full` against `flat` is supposed to isolate the
+displacement, and `flat` is the same material at ior = 1 — which zeroes the iridescence too,
+because that rides Fresnel. So most of what the rim figure reported was the overlay, not the lens:
+22.45 before, 7.96 now, on unchanged optics.
+
 ## Limits
 
 **Colour pickup is uniform, and reality is a gradient.** A large element takes on the colour of the
