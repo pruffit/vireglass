@@ -2,8 +2,9 @@
 
 A liquid glass material for interfaces, derived from optics rather than assembled from effects.
 
-One material model, one shader source, two render targets: **WebGL2** in the browser and
-**AGSL** on Android. Apache-2.0.
+One material model, three render targets: **WebGL2** and **live DOM** in the browser, **AGSL** on
+Android. The DOM target refracts the page itself — real elements, real text, no canvas — so glass
+can go over content a renderer never drew. Apache-2.0.
 
 ```bash
 npm install vireglass
@@ -219,9 +220,13 @@ preference; `applyGlassScale` gives that preference its own axis, ultra clear to
 
 ```bash
 npm run typecheck
-npm test            # 122 tests
-npm run check:glsl  # both shaders compile and link as GLSL ES 3.0
+npm test
+npm run check:glsl   # both shaders compile and link as GLSL ES 3.0
 npm run check:optics
+npm run check:law    # every calibrated number is in src/law.ts, cited or named unmeasured
+npm run check:dom    # a real browser: the glass bends live DOM, and only where it should
+npm run check:package # packs, installs into an empty project, loads every entry point
+npm run check:readme  # every name the documentation tells you to import exists
 ```
 
 `check:optics` is the interesting one. It renders the material over a sweep of backdrops and
@@ -265,6 +270,7 @@ canvas, and that the rim gathers what is behind it.
 | `docs/platform-parity.md` | how web and Android are kept numerically in agreement |
 | `docs/benchmarks.md` | measurement protocol, device, numbers |
 | `docs/dom.md` | the DOM renderer: the technique, what it renders, what it costs |
+| `docs/law.md` | where every calibrated number lives, and which ones nobody has measured |
 | `docs/material-lab.md` | selected entries from the experiment journal |
 
 ## Calibration
@@ -273,6 +279,9 @@ The material was measured against publicly available reference material — Appl
 sessions 219 and 356 and related design talks — and the documentation cites them by session and
 timestamp so the claims can be checked. No Apple code, assets or footage is included in or
 distributed with this package.
+
+Every calibrated number lives in `src/law.ts` with its provenance, and `check:law` names the ones
+that have none: **42 of 120** today. See [`docs/law.md`](docs/law.md).
 
 ## License
 

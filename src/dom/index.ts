@@ -22,10 +22,14 @@ import { supportsSvgBackdropFilter } from './support';
 import { boxShadowCss } from './shadow';
 import { resolveBody, withPresence } from './body';
 import { systemAccessibility, watchAccessibility } from './preferences';
-import { applyAccessibility, type VireGlassAccessibility } from '../accessibility';
+import { applyAccessibility, contrastRimLuma, elasticAllowed, type VireGlassAccessibility } from '../accessibility';
 import { applyGlassScale, GLASS_SCALE_DEFAULT } from '../glass-scale';
+import { applyAppear } from '../appear';
+import { accentAmount, accentTone } from '../accent';
+import type { VireGlassAccent } from '../adapters';
 import { concentricRadius } from '../concentric';
-import { RIM_WIDTH_PX, rimGradientCss } from './rim';
+import { RIM_WIDTH_PX, contrastRimCss, rimGradientCss } from './rim';
+import { GLASS_ATTR, warnIfNested } from './nesting';
 import { REST_LIGHT } from '../adapters';
 import { refractionStrength } from '../optics';
 import { DISPERSION, TOUCH } from '../law';
@@ -64,7 +68,7 @@ function waveImpulse(g: VireGlassGeometry): number {
 }
 
 const STYLE_ATTR = 'data-vireglass-styles';
-const GLASS_ATTR = 'data-vireglass';
+
 
 /**
  * The hairline rim (docs/reference.md §2) needs a layer of its own over the element. A stylesheet
@@ -262,8 +266,23 @@ function rgbCss(r: number, g: number, b: number): string {
  * and the hue is the surroundings' — glass has no colour of its own, only the colour of what lies
  * beneath it. A flat fill in place of a tint is what breaks the material.
  */
-function bodyCss(optics: VireGlassOptics, sample: BackdropSample, ink: number): string {
+function bodyCss(
+  optics: VireGlassOptics,
+  sample: BackdropSample,
+  ink: number,
+  accent?: VireGlassAccent,
+): string {
   const body = withPresence(resolveBody(optics, sample, ink), optics, sample);
+
+  // A tinted element takes its colour from the accent rather than from its surroundings, but it is
+  // still the MEDIUM that is coloured: the amount stays short of one so the content keeps coming
+  // through. A fill at full opacity is the thing §7 says breaks the material.
+  if (accent) {
+    const [r, g, b] = accentTone(accent.color, sample.luma);
+    const amount = Math.max(accentAmount(accent), body.density);
+    return `rgba(${to255(r)}, ${to255(g)}, ${to255(b)}, ${amount.toFixed(3)})`;
+  }
+
   const [r, g, b] = ambientFrom(sample);
   const hue = (c: number) => body.tintLuma + (c - body.tintLuma) * optics.colorPickup;
   return `rgba(${to255(hue(r))}, ${to255(hue(g))}, ${to255(hue(b))}, ${body.density.toFixed(3)})`;
@@ -285,6 +304,27 @@ export type AttachGlassOptions = {
   scale?: number;
   /** System accessibility (§9). Read from the browser's own media queries unless supplied. */
   accessibility?: VireGlassAccessibility;
+  /**
+   * Tint for a primary action (§7). A colour that belongs to the medium, generating a range of
+   * tones from the backdrop's brightness — not a fill. Use it on the one element that should stand
+   * out: "when every element is tinted, nothing stands out" (219 @17:31).
+   */
+  accent?: VireGlassAccent;
+  /** Initial presence, 0 to 1 (§1). Defaults to fully present. */
+  appear?: number;
+  /**
+   * `'interactive'` is glass that is not there until it is touched (S 42:34, "Building Tide Guide"): "this effect doesn't
+   * change the appearance of a view until you interact with it... as you start sliding it, the
+   * interactive effect adds a soft, subtle highlight". The element carries no material at rest and
+   * materialises under the finger — §1's materialising, driven by touch instead of by the host.
+   *
+   * It is what makes glass usable on a control that is not chrome: a slider thumb, a chart scrubber,
+   * a card. Permanent glass there would be glass in the content layer, which §6 says to avoid.
+   */
+  variant?: 'present' | 'interactive';
+  /** Called while this element is being touched, so a group can carry the glow to its neighbours
+   *  (§5). Wired for you by `createGlassGroup`. */
+  onGlow?: (glow: { pageX: number; pageY: number; strength: number } | null) => void;
   /** Pointer response (§5). On by default. */
   interactive?: boolean;
   /** Overrides the probe entirely — images and video are invisible to it, and the host app
@@ -308,6 +348,17 @@ export type GlassMorph = {
 
 export type GlassHandle = {
   update(): void;
+  /**
+   * How present the material is, 0 to 1 (docs/reference.md §1). Drive this to bring glass in and
+   * out — NOT opacity. "Instead of fading, Liquid Glass objects materialize in and out by
+   * gradually modulating the light bending and lensing" (219 @2:55). A faded element shows the
+   * backdrop through a veil; one that is still arriving shows it undistorted.
+   */
+  setAppear(t: number): void;
+  /** Tint the element, or clear it with null (§7). */
+  setAccent(accent: VireGlassAccent | null): void;
+  /** A glow that started on a neighbour, in page coordinates (§5). Null clears it. */
+  setNeighbourGlow(glow: { pageX: number; pageY: number; strength: number } | null): void;
   setMorph(morph: GlassMorph | null): void;
   destroy(): void;
 };
@@ -329,14 +380,20 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   let destroyed = false;
   let mapKey = '';
   let morph: GlassMorph | null = null;
+  const onlyWhenTouched = opts.variant === 'interactive';
+  let appear = onlyWhenTouched ? 0 : (opts.appear ?? 1);
+  let accent = opts.accent;
   // Read once at attach, then followed: a setting turned on while the page is open has to reach
   // the material, not wait for a reload.
   let a11y = systemAccessibility();
   const stopWatchingA11y = watchAccessibility((next) => {
     a11y = next;
     mapKey = '';
+    deform.setElastic(elasticAllowed(opts.accessibility ?? a11y));
     apply();
   });
+
+  warnIfNested(el);
 
   ensureRimStyles();
   el.setAttribute(GLASS_ATTR, '');
@@ -354,7 +411,10 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   function optics(patch?: Partial<VireGlassMaterial>): VireGlassOptics {
     const base = resolveOptics(patch ?? opts.material);
     const scaled = applyGlassScale(base, opts.scale ?? GLASS_SCALE_DEFAULT);
-    return applyAccessibility(scaled, opts.accessibility ?? a11y);
+    const settled = applyAccessibility(scaled, opts.accessibility ?? a11y);
+    // Appearance last, and by modulating the lens rather than by fading the element: §1 is
+    // explicit that opacity is the wrong instrument for this.
+    return applyAppear(settled, appear);
   }
 
   function morphState() {
@@ -379,7 +439,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       // The map depends only on geometry, optics and density — never on the backdrop. Rebuilding
       // it on every scroll would re-run a per-pixel loop and a PNG encode for a picture that did
       // not change; the refraction itself updates in the compositor with no JS at all.
-      const key = `m${morphKey()}|${geometry.width}x${geometry.height}r${geometry.cornerRadius}@${devicePixelRatio()}:${opticsNow.refraction}:${opticsNow.refractionScale}:${opticsNow.bevelDp}:${opticsNow.blur}`;
+      const key = `a${appear.toFixed(3)}|m${morphKey()}|${geometry.width}x${geometry.height}r${geometry.cornerRadius}@${devicePixelRatio()}:${opticsNow.refraction}:${opticsNow.refractionScale}:${opticsNow.bevelDp}:${opticsNow.blur}`;
       if (key !== mapKey || !filterEl) {
         // Keyed by exactly what the maps are functions of, which is exactly the cache key above.
         const map = cached(`d|${key}`, () => buildDisplacementMap(opticsNow, geometry, devicePixelRatio(), morphState()));
@@ -398,7 +458,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     } else {
       el.style.setProperty('backdrop-filter', fallbackFilterCss(opticsNow));
       el.style.setProperty('-webkit-backdrop-filter', fallbackFilterCss(opticsNow));
-      el.style.backgroundColor = bodyCss(opticsNow, sample, wasLight ? 1 : 0);
+      el.style.backgroundColor = bodyCss(opticsNow, sample, wasLight ? 1 : 0, accent);
     }
 
     const light = shouldInkBeLight(sample, wasLight);
@@ -414,12 +474,21 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     const inkLevel = Math.round((light ? INK_LIGHT : INK_DARK) * 255);
     el.style.setProperty('--vireglass-ink-color', `rgb(${inkLevel} ${inkLevel} ${inkLevel})`);
     el.style.setProperty('--vireglass-tint-color', rgbCss(tr, tg, tb));
-    el.style.setProperty('--vireglass-body-color', bodyCss(opticsNow, sample, light ? 1 : 0));
+    el.style.setProperty('--vireglass-body-color', bodyCss(opticsNow, sample, light ? 1 : 0, accent));
 
     // Rim and shadow follow the SAMPLE, not just the geometry, so they sit outside the map's
     // cache key: the environment they take their colour and density from moves under a scroll
     // while the silhouette does not.
-    el.style.setProperty('--vireglass-rim', rimGradientCss(opticsNow, [tr, tg, tb], opts.light ?? REST_LIGHT));
+    // §9: under increased contrast the hairline stops reporting where the light is and starts
+    // separating the element from what is behind it, so it is measured from the body, not the
+    // environment.
+    const pole = withPresence(resolveBody(opticsNow, sample, light ? 1 : 0), opticsNow, sample).tintLuma;
+    el.style.setProperty(
+      '--vireglass-rim',
+      (opts.accessibility ?? a11y).increaseContrast
+        ? contrastRimCss(pole, contrastRimLuma(pole))
+        : rimGradientCss(opticsNow, [tr, tg, tb], opts.light ?? REST_LIGHT, appear),
+    );
     el.style.setProperty('--vireglass-rim-width', `${RIM_WIDTH_PX}px`);
 
     // §11: a rounded child inside glass has to be concentric with it, or the two curves fight.
@@ -427,7 +496,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     el.style.setProperty('--vireglass-radius', `${geometry.cornerRadius}px`);
     el.style.setProperty('--vireglass-radius-min', `${concentricRadius(geometry.cornerRadius, geometry.cornerRadius, 0)}px`);
 
-    const shadow = boxShadowCss(geometry, sample);
+    const shadow = boxShadowCss(geometry, sample, appear);
     el.style.setProperty('--vireglass-shadow', shadow);
     if (opts.shadow !== false) el.style.setProperty('box-shadow', shadow);
   }
@@ -437,7 +506,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   // INTERACTION (docs/reference.md §5). The physics is the core's — `createDeform` carries the
   // spring, the press attack and the wave, at its own fixed step. What lives here is only the
   // plumbing: pointer in, map and glow out.
-  const deform = createDeform();
+  const deform = createDeform({ elastic: elasticAllowed(opts.accessibility ?? a11y) });
   let frame: number | null = null;
   let lastFrameAt = 0;
   let interacting = false;
@@ -480,17 +549,40 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     }
     mapKey = '';
 
-    // The glow is a CONCENTRATION of the surroundings, not the glass's own whiteness: over a dark
-    // backdrop the element lightens but never turns white, and ink over it stays legible.
+    paintGlow(sampleOut.touchX, sampleOut.touchY, sampleOut.active * base.edgeLight, geometry);
+
+    // "the glow spreads throughout the element and onto any Liquid Glass elements NEARBY" (§5,
+    // 219 @12:11). This element cannot know who is nearby; the group does, so it is told.
+    const rect = el.getBoundingClientRect();
+    opts.onGlow?.({
+      pageX: rect.left + rect.width / 2 + sampleOut.touchX,
+      pageY: rect.top + rect.height / 2 + sampleOut.touchY,
+      strength: sampleOut.active,
+    });
+  }
+
+  /**
+   * The glow is a CONCENTRATION of the surroundings, not the glass's own whiteness: over a dark
+   * backdrop the element lightens but never turns white, and ink over it stays legible.
+   *
+   * `x` and `y` are relative to the element's centre and may fall outside it — a glow that started
+   * next door still has a direction, and dropping it to the centre would make a neighbour brighten
+   * uniformly rather than from the side the finger is on.
+   */
+  function paintGlow(x: number, y: number, strength: number, geometry: VireGlassGeometry): void {
+    if (strength <= 0.001) {
+      el.style.setProperty('--vireglass-glow-opacity', '0');
+      return;
+    }
     const [gr, gg, gb] = ambientFrom(opts.sample ?? probeBackdrop(el));
-    const cx = ((sampleOut.touchX + geometry.width / 2) / geometry.width) * 100;
-    const cy = ((sampleOut.touchY + geometry.height / 2) / geometry.height) * 100;
+    const cx = ((x + geometry.width / 2) / geometry.width) * 100;
+    const cy = ((y + geometry.height / 2) / geometry.height) * 100;
     const reach = halfMinDp(geometry) * TOUCH_RADIUS_FRACTION;
     el.style.setProperty(
       '--vireglass-glow',
       `radial-gradient(circle ${reach.toFixed(0)}px at ${cx.toFixed(1)}% ${cy.toFixed(1)}%, rgba(${to255(gr)},${to255(gg)},${to255(gb)},1) 0%, rgba(${to255(gr)},${to255(gg)},${to255(gb)},0) 100%)`,
     );
-    el.style.setProperty('--vireglass-glow-opacity', (sampleOut.active * base.edgeLight).toFixed(3));
+    el.style.setProperty('--vireglass-glow-opacity', strength.toFixed(3));
   }
 
   function tick(now: number): void {
@@ -499,6 +591,10 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     lastFrameAt = now;
     deform.step(dt);
     const s = deform.sample();
+    // The interactive variant materialises with the touch rather than being held present. `active`
+    // rather than `press`: press is the depth of the dent, active is simply whether a finger is
+    // there, and the material arriving has to track the second.
+    if (onlyWhenTouched) appear = s.active;
     paintInteraction(s);
     if (deform.idle()) {
       interacting = false;
@@ -506,6 +602,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       lastFrameAt = 0;
       // Settled: put the full-resolution map back and drop the glow.
       el.style.setProperty('--vireglass-glow-opacity', '0');
+      opts.onGlow?.(null);
       apply();
       return;
     }
@@ -513,9 +610,6 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   }
 
   function run(): void {
-    // §9: reduced motion turns the material's springiness off. It is the one accessibility setting
-    // that leaves optics alone — it is about motion, so it applies where motion is computed.
-    if ((opts.accessibility ?? a11y).reduceMotion) return;
     if (frame === null && !destroyed) frame = requestAnimationFrame(tick);
   }
 
@@ -608,6 +702,31 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
 
   const handle: GlassHandle = {
     update: apply,
+    setAppear(t) {
+      const next = t < 0 ? 0 : t > 1 ? 1 : t;
+      if (next === appear) return;
+      appear = next;
+      apply();
+    },
+    setAccent(next) {
+      accent = next ?? undefined;
+      apply();
+    },
+    setNeighbourGlow(glow) {
+      if (destroyed || interacting) return;
+      const geometry = opts.geometry ?? measureGeometry(el);
+      if (!glow) {
+        paintGlow(0, 0, 0, geometry);
+        return;
+      }
+      const rect = el.getBoundingClientRect();
+      paintGlow(
+        glow.pageX - (rect.left + rect.width / 2),
+        glow.pageY - (rect.top + rect.height / 2),
+        glow.strength,
+        geometry,
+      );
+    },
     setMorph(next) {
       morph = next && next.smoothing > 0 ? next : null;
       mapKey = '';

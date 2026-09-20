@@ -50,6 +50,42 @@ code — only structural rules do.
   scattering (M 7:02–7:25). Bevel and thickness scale with size, they aren't a fixed constant.
 - **Appearance is by modulating the lens, not by fading opacity** (M 2:55).
 
+### The displacement, measured off a real lens
+
+frames/crops/disc-ul is a disc over a regular lattice — the one place in the reference where the
+lens's own displacement can be read off directly instead of inferred. Tracing the grid line row by
+row, following the previous row's answer so the trace stays on the same line as it bends:
+
+- The disc's geometry comes from fitting a circle to its bright rim: centre (687, 612), radius 592
+  px, mean residual **0.6 px** over 34 points.
+- The grid line stands exactly where the lattice puts it from the bottom of the frame up to y ≈ 286
+  — **the middle of the lens passes the backdrop through untouched**, which is the claim §1 rests
+  on and which nothing had ever checked against a measured lens.
+- From there it sweeps, reaching 36 px of lateral shift before the line breaks up in the caustic at
+  the rim. Fitting our own bevel profile to the 26 rows that kept their contrast gives a refracting
+  zone **0.18 of the radius** deep and an rms error of **1.1 px — under 0.2% of the radius**.
+- A plain linear ramp fits half as well (1.5 px), so the profile is carrying real information and
+  not just a scale. A sagitta — `1 − sqrt(1 − t²)` — fits better still (0.29 px), and that is an
+  open question rather than a correction: a ray's deflection goes with the surface's SLOPE, which
+  is the form we use, and the traced rows stop short of the rim where the two differ most.
+- The zone's depth does not transfer. This is a studio puck, and §6 says those show the material at
+  its limit; the same fraction on a UI control would be a bevel three times what any preset carries.
+
+### What counts as "larger"
+
+219 @6:36: as glass "flexes and morphs to larger sizes, it simulates a thicker material with deeper
+shadows and more pronounced lensing and refraction effects, enhancing perceived depth", and the
+session's own summary names the large end — "larger controls like iPadOS and macOS sidebars".
+
+That range has to stay continuous across it. A model that saturates partway stops obeying the rule
+exactly where the reference points: a half-open sheet, a full-screen sheet, an iPad sidebar and a
+900 px Mac panel are four different surfaces, and they must not be one glass.
+
+Size here is neither the narrower side nor the area. Half the narrower side makes a 390x780 sheet
+the same as a 390x420 one; area makes a 900x8 rule larger than a toolbar button. The measure has to
+respect both facts — the narrow side caps how much glass there can be, and among shapes sharing it,
+more surface is more glass.
+
 ## 2. Rim light
 
 - **A thin line along the silhouette**, ~1 pt, not a band and not a bevel (M 2:36, 4K crop).
@@ -63,6 +99,25 @@ code — only structural rules do.
   establish more depth and separation, we also introduced a darkened edge along with brighter
   specular highlights" (P). Before this, the dark line read as "wherever there's no highlight";
   now it reads as "along the whole silhouette, with the highlight on top of it."
+
+### How wide the arc is
+
+Measured off two close-ups of real end caps (frames/crops/cap158-left, cap158-right), sampling the
+luminance radially every degree around the silhouette and taking the lift over the local backdrop.
+
+- The bright arc's full width at half its peak is **53°** in the first and **30°** in the second.
+  Both arcs saturate to white at the top — 38° of clipping in the first, 9° in the second — so
+  those widths are if anything OVERestimates.
+- A `cos^n` lobe is `2·acos(0.5^(1/n))` wide, so the two imply exponents of 6 and 20. The model's
+  was 3, whose arc is 75° wide: broader than either measurement, with the error in the same
+  direction both times.
+- One exponent cannot serve both, and the disagreement is not noise. A specular lobe's width
+  depends on the light's angular size as much as on the surface, and these are two different
+  scenes. The model has no term for the light's size; 6 is the conservative end of what was
+  measured.
+- The dark edge runs the whole way round, including underneath the bright arc — measured at 12 to
+  50 levels below the local backdrop, deepest on the same side the arc is on. Which is the
+  reference's own note that the hairline does not rule out the highlight sitting on top of it.
 
 ## 3. Body and adaptation (the Regular variant)
 
@@ -112,6 +167,13 @@ shadow: one value per element. Measured off frames 711–723: 19.9% over text ve
 flat light background, for the same capsule. The absolute number depends on the element — a
 slider knob over white measures 10.5%.
 
+Reproduced independently (frames/verify/m-707 and m-711): the same capsule in the same scene at the
+same scale, once sitting below the text over plain background and once scrolled up over it — the
+sentence's own experiment. Comparing the rows under the capsule against the same rows far to either
+side, so the background's gradient cancels out of it: **3.5%** over plain and **19.2%** over text, a
+5.5x rise, peaking about 140 px below the capsule. The earlier pass over frames 711–723 gave 4.0%
+and 19.9%. Different frames, different method, within 0.7 of a point.
+
 ## 5. Interaction
 
 - Touch: the material **lights up from inside, from the point of contact**, the glow spreads
@@ -127,15 +189,23 @@ slider knob over white measures 10.5%.
   team): the menu unfolds right where the button was, so you don't have to regrip the phone for an
   action near the bottom of the screen. So the menu must grow OUT OF its button and stay under the
   same finger.
-- The team describes the material's motion with biological metaphors — merging and dividing,
-  appearing and vanishing (S). That's also where our two mechanics come from: shapes fusing
-  through a bridge, and splitting apart.
+- The design team names their own model out loud (S 1:25:30): "we also had a refresher from biology
+  class. It's called MITOSIS AND MEIOSIS. When these things are coming together or materialization
+  and dematerialization and morphing." Which is physics, not decoration: a dividing cell is one
+  body from beginning to end. It never has a frame in which it is two bodies that happen to touch,
+  and it never pops a second body into existence beside the first. Both of our mechanics follow
+  from that — a lobe grows OUT of its parent and travels while attached, and two shapes fuse
+  through a bridge wide enough to actually span what is between them.
 - A menu unfolding from a panel (M 5:11, frame-by-frame at 15 fps) happens in TWO PHASES. The
   panel first contracts into a droplet, glyphs go out of focus (~0.15 s); a ridge grows from the
   droplet's side toward where the menu will be. Then the droplet grows into the menu with a slight
   overshoot (~0.4 s), and as it nears full size the content emerges — first as a blurred, clipped
   body. Closing runs in reverse: the menu flows into a droplet, which flows back into the panel and
   leaves a ridge on top that dissolves away.
+- Measured off the frame (frames/morph/s03, the panel where the necks are still attached): lobes
+  72 and 82 px, centres 92 px apart — 15 px of space between their surfaces — joined by a neck 28
+  px tall, about 0.39 of the smaller lobe. Our bridge law renders 29.0 on the same geometry. The
+  measurement is sharp: a fusion margin of 1.2 gives 23.5 and 1.4 gives 33.5.
 - A control splitting into parts (M 5:02, frame-by-frame at 12 fps): "Select" whitens, the label
   goes out of focus, the body STRETCHES and bulges out its future parts, bridges stretch taut
   between them, and only then do they tear. The reverse is the same: the parts flow back into one
@@ -181,10 +251,36 @@ settles into in the interface.
   reflects, scatters, and BLEEDS INTO THE SHADOW (219 @8:22), the way it does in life. Frames at
   504–512 s show a panel over a yellow cover taking on yellow, over a pink one taking on pink,
   with the color spilling past its edge.
+- Measured (frames/concentric/shadow-zoom): the same sidebar twice, over a yellow cover and over a
+  pink one — same UI, same layout, two backdrops, so the difference between the panels is the
+  pickup with the sidebar's own colour subtracted out. The bar's hue offset reaches **0.31** of the
+  cover's own at the edge nearest it in the yellow panel and **0.28** in the pink one, and both
+  agree on the falloff: it is gone about ninety pixels in. So the bleed is a gradient from the
+  content's edge, not a tint over the whole body.
 - In the new design a panel is TRANSPARENT and lives with the scroll-edge effect, so persistent
   brand graphics inside it start to crowd the content and lose legibility. The American Airlines
   case (S): the logo was removed from the header and let it scroll away with the content — the
   brand is carried by the content itself, not by a badge on top of it.
+
+### Which layer the glass belongs in
+
+219 @11:50 states it among the principles: glass is "best reserved for the NAVIGATION layer",
+and you should "avoid putting glass in the content layer and avoid putting [it] within or on top
+of other glass elements to maintain hierarchy and prevent clutter."
+
+Containment and overlap are not the same failure. Two panes in the stacking order — a sheet over
+a bar — is what two panes of glass actually do, and 219 calls it a hierarchy mistake rather than a
+rendering one. Glass CONTAINED IN glass is broken output: an adopting team (S 32:54, "Building
+CNN for iOS 26") reported it as their first lesson — "applying the glass effect to both a parent
+and child views led to visual redundancy. Double translucency, layered blur, and unpredictable
+rendering." On any renderer that samples what is already composited behind an element, the inner
+pane's backdrop is the outer pane's output: the refraction lands twice on the same pixels and the
+blurs multiply.
+
+The way to put glass on something that is NOT chrome is to have it arrive only under the finger
+(S 42:34, "Building Tide Guide"): "this effect doesn't change the appearance of a view until you
+interact with it... as you start sliding it, the interactive effect adds a soft, subtle highlight
+beneath the wave." At rest there is no glass in the content layer, because there is no glass.
 
 ## 8. Bars on wide screens (iPhone Duo)
 
@@ -208,12 +304,16 @@ System settings are MODIFIERS of the material: they change its layers but don't 
 
 - **Reduce Transparency** — the glass turns more matte and hides what's underneath it more
   strongly (219 @18:22). A vertical bar that has no background in its normal state gets one under
-  this setting (B 10:36).
+  this setting (B 10:07).
 - **Increase Contrast** — the element shifts mostly to black or white and picks up a contrasting
   outline around its silhouette (219 @18:29). Specifically an outline, not just a flat fill of the
   body.
 - **Reduce Motion** — effect intensity drops, and the material's elasticity turns off entirely
-  (219 @18:35). This is about motion, not optics.
+  (219 @18:35). This is about motion, not optics. The elastic properties are the ones that
+  overshoot and oscillate: the spring that lags the finger and the ripple that crosses the
+  surface. The press is neither — it is what lights an element from within (219 @12:11), which is
+  light rather than movement, so it stays and is damped. An element that stops answering a finger
+  under this setting is not reduced motion, it is no feedback.
 - The settings apply to ALL the glass at once (219 @18:45), and the Clear variant is no
   exception: under Increase Contrast it too moves to the edge of the scale — the "variants don't
   mix" rule gives way to what the person themselves asked for.
@@ -225,9 +325,24 @@ content scrolls under a bar (219 @8:52).
 
 - Content under the bar isn't clipped — it goes into a BLUR that grows toward the edge and
   dissolves into the background; floating titles, meanwhile, stay crisp (219 @9:12, frames at
-  552–576 s).
+  552–576 s). It is NOT an overlay. 356 @11:32: "they don't block or darken like overlays. They
+  simply clarify where UI and content meet, and shouldn't be used where there aren't any floating
+  UI elements." The blur is the effect; nothing is laid over the content.
+- Two styles across the system, "soft and hard", and they must not be mixed or stacked (356
+  @11:48). Soft is the default and covers both adaptive forms below. Hard is "a stronger, more
+  opaque boundary", mostly macOS — pinned table headers, interactive text, controls without
+  backgrounds (356 @12:09). One per view; in a split view each pane may have its own, at the same
+  height (356 @12:22).
 - When dark content scrolls under the glass and it switches to the dark style, the dissolve is
   replaced by a light DARKENING (219 @9:28) — the same move as ink polarity.
+- Measured off the footage (frames/scroll-edge/z576, 320x413): high-frequency energy per row —
+  which a brightness gradient in the content cannot fake, and which the row MEANS could not be
+  separated from — reads 1.4 through the zone under the bar against 14 in the sharp content below.
+  A factor of ten, so the content really is going out of focus rather than being covered. The zone
+  runs from the bar's lip at y≈45 to y≈130, about 1.9 times the bar's own height.
+- The same frame confirms @9:22: the floating title sits INSIDE that zone and measures 32, twenty
+  times its surroundings. Titles stay crisp while everything behind them dissolves — which is why
+  the effect goes behind the glass in the stack, not over the content.
 - With no scrolling, there's no effect at all: the bar sits on a plain background.
 - For pinned views under the bar (column headers), the style is HARD: a flat band across the
   full height of the bar and the pinned view, no gradient (219 @9:41).
@@ -248,6 +363,25 @@ content scrolls under a bar (219 @8:52).
   shape drops out of the family. SwiftUI has `concentric(minimum:)` for this case — a radius floor
   that breaks concentricity on purpose.
 
+### Three shape types
+
+356 @3:42 names what concentric layouts are built from: "fixed shapes have a constant corner
+radius. Capsules use a radius that's half the height of the container. And concentric shapes
+calculate their radius by subtracting padding from the parent's." @3:59: "the capsule's geometry
+naturally supports concentricity", which is why it runs through sliders, switches, bars, buttons
+and the corners of grouped table views.
+
+- For a component that has to work both nested and alone, 356 @6:00 gives a concentric shape a
+  FALLBACK radius: "the concentric value adapts when nested, and the fallback kicks in when the
+  component stands alone." Not the same as `minimum`, which is a floor that applies while nested
+  and breaks concentricity on purpose. A fallback never overrides a parent that exists.
+- Near a device edge the choice is by platform (356 @5:44): on phone, a capsule with extra margin
+  to create space at the screen edge; on iPad and Mac, a concentric shape aligned with the window
+  edge.
+- The defect has two directions and 356 @5:19 names them: corners that feel "too pinched — or
+  flared". Pinched is an inner radius smaller than concentricity asks for, so the gap widens
+  through the curve; flared is larger, so the corners crowd each other.
+
 ## 12. Where mistakes happen most often
 
 | Mistake | What the reference actually shows |
@@ -255,5 +389,9 @@ content scrolls under a bar (219 @8:52).
 | sampling outward at the rim | the rim shows what's under the center |
 | highlight as a wide bevel | a ~1 pt line along the silhouette |
 | one bevel size for every element | bigger element, thicker glass |
+| a size response that saturates | sidebars are the large end, not past it |
 | opacity fade on appearance | the lens builds up from zero |
 | solid color fill | tint keyed to backdrop lightness |
+| glass nested inside glass | one pane, or glass that arrives on touch |
+| a scroll edge painted as a scrim | a blur the content dissolves into |
+| permanent glass on a content control | the interactive variant — nothing at rest |

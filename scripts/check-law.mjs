@@ -9,7 +9,13 @@
 // What IS checkable, and is:
 //   - every law is read by someone (a law nothing imports is one the material no longer obeys);
 //   - every section citation in the code resolves to a section `docs/reference.md` actually has;
+//   - no NEW named constant appears outside the law without being declared as not-calibration;
 //   - every value with no provenance is named out loud, every run.
+//
+// That third one is the structural version of the check that failed. It does not ask what a number
+// MEANS, which is the question that could not be answered: it asks where a named constant lives.
+// Everything that is not calibration is listed below with the reason it is not, which is a short
+// list because most constants in a material library are calibration.
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -105,6 +111,53 @@ if (dangling.length > 0) {
   process.exit(1);
 }
 
+/**
+ * Constants outside the law that are not calibration. Each is here with the reason; anything else
+ * that turns up is a number about the material sitting somewhere the law cannot see it, which is
+ * how `optics.ts` came to hold twenty of them.
+ */
+const NOT_CALIBRATION = new Map([
+  ['NO_PROGRESS', 'a sentinel for "no progress", not a quantity'],
+  ['VG_TAU', 'mathematics'],
+  ['TAU', 'mathematics'],
+  ['AMBIENT_STEP', 'probe sampling granularity, not a property of the material'],
+  ['PAD_STEP', 'quantisation of a view margin, to stop it re-laying-out every frame'],
+  ['MAX_STEP_PX', "the 8-bit displacement map's own resolution limit"],
+  ['SCALE_GAIN', "the 8-bit displacement map's own headroom"],
+  ['BEVEL_SAMPLES', 'how finely a map is sampled, traded against build cost'],
+  ['HEADROOM', 'fixed-point headroom in the spectral map'],
+  ['STOPS', 'how many stops a conic gradient is emitted with'],
+  ['LIMIT', 'cache size'],
+  ['GRID_COLS', 'probe grid'],
+  ['GRID_ROWS', 'probe grid'],
+  ['INTERVAL_MS', 'sensor poll period'],
+  ['SMOOTHING', 'sensor smoothing'],
+  ['DEADZONE', 'sensor deadzone'],
+  ['MAX_SWING', 'sensor range'],
+]);
+
+const strays = [];
+for (const { file, text } of corpus) {
+  text.split(/\r?\n/).forEach((line, index) => {
+    const named = /^const ([A-Z][A-Z0-9_]*) = (-?[\d.]+(?:e-?\d+)?);/.exec(line);
+    if (named && !NOT_CALIBRATION.has(named[1])) {
+      strays.push({ file, line: index + 1, name: named[1] });
+    }
+  });
+}
+
+if (strays.length > 0) {
+  console.error('check-law: a calibrated constant is living outside src/law.ts.' + String.fromCharCode(10));
+  for (const stray of strays) {
+    console.error(`  ${stray.file}:${stray.line}  ${stray.name}`);
+  }
+  console.error(
+    String.fromCharCode(10) + '  Move it into src/law.ts with its provenance, or — if it is not a property of the',
+  );
+  console.error('  material — add it to NOT_CALIBRATION in this script with the reason why.');
+  process.exit(1);
+}
+
 // Debts are not failures, but they must not be quiet. A number the reference does not give is a
 // number someone chose, and the bench should eventually replace it.
 const unmeasured = [];
@@ -116,8 +169,24 @@ lawLines.forEach((line, index) => {
   if (/UNMEASURED/.test(block)) unmeasured.push(field[1]);
 });
 
+// A count written out in prose goes stale the moment a value is added, and a stale number in a
+// document that exists to be honest about the model is worse than no number. The documents state
+// it, so the gate owns it.
+const CLAIMS = ['docs/law.md', 'README.md'];
+const claim = `${unmeasured.length} of ${entries.length}`;
+const stale = CLAIMS.filter((file) => !readFileSync(join(ROOT, file), 'utf8').includes(claim));
+
+if (stale.length > 0) {
+  console.error(`check-law: the documents state a debt the law no longer has. It is now "${claim}".`);
+  for (const file of stale) console.error(`  ${file}`);
+  process.exit(1);
+}
+
 console.log(`check-law: ${entries.length} calibrated values, all read from src/law.ts`);
 console.log(`check-law: every citation resolves into docs/reference.md (${sections.size} sections)`);
+console.log(
+  `check-law: no calibrated constant outside the law (${NOT_CALIBRATION.size} declared not-calibration)`,
+);
 if (unmeasured.length > 0) {
   console.log(`check-law: ${unmeasured.length} still unmeasured — ${unmeasured.join(', ')}`);
 }

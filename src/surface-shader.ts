@@ -79,6 +79,7 @@ half4 vgPack(half3 c, float a) { return half4(c * half(a), half(a)); }
 // lightness is subtracted out of it, otherwise the shadow pales and loses depth instead of
 // warming up. Strength is set by how much light there is around: over a nearly black backdrop
 // there's nothing to bleed into the shadow.
+// JS twin in shadow-tint.ts, which the DOM renderer reads: same derivation, same reason.
 float3 vgShadowTint(float3 ambient) {
   float peak = max(max(ambient.r, ambient.g), max(ambient.b, 0.001));
   float3 hue = ambient / peak;

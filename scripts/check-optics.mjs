@@ -51,6 +51,7 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CORE = resolve(HERE, '../src/index.ts').replace(/\\/g, '/');
 const WEB = resolve(HERE, '../src/web/index.ts').replace(/\\/g, '/');
+const REFERENCE = resolve(HERE, '../src/reference.ts').replace(/\\/g, '/');
 
 /** Below this transmission it's no longer a window: you can't see what's under the glass. */
 const MIN_TRANSMISSION = 0.25;
@@ -122,7 +123,8 @@ const MIN_CONTENT_ON_BUSY = 28;
 const MIN_EDGE_GAIN = 1.88;
 
 const ENTRY = `
-import { createVireGlassRenderer, drawReferenceScene } from '${WEB}';
+import { createVireGlassRenderer } from '${WEB}';
+import { drawReferenceScene, referenceScene } from '${REFERENCE}';
 import {
   capsuleGeometry,
   applyGlassScale,
@@ -131,7 +133,6 @@ import {
   INK_DARK,
   INK_LIGHT,
   materialForInk,
-  referenceScene,
   resolveOptics,
   roundedRectGeometry,
   shouldInkBeLight,

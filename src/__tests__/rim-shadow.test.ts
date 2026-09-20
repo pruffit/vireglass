@@ -4,6 +4,7 @@ import { MATERIAL_PRESETS, resolveOptics } from '../material';
 import { lightConicAngle, rimGradientCss, rimLobe } from '../dom/rim';
 import { boxShadowCss, shadowAlphaFrom } from '../dom/shadow';
 import { resolveBody, withPresence } from '../dom/body';
+import { RIM } from '../law';
 
 describe('adaptive shadow (docs/reference.md §4)', () => {
   it('lands on the two densities measured off the reference frames', () => {
@@ -29,6 +30,11 @@ describe('adaptive shadow (docs/reference.md §4)', () => {
     expect(small.startsWith('0 0 ')).toBe(true);
   });
 });
+
+/** Every alpha in a conic-gradient string, in order. */
+function alphas(css: string): number[] {
+  return [...css.matchAll(/rgba\([^)]*,\s*([\d.]+)\)/g)].map((m) => Number(m[1]));
+}
 
 describe('rim light (docs/reference.md §2)', () => {
   it('points the gradient at the light', () => {
@@ -61,7 +67,23 @@ describe('rim light (docs/reference.md §2)', () => {
     const optics = resolveOptics(MATERIAL_PRESETS.glass);
     const css = rimGradientCss(optics, [0.5, 0.5, 0.5], [0, -1]);
     // The side of the ring, away from both arcs, is the dark edge iOS 27 made its own layer.
-    expect(css).toContain('rgba(0,0,0,0.22)');
+    // Matched on the value, not its spelling: the alpha is formatted, and a test that pins the
+    // formatting fails on a change that moved nothing.
+    const darkest = Math.min(...alphas(css));
+    expect(darkest).toBeCloseTo(RIM.darkEdge, 3);
+    expect(css).toContain('rgba(0,0,0,');
+  });
+
+  // §1: an element that is not fully there yet is not yet outlined either. The dark edge is the
+  // part that survives facing away from the light, so a rim left unscaled draws a hairline around
+  // nothing — which is what the browser gate caught.
+  it('fades with the element rather than outlining an absent one', () => {
+    const optics = resolveOptics(MATERIAL_PRESETS.glass);
+    const present = alphas(rimGradientCss(optics, [0.5, 0.5, 0.5], [0, -1], 1));
+    const half = alphas(rimGradientCss(optics, [0.5, 0.5, 0.5], [0, -1], 0.5));
+    const absent = alphas(rimGradientCss(optics, [0.5, 0.5, 0.5], [0, -1], 0));
+    expect(Math.max(...half)).toBeCloseTo(Math.max(...present) * 0.5, 3);
+    expect(Math.max(...absent)).toBe(0);
   });
 });
 
@@ -103,5 +125,41 @@ describe('body (docs/reference.md §3)', () => {
     // Same ink polarity both times; only the backdrop changes.
     expect(withPresence(resolveBody(optics, flatDark, 1), optics, flatDark).tintLuma).toBeGreaterThan(0.5);
     expect(withPresence(resolveBody(optics, flatLight, 1), optics, flatLight).tintLuma).toBeLessThan(0.5);
+  });
+});
+
+// Measured off frames/crops/cap158-left and cap158-right: the bright arc's full width at half its
+// peak is 53 degrees in the first and 30 in the second. The model's own width is the exponent's:
+// 2*acos(0.5^(1/n)). It was 3, whose arc is 75 degrees wide — broader than both measurements.
+describe('how wide the key-light arc is (docs/reference.md §2)', () => {
+  /** Full width at half maximum of the lobe, in degrees, read off the function itself. */
+  function lobeWidth(): number {
+    const peak = rimLobe(0, 1);
+    let edge = 0;
+    for (let d = 0; d <= 180; d += 0.05) {
+      if (rimLobe(d, 1) < peak / 2) break;
+      edge = d;
+    }
+    return edge * 2;
+  }
+
+  it('matches the arc the reference frame shows', () => {
+    expect(lobeWidth()).toBeGreaterThan(50);
+    expect(lobeWidth()).toBeLessThan(57);
+  });
+
+  it('is narrower than the cubic lobe it replaced', () => {
+    // 2*acos(0.5^(1/3)) is 74.9 degrees. The old value was broader than either measurement.
+    expect(lobeWidth()).toBeLessThan(74.9);
+  });
+
+  it('still opposes: the far arc is weaker, not absent', () => {
+    expect(rimLobe(180, 1)).toBeCloseTo(RIM.opposingArc, 6);
+    expect(rimLobe(180, 1)).toBeLessThan(rimLobe(0, 1));
+    expect(rimLobe(180, 1)).toBeGreaterThan(0);
+  });
+
+  it('is dark where neither arc reaches', () => {
+    expect(rimLobe(90, 1)).toBeCloseTo(0, 6);
   });
 });

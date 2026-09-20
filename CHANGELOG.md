@@ -1,5 +1,47 @@
 # Changelog
 
+## 2.0.0
+
+Ready to be depended on: what the package exports, and a gate for every promise the docs make.
+
+### Breaking: the comparison canvases leave the root
+
+`REFERENCE_SCENES`, `VireGlassRefLayer`, `refCheckerCells`, `refGradientSteps` and
+`drawReferenceLayer` move from `vireglass` and `vireglass/web` onto `vireglass/reference`.
+
+They are bench machinery: two platforms held against the same backdrop and compared as numbers
+(`docs/platform-parity.md`). A material library's surface should not be its own test canvases — an
+app that wants glass has no use for a checkerboard, and a host that already has comparison
+canvases of its own should not have to dodge a name collision to adopt the material. Which is not
+hypothetical: the monorepo this was extracted from has exactly that, under its own names.
+
+```diff
+- import { REFERENCE_SCENES } from 'vireglass';
++ import { REFERENCE_SCENES } from 'vireglass/reference';
+```
+
+Nothing else moved, and nothing was dropped.
+
+### New: the law is readable
+
+`vireglass/law` exports every calibrated number in the material, in twenty groups, each carrying
+where it came from. A fourth renderer has to agree with the other three and cannot do that against
+numbers it cannot read. On a subpath rather than the root, because names like `SIZE`, `SCALE` and
+`TOUCH` have no business in a top-level namespace.
+
+### Gates that cover the package as a package
+
+- `check:package` packs the tarball, installs it into an empty project, and loads every entry
+  point in CommonJS and ESM — deliberately without React present, so a core that needs it fails
+  here rather than in someone's install. It also checks that the Android source ships and imports
+  nothing the package does not declare: an undeclared peer there surfaces in an Expo build, which
+  is the worst place to find it.
+- `check:readme` reads the import lines out of every markdown file and checks each name against
+  the entry it names, resolved through the package's own exports map. The worst way for an open
+  library to fail a stranger is for its first example not to run, and docs drift silently — a
+  rename leaves the build and the tests green.
+
+
 ## 1.1.0
 
 Glass over live DOM, and the core becomes the single place the material is written down.

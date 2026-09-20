@@ -94,7 +94,53 @@ shape costs under 1.5 ms.
 A scroll costs `update`, which is the probe and the CSS writes — the map is untouched because the
 backdrop is not one of its inputs.
 
+## Glass that is not there until you touch it
+
+`variant: 'interactive'` attaches the material and leaves the element alone until a finger
+arrives, then materialises it under the touch and takes it away again on release. It is how glass
+goes on something that is not chrome — a scrubber, a slider thumb, a card — without putting
+permanent glass in the content layer, which §7 says to avoid.
+
+```js
+attachGlass(thumb, { material: MATERIAL_PRESETS.glass, variant: 'interactive' });
+```
+
+"Absent" is measured, not asserted: `check:dom` screenshots the element untouched and compares it
+to the same page with no glass attached at all, and fails on any difference. That gate is what
+caught `setAppear(0)` leaving a rim, a shadow, a presence floor and a spectral fringe behind.
+
+## One pane, not two
+
+Attaching glass to an element that is already inside glass warns on the console and names the
+outer element. The warning is not a style rule: `backdrop-filter` samples what is composited
+behind an element, so a nested pane's backdrop is the outer pane's output — the refraction lands
+twice on the same pixels and the blurs multiply. Overlapping panes are fine and are not warned
+about; that is what two sheets of glass do.
+
+## The gate looks at the picture
+
+`check:dom` renders the material over a saturated page and compares its own pixels' saturation
+against the same page with no glass on it. Glass moves light; it cannot make colour that is not
+already there, so the material must not read as more saturated than what it stands on.
+
+That assertion exists because everything else passed while the default preset wrapped every
+control in a neon tube. The spectral overlay multiplied the backdrop channel by channel — 1.68 on
+red against 0.05 on blue — and 286 unit tests, a shader compile, an optics sweep and a
+displacement measurement all stayed green. The hairline fixture the other assertions use is nearly
+grey, so a material that saturates everything looks fine on it.
+
+It also corrupted the measurement next to it. `full` against `flat` is supposed to isolate the
+displacement, and `flat` is the same material at ior = 1 — which zeroes the iridescence too,
+because that rides Fresnel. So most of what the rim figure reported was the overlay, not the lens:
+22.45 before, 7.96 now, on unchanged optics.
+
 ## Limits
+
+**Colour pickup is uniform, and reality is a gradient.** A large element takes on the colour of the
+content beside it (§7). Measured off the reference, that bleed peaks at about 0.3 of the content's
+own chroma at the edge nearest it and is gone about ninety pixels in. This renderer has one backdrop
+sample per element, so it applies the peak across the whole body: right at the edge, too strong in
+the middle. The WebGL and AGSL paths sample per pixel and do not have this limit.
 
 **The refraction is Chromium-only today.** Firefox does not support a filter reference in
 `backdrop-filter` and has closed the request as not planned. Safari does not yet, though WebKit

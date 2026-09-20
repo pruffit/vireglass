@@ -1,4 +1,4 @@
-import { BODY, DISPERSION, LENS, MEDIUM, RIM, SPECTRAL } from './law';
+import { ACCENT, BODY, DISPERSION, LENS, MEDIUM, RIM, SPECTRAL } from './law';
 import { VG_SDF } from './sdf';
 
 // The lens source is assembled HERE and ships to the native view as a prop: AGSL and SKSL are one
@@ -479,6 +479,28 @@ half4 main(float2 xy) {
   float ground = structure * u_legibility * VG_GROUND_SPAN;
   float density = max(max(u_bodyDensity, ground), needForInk);
 
+  // PRESENCE (§3). Over a uniform backdrop there is nothing to refract, and an element that is
+  // only a rim honestly disappears — right for a piece of background, wrong for a control.
+  //
+  // This used to live on the rim line alone, as lit = max(rimKey, u_presence x 2), while the
+  // DOM path has always implemented it as a floor on the BODY. Two renderers, one field, two
+  // meanings. Measured on Apple's own control over a flat page (frames/verify/m-707), the body
+  // carries 16 levels of separation there and the rim 11.6 — so the body is where it belongs,
+  // and the rim's reading was the wrong one.
+  // The separation asked for is capped by the range that is left: over a backdrop at 0.96 there
+  // is no room to go 0.05 lighter. And what it is DIVIDED by is the distance to the tint's own
+  // end, not to the tint the body currently sits at — dividing by the latter explodes wherever
+  // the two are close, which is how the first version of this drove density to its ceiling at
+  // both extremes and took the window down to 7%.
+  bool lighter = local < 0.5;
+  float target = lighter ? min(local + u_presence, 1.0) : max(local - u_presence, 0.0);
+  float separation = abs(target - local);
+  float reached = abs(tintLuma - local) * density;
+  if (u_presence > 0.0 && reached < separation) {
+    float toEnd = abs((lighter ? VG_TINT_LIGHT : VG_TINT_DARK) - local);
+    density = max(density, min(separation / max(toEnd, 1e-4), ${BODY.maxDemand}));
+  }
+
   // Glass has no color of its own — only the color of what's beneath it (HIG "Color").
   float3 tintHue = mix(float3(1.0), vgHue(wide * 0.5 + ambient * 0.5), u_colorPickup);
   // The element appears by the lens and body building up, not by fading in (M 2:55): at
@@ -490,7 +512,7 @@ half4 main(float2 xy) {
   // tone — deeper over dark, lighter over light — and the content's texture still shows through
   // the color.
   if (u_accent.a > 0.0) {
-    float3 tone = u_accent.rgb * mix(0.88, 1.08, local);
+    float3 tone = u_accent.rgb * mix(${ACCENT.deep}, ${ACCENT.light}, local);
     float3 through = tone * (0.85 + 0.3 * vgLuma(rgb));
     rgb = mix(rgb, clamp(through, float3(0.0), float3(1.0)), u_accent.a * u_appear);
   }

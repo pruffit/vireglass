@@ -18,6 +18,8 @@
 //   dense glass.
 //   WAVE: touch and lift-off each throw a short ring that decays within a quarter second.
 
+import { ACCESSIBILITY, SPRING } from './law';
+
 export type DeformSample = {
   /** Touch point relative to the element's center, CSS pixels. */
   touchX: number;
@@ -31,22 +33,17 @@ export type DeformSample = {
   wavePhase: number;
 };
 
-const HOLD_STIFFNESS = 260;
-const HOLD_DAMPING = 46;
-/** Release is stiffer than hold, but damping is high: a dense medium snaps back fast with almost
- *  no overshoot. A visible overshoot would be liquid jelly, not dense glass. */
-const RELEASE_STIFFNESS = 420;
-const RELEASE_DAMPING = 34;
+/**
+ * `elastic: false` is reduced motion (§9): the spring and the ripple are the material's elastic
+ * properties and stop, the press stays and is damped. An element that goes dead under the setting
+ * would not be reduced motion — it would be no feedback at all, and the press is what lights the
+ * element from within (§5), which is light rather than movement.
+ */
+export type DeformOptions = { elastic?: boolean };
 
-const PRESS_ATTACK = 0.07;
-const PRESS_RELEASE = 0.16;
-
-/** The wave is short and weak: in a viscous medium ripples decay within a quarter second rather
- *  than oscillating. */
-const WAVE_DECAY = 0.22;
-const WAVE_TURNS_PER_SECOND = 3.0;
-
-export function createDeform() {
+export function createDeform(options: DeformOptions = {}) {
+  let elastic = options.elastic !== false;
+  let pressCeiling = elastic ? 1 : ACCESSIBILITY.stillPress;
   let touchX = 0;
   let touchY = 0;
   let targetTouchX = 0;
@@ -82,11 +79,11 @@ export function createDeform() {
     targetY = 0;
     // Impulses ADD UP rather than restart, and phase isn't reset: resetting it would cut off a
     // running wave mid-period, which is exactly what causes a jolt on rapid clicks.
-    waveAmp = Math.min(waveAmp + waveStart, waveStart * 1.6);
+    if (elastic) waveAmp = Math.min(waveAmp + waveStart, waveStart * SPRING.waveCapOnGrab);
   }
 
   function drag(dx: number, dy: number, limit: number): void {
-    if (!held) return;
+    if (!held || !elastic) return;
     const len = Math.hypot(dx, dy);
     // Travel saturates rather than clips: near the limit the finger keeps moving while the field
     // barely does — that's how a thick liquid behaves once it hits its limit.
@@ -100,29 +97,29 @@ export function createDeform() {
     held = false;
     targetX = 0;
     targetY = 0;
-    waveAmp = Math.min(waveAmp + waveStart, waveStart * 2);
+    if (elastic) waveAmp = Math.min(waveAmp + waveStart, waveStart * SPRING.waveCapOnRelease);
   }
 
   function integrate(dt: number): void {
-    const k = held ? HOLD_STIFFNESS : RELEASE_STIFFNESS;
-    const c = held ? HOLD_DAMPING : RELEASE_DAMPING;
+    const k = held ? SPRING.holdStiffness : SPRING.releaseStiffness;
+    const c = held ? SPRING.holdDamping : SPRING.releaseDamping;
     vx += (k * (targetX - pullX) - c * vx) * dt;
     vy += (k * (targetY - pullY) - c * vy) * dt;
     pullX += vx * dt;
     pullY += vy * dt;
 
-    const pressTarget = held ? 1 : 0;
-    const tau = held ? PRESS_ATTACK : PRESS_RELEASE;
+    const pressTarget = held ? pressCeiling : 0;
+    const tau = held ? SPRING.pressAttack : SPRING.pressRelease;
     press += (pressTarget - press) * (1 - Math.exp(-dt / tau));
-    active += (pressTarget - active) * (1 - Math.exp(-dt / 0.09));
+    active += (pressTarget - active) * (1 - Math.exp(-dt / SPRING.activeFollow));
 
     // The touch point catches up to the finger fast, but not instantly — see grab().
-    const follow = 1 - Math.exp(-dt / 0.045);
+    const follow = 1 - Math.exp(-dt / SPRING.pointFollow);
     touchX += (targetTouchX - touchX) * follow;
     touchY += (targetTouchY - touchY) * follow;
 
-    wavePhase += dt * WAVE_TURNS_PER_SECOND;
-    waveAmp *= Math.exp(-dt / WAVE_DECAY);
+    wavePhase += dt * SPRING.waveTurnsPerSecond;
+    waveAmp *= Math.exp(-dt / SPRING.waveDecay);
     if (waveAmp < 0.01) waveAmp = 0;
   }
 
@@ -167,11 +164,29 @@ export function createDeform() {
     );
   }
 
+  /** The setting can be turned on while the page is open, and a deformation already in flight has
+   *  to stop rather than finish. */
+  function setElastic(on: boolean): void {
+    if (on === elastic) return;
+    elastic = on;
+    pressCeiling = on ? 1 : ACCESSIBILITY.stillPress;
+    if (!on) {
+      pullX = 0;
+      pullY = 0;
+      vx = 0;
+      vy = 0;
+      targetX = 0;
+      targetY = 0;
+      waveAmp = 0;
+      wavePhase = 0;
+    }
+  }
+
   function sample(): DeformSample {
     return { touchX, touchY, pullX, pullY, press, active, waveAmp, wavePhase };
   }
 
-  return { grab, drag, release, step, idle, sample };
+  return { grab, drag, release, step, idle, sample, setElastic };
 }
 
 /**

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { TOUCH } from '../law';
 import {
   findNodeHandle,
   PixelRatio,
@@ -19,7 +20,6 @@ import {
 } from '@shopify/react-native-skia';
 import Animated, {
   useAnimatedProps,
-  useAnimatedStyle,
   useDerivedValue,
   type SharedValue,
 } from 'react-native-reanimated';
@@ -45,8 +45,7 @@ import type { DeformSample } from '../touch-response';
 import type { VireGlassDebugMode, VireGlassOptics } from '../material';
 import { LENS_SHADER } from '../lens-shader';
 import { SURFACE_SHADER } from '../surface-shader';
-import { applyAccessibility } from '../accessibility';
-import { useAccessibilityModifiers, useBackdropEnabled } from './provider';
+import { useBackdropEnabled, useResolvedOptics } from './provider';
 import { useGlassSurfaceRegistration } from './surface-registry';
 
 function compile(src: string) {
@@ -54,10 +53,6 @@ function compile(src: string) {
   if (!effect) throw new Error('VireGlass: surface SKSL failed to compile');
   return effect;
 }
-
-/** The fraction of activity that a touch alone raises, matching the same fraction the web
- *  implementation's own button logic uses. */
-const ACTIVE_ON_TOUCH = 0.3;
 
 const SURFACE = compile(SURFACE_SHADER);
 
@@ -194,11 +189,9 @@ export function VireGlassSurface({
     };
   }, [onBackdropSample]);
 
-  // System settings change the material's LAYERS, they don't override it (reference §9). Applied
-  // right here: every piece of the app's glass passes through this surface, and one place is
-  // enough.
-  const a11y = useAccessibilityModifiers();
-  const tuned = useMemo(() => applyAccessibility(optics, a11y), [optics, a11y]);
+  // The user's clarity and the system's settings, in that order (reference §3, §9). Applied right
+  // here: every piece of the app's glass passes through this surface, and one place is enough.
+  const tuned = useResolvedOptics(optics);
 
   padRef.current = Math.max(padRef.current, lensPadDp(geometry, tuned, morph, dragLimit));
   const lensPad = padRef.current;
@@ -353,7 +346,7 @@ export function VireGlassSurface({
       // already-active element would read as switching it off. Same fraction as the web
       // implementation's own button logic: a touch raises activity by a third, not to the full
       // value.
-      u_active: touch ? Math.max(touch.value.active * ACTIVE_ON_TOUCH, active.value) : active.value,
+      u_active: touch ? Math.max(touch.value.active * TOUCH.activeOnTouch, active.value) : active.value,
       u_progress: progress ? progress.value : statics.u_progress,
       // The element builds up as glass, not through opacity: zero means it doesn't exist at all.
       u_appear: appear ? appear.value : statics.u_appear,

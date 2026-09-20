@@ -17,9 +17,19 @@
 export const RIM = {
   /**
    * The key-light lobe's exponent. Two opposing arcs come out of one expression, which is why
-   * they are opposed rather than placed: `pow(max(facing, 0), 3) + 0.45 * pow(max(-facing, 0), 3)`.
+   * they are opposed rather than placed: `pow(max(facing, 0), n) + 0.45 * pow(max(-facing, 0), n)`.
+   *
+   * MEASURED off two close-ups of real end caps, frames/crops/cap158-left and cap158-right. The
+   * bright arc's full width at half its peak is 53 degrees in the first and 30 in the second; this
+   * exponent's own width is `2·acos(0.5^(1/n))`, so they imply 6 and 20. It was 3, whose arc is 75
+   * degrees wide — broader than either measurement, and the error is in the same direction in both.
+   *
+   * 6 is the conservative end: it reproduces the wider crop exactly, and a broader arc is the more
+   * forgiving error. One exponent cannot serve both, and that is not noise — a specular lobe's
+   * width depends on the light's angular size as well as the surface, and those are two different
+   * scenes. The model has no term for the light's size.
    */
-  lobeExponent: 3,
+  lobeExponent: 6,
   /** The far arc, weaker than the one facing the light (§2). */
   opposingArc: 0.45,
   /**
@@ -54,7 +64,15 @@ export const BODY = {
 
 /** Shadow (§4). The density law lives in `geometry.ts`; these are its measured ends. */
 export const SHADOW = {
-  /** Measured off reference frames 711–723: 4.0% over a flat light backdrop, 19.9% over text. */
+  /**
+   * Measured off reference frames 711–723: 4.0% over a flat light backdrop, 19.9% over text.
+   *
+   * REPRODUCED independently off frames/verify/m-707 and m-711 — the same capsule in the same scene
+   * at the same scale, once below the text over plain background and once scrolled up over it.
+   * Comparing the rows under the capsule against the same rows far to either side, so the
+   * background's own gradient cancels: 3.5% and 19.2%, peaking about 140 px below the capsule.
+   * Two passes, different frames and a different method, agreeing to within 0.7 of a point.
+   */
   alphaFlat: 0.04,
   alphaBusy: 0.199,
 } as const;
@@ -69,7 +87,15 @@ export const DISPERSION = {
 /** Response to a finger (§5). The springs and decay live in `touch-response.ts`; these shape the
  *  field the finger deforms. */
 export const TOUCH = {
-  /** The element grows under pressure (M 3:51; HIG: interactive "expands"). */
+  /**
+   * The element grows under pressure (M 3:51; HIG: interactive "expands").
+   *
+   * CHECKED, not measured: across frames/knob/switch-press, a 4x5 sheet of one switch being
+   * pressed, the control's extent runs 764 px in the three settled frames and 787 to 822 under the
+   * finger — 3 to 8 per cent. This value sits inside that, which is a consistency check and not a
+   * derivation: the measurement cannot separate the knob stretching from the track growing, and the
+   * settled frames agreeing to the pixel is the only part of it that is tight.
+   */
   pressGrow: 0.06,
   /** The ridge around the contact blob: material displaced from under the finger ends up
    *  somewhere. Without it the shape balloons, and a dense medium does not do that. */
@@ -95,6 +121,22 @@ export const TOUCH = {
   waveOfTravel: 0.18,
   /** The lift-off ring is weaker than the one from touching down (§5). UNMEASURED ratio. */
   releaseWave: 0.6,
+  /**
+   * How far a glow reaches past the element it started on, as a multiple of that element's
+   * half-size. UNMEASURED: §5 says the glow spreads "onto any Liquid Glass elements nearby" and
+   * names no distance. This is the reach at which a neighbour in a tab bar still lights and one
+   * across the screen does not.
+   */
+  glowReach: 3,
+  /**
+   * How much of an element's "active" state a touch alone raises — the fraction the glow and the
+   * ink lift ride on when nothing else is driving them. UNMEASURED.
+   *
+   * It was a private constant on the Android surface whose comment said it matched the web's, and
+   * nothing enforced that: the web renderer takes `active` from the host as a field and has no
+   * constant to match. Two renderers agreeing by a comment is exactly what this file is for.
+   */
+  activeOnTouch: 0.3,
 } as const;
 
 /** The bevel's profile — spherical, like a cap: `t / sqrt(1 - t² · k)`, clamped. A plain `t²` kept
@@ -180,8 +222,341 @@ export const SPECTRAL = {
   /** How far into the bevel the fringes reach, as a fraction of it measured from the silhouette.
    *  Diffraction is an EDGE effect; past this the bevel is plain glass. */
   diffractionOnset: 0.45,
+  /**
+   * The same window for interference, which had none. §2 puts the iridescence on the opposing ARC —
+   * "the opposing arc carries an iridescent fringe" — and a fringe is a thing at an edge.
+   *
+   * Without it the term applies wherever the surface angle puts it, and across the inner bevel the
+   * angle barely changes, so a film that should read as a fringe reads as a flat colour filter.
+   * Measured on a 680x64 bar with the default preset: a multiplier of 1.68, 1.26, 0.05 held CONSTANT
+   * from a third of the way through the bevel to its inner edge — red boosted by two thirds and blue
+   * removed outright. UNMEASURED window; wider than diffraction's because interference reaches
+   * further in than the fringes do.
+   */
+  iridescenceOnset: 0.25,
   /** Fringes across the bevel. Denser as the bevel sharpens, which is what the phase term does. */
   diffractionFringes: 4,
   /** The channel the hue is measured against, nm. Green is the eye's own reference. */
   referenceLambda: 550,
+} as const;
+
+/** Tinting (§7): a colour that is a property of the medium, not a fill over it. */
+export const ACCENT = {
+  /** The tone the colour takes over a dark backdrop and over a light one. "A range of tones mapped
+   *  to content brightness underneath", rather than one flat colour. */
+  deep: 0.88,
+  light: 1.08,
+  /** How much of the medium the colour occupies by default. Short of one, because the content has
+   *  to keep coming through: a fill "breaks the visual character of Liquid Glass" (@17:03). */
+  amount: 0.8,
+} as const;
+
+/**
+ * The system accessibility settings (§9). They are modifiers on the material's layers, so their
+ * calibration belongs in the law next to the layers they move — not as private constants in the
+ * module that happens to apply them.
+ */
+export const ACCESSIBILITY = {
+  /** Frost floor under reduced transparency: the glass gets "frostier" (§9). */
+  frostMinDp: 14,
+  /**
+   * Body floor under reduced transparency. B @10:07 is the stricter statement of the two — a bar
+   * "gets a background when reduce transparency is enabled" — so this is a background, not a
+   * thicker haze. UNMEASURED: neither source gives a figure.
+   */
+  obscureMin: 0.82,
+  /** Under increased contrast the element is "predominantly black or white" (§9): the body goes to
+   *  whichever pole its ink already points at, at a density that leaves it reading as that pole. */
+  contrastDensity: 0.94,
+  /** …and separates from the backdrop on its own, whatever is behind it. */
+  contrastPresence: 0.5,
+  /**
+   * The contrasting border §9 asks for, in units of lightness away from the body's own pole. The
+   * rim stops taking its colour from the environment and takes it from the element instead — an
+   * ambient hairline is not a contrasting border. UNMEASURED.
+   */
+  contrastRim: 0.85,
+  /**
+   * Press that survives reduced motion. §9 "decreases the intensity of some effects and disables
+   * any elastic properties": the spring and the ripple are elastic and go to zero, the press is an
+   * ease that carries the element's light, so it is damped rather than removed — an element that
+   * stops answering a finger altogether is not reduced motion, it is no feedback. UNMEASURED.
+   */
+  stillPress: 0.6,
+} as const;
+
+/**
+ * Morphing (§5). Apple's design leads name their own model for it out loud (S 1:25:30, fireside
+ * chat with the Apple design team): "we also had a refresher from biology class. It's called
+ * mitosis and meiosis. When these things are coming together or materialization and
+ * dematerialization and morphing."
+ *
+ * Which is the right physics and not a metaphor: a dividing cell is one body throughout. It never
+ * has a moment of being two bodies that happen to touch, and it never pops a second body into
+ * existence beside the first. The neck is continuous from start to finish, and it is the neck that
+ * carries the whole transition.
+ */
+export const MORPH = {
+  /**
+   * Width of the neck between two lobes, as a fraction of the smaller one's half-size. On a large
+   * element the bridge has to be wider or the seam keeps a sharp corner, which a liquid does not
+   * have. UNMEASURED: the reference names the behaviour and no figure.
+   */
+  neck: 0.35,
+  /**
+   * How far past merely touching a completed fusion goes, as a multiple of the bridge width that
+   * just closes the gap. At exactly the bridge width the two surfaces meet at a point, which is two
+   * shapes kissing rather than one body.
+   *
+   * MEASURED, frames/morph/s03, the one panel where the necks are still attached. Apple's
+   * silhouette there: lobes 72 and 82 px with their centres 92 px apart — 15 px of space between
+   * their surfaces — joined by a neck 28 px tall. Rendering the same geometry through this model
+   * gives 29.0. The measurement discriminates: 1.2 gives 23.5, 1.4 gives 33.5, and at 1.0 the neck
+   * closes to nothing.
+   */
+  fuse: 1.3,
+} as const;
+
+/**
+ * CAUSE TO EFFECT. The normalisations that turn what the medium IS — index, thickness, bevel,
+ * roughness, film — into what a renderer needs. They lived as literals inside `optics.ts`, half of
+ * them not even named, which meant the heart of the model was the one part of it the law could not
+ * see.
+ *
+ * Almost all of them are stylisations and say so. Literal physical values put every effect at the
+ * threshold of visibility: real glass reflects four per cent at normal incidence, and a rim drawn
+ * at four per cent is not a rim. Each is monotonic in its own cause, so "denser medium, brighter
+ * rim" holds whatever the constant is; what no one has measured is where on the scale Apple's
+ * material sits. Hence UNMEASURED on nearly all of it — that is the honest state of this file, and
+ * the gate now says so out loud instead of the number hiding in a module.
+ */
+export const DERIVE = {
+  /** Physical 4% reflectance into the render's working range. UNMEASURED. */
+  fresnelGain: 17.5,
+  /** Schlick's exponent. A constant of the approximation, not a knob. */
+  fresnelExponent: 5,
+  /** The index at which ray bending is at full strength, measured from air. UNMEASURED. */
+  iorFullBend: 0.6,
+  /** Magnification behind a plane-parallel plate, per dp of thickness. UNMEASURED. */
+  magnifyPerDp: 0.006,
+  /** In ordinary glasses the Abbe number falls as the index rises, so dispersion grows with it.
+   *  UNMEASURED slope. */
+  dispersionPerIor: 1.1,
+  /** Index spread between the red and blue channels. The physical value (~0.01 at an Abbe number
+   *  of 55) is at the threshold of visibility. UNMEASURED. */
+  iorSpreadPerDispersion: 0.045,
+  /** Beer–Lambert absorption per dp of path. UNMEASURED. */
+  absorbPerDp: 0.017,
+  /** Ceiling on how much denser the bevel may read than the body. The rim's ray travels further
+   *  through the medium; past this the rim is milk rather than glass. UNMEASURED. */
+  edgeDensityMax: 4,
+  /**
+   * Frost ceiling, dp. Deliberately low: blur is a SUPPORTING device here, and past about a dozen
+   * dp letters under the glass stop being letters. Separating content from ink is the body's job.
+   *
+   * UNMEASURED, and an attempt is recorded here so the next one does not repeat it.
+   * frames/verify/m-711 has the same paragraph sharp beside the capsule and behind it, which looks
+   * like the measurement: match the blur that takes the sharp patch's detail down to the glassed
+   * one's. It gives 2 to 3 px at that frame's scale, and the figure is not trustworthy. Detail is
+   * lost to three things at once there — the frost, the magnification (`refractionScale` lowers the
+   * text's spatial frequency without blurring anything), and the body veiling its contrast — and
+   * the method cannot separate them. What it does bound is the total: the text behind the glass
+   * keeps 68% of the detail it has beside it.
+   *
+   * A clean measurement needs a frame where the glass does not magnify, or a feature of known size
+   * behind it to normalise the magnification out.
+   */
+  blurMaxDp: 12,
+  /** Highlight width from a smooth surface and from a fully rough one, as a specular exponent.
+   *  UNMEASURED. */
+  specularPowerSmooth: 160,
+  specularPowerRough: 8,
+  /** How much roughness damps the highlight's brightness. UNMEASURED. */
+  specularRoughDamping: 0.6,
+  /**
+   * The medium's own hue by density. Water absorbs red and skews cool, ordinary glass is nearly
+   * neutral with a faint green, dense high-index media skew warm. Glass has no colour of its own
+   * (HIG "Color"), so this is never set by hand — it is tied to the index.
+   */
+  hueCool: [0.86, 1.0, 1.08],
+  hueNeutral: [1.0, 1.02, 0.99],
+  hueWarm: [1.08, 1.0, 0.88],
+  /** The index range the hue sweeps across, and where it starts. UNMEASURED. */
+  hueFromIor: 1.2,
+  hueSpan: 0.55,
+  /** Body lightness follows reflectance: the denser the medium, the more of its surroundings it
+   *  returns. UNMEASURED base and slope. */
+  bodyLiftBase: 0.34,
+  bodyLiftPerF0: 2.4,
+  /**
+   * How far past the bevel the rim gathers its surroundings, as a multiple of the bevel. At a
+   * grazing angle the eye receives the vicinity rather than what is under the glass, and without
+   * this, glass on an empty black background has no source at all. UNMEASURED.
+   */
+  gatherPerBevel: 4,
+  /** Floor and ceiling on that radius, dp. Unbounded, a wide bevel gathers from fifty dp away and
+   *  a READABLE copy of the neighbourhood appears inside the glass — eight samples cannot blur a
+   *  disc that large (E-33, E-37). */
+  gatherMinDp: 4,
+  gatherMaxDp: 28,
+  /** The body's own density from absorption through its thickness. Small: the body only moves
+   *  toward the tint under the legibility requirement, otherwise it dims the content. UNMEASURED. */
+  bodyDensity: 0.05,
+  /**
+   * Rim light on the physical scale rather than the rim highlight's. `fresnelGain` saturates at one
+   * for dense media, and applying it here too would raise body lightness harder than the glass had
+   * just separated it from the ink — eating its own legibility work. UNMEASURED.
+   */
+  edgeLightGain: 6,
+  /**
+   * Iridescence rides the REFLECTED ray, so it is tied to Fresnel and has no knob of its own.
+   *
+   * MEASURED against how coloured a real rim is. In frames/crops the brightest rim pixels have a
+   * channel spread — (max − min) / max — of 13% in cap158-left and 20% in cap158-right, against
+   * their own backdrops' 14.6% and 14.3%. So the rim is no more coloured than the scene it stands
+   * in: §2's "iridescent fringe" adds a few points at most, and in one of the two crops it adds
+   * nothing measurable.
+   *
+   * At 1.6 this put ordinary glass at 0.945 iridescence and the spectral multiplier reached a 97%
+   * channel spread — red boosted by two thirds and blue removed. Rendered over a coloured page that
+   * is a neon tube around every control, which is what sent me to measure it.
+   */
+  iridescencePerFresnel: 0.042,
+  /** Edge diffraction shares dispersion's λ-dependence, at the stylised amplitude: at the physical
+   *  one the fringes are not visible at all. MEASURED with the same crops and the same target as
+   *  iridescence — on its own it was reaching a 93% channel spread. */
+  diffractionPerDispersion: 0.05,
+  /** Multiple internal reflection — the denser the medium, the more light it circulates and the
+   *  more it is tinted by its surroundings. UNMEASURED slope. */
+  colorPickupPerFresnel: 0.9,
+  /**
+   * The ceiling, which keeps it a medium rather than a fill.
+   *
+   * MEASURED, frames/concentric/shadow-zoom: the same sidebar twice, over a yellow cover and over a
+   * pink one, so the difference between the panels is the pickup with the sidebar's own colour
+   * subtracted out. Sampling a band of rows clear of the text, the bar's hue offset against the
+   * cover's own reaches 0.31 of it at the edge nearest the content in the yellow panel and 0.28 in
+   * the pink one. It was 0.42, which nothing measured.
+   *
+   * Reality is not uniform: the bleed falls to nothing about ninety pixels in, and both panels show
+   * the same falloff. The DOM path has one backdrop sample per element and cannot reproduce that,
+   * so it applies the ceiling across the whole body — right at the edge, too strong in the middle.
+   * That limit is in docs/dom.md rather than papered over with a lower number.
+   */
+  colorPickupMax: 0.3,
+} as const;
+
+/**
+ * SIZE AND SHADOW. What changes when an element gets bigger, and how dense its shadow reads over
+ * what is behind it. 219 @6:36: as glass "flexes and morphs to larger sizes, it simulates a
+ * thicker material with deeper shadows and more pronounced lensing and refraction".
+ */
+export const SIZE = {
+  /** Half-size at which bevel and thickness are specified as given; they grow as its square root
+   *  from there. UNMEASURED reference size. */
+  referenceDp: 24,
+  /** Floor and ceiling on that growth. UNMEASURED. */
+  gainMin: 0.8,
+  gainMax: 2.4,
+  /** A bevel wider than this fraction of the half-size breaks the SDF — the roundings converge in
+   *  the middle. A property of the geometry, not a taste. */
+  maxBevelFraction: 0.65,
+} as const;
+
+/**
+ * Shadow density by what is behind the element. 219 @11:47, verbatim: it "increases the opacity of
+ * its shadow when it is over text… lowers the opacity of its shadow when it is over a solid light
+ * background." About content BEHIND the element, so one value per element rather than a field over
+ * the shadow's area. Endpoints checked against the reference by the depth of the dip under the
+ * element (docs/benchmarks.md).
+ */
+export const SHADOW_DENSITY = {
+  /** Over a flat background. */
+  flat: 0.8,
+  /** How fast it rises with structure behind the element, and how far it may rise. */
+  busyGain: 6,
+  busyRise: 1.2,
+  /** Quantisation of the emitted value: a shadow that changes on every pixel of scroll re-lays-out
+   *  the native view every frame. */
+  step: 0.05,
+} as const;
+
+/**
+ * THE MEDIUM'S RESPONSE TO A FINGER (§5). Part of the material, exactly as `ior` is: keeping these
+ * with the consumer would mean web and Android ended up with two different glasses under one name.
+ *
+ * Press is viscous — it dents shallow and releases slowly. Drag is thick: the body noticeably lags
+ * the finger, travel is short, and on release it snaps back fast with almost no overshoot, because
+ * a wide springy overshoot would be liquid jelly rather than dense glass.
+ */
+export const SPRING = {
+  /** Stiffness and damping while the finger is down. UNMEASURED. */
+  holdStiffness: 260,
+  holdDamping: 46,
+  /** …and after it lifts. Stiffer, and damped hard: a dense medium snaps back without ringing. */
+  releaseStiffness: 420,
+  releaseDamping: 34,
+  /** Time constants for the press dent, in and out, seconds. UNMEASURED. */
+  pressAttack: 0.07,
+  pressRelease: 0.16,
+  /** How fast the touch point catches up to the finger. Not instant: an instant jump tears the
+   *  deformation, and on rapid taps that reads as jitter. */
+  pointFollow: 0.045,
+  /** …and how fast the element registers as being touched at all, which is what the glow rides. */
+  activeFollow: 0.09,
+  /** The ripple decays within a quarter second rather than oscillating: in a viscous medium ripples
+   *  are short and weak. UNMEASURED. */
+  waveDecay: 0.22,
+  waveTurnsPerSecond: 3,
+  /** Ceilings on the accumulated ripple, as multiples of a single impulse. Impulses add up rather
+   *  than restart — restarting cuts a running wave mid-period, which is what jolts on rapid taps. */
+  waveCapOnGrab: 1.6,
+  waveCapOnRelease: 2,
+} as const;
+
+/** The user's clear-to-tinted preference (§3). */
+export const SCALE = {
+  /** Where on the scale the material stays exactly as it is by default. */
+  default: 0.35,
+  /** Body density at the fully tinted end: content under the glass has to be hidden. UNMEASURED. */
+  tintedDensity: 0.9,
+} as const;
+
+/**
+ * The scroll edge (§10). 219 @9:16: as content scrolls under a glass element "the effect gently
+ * DISSOLVES the content into the background, lifting the glass visually above the moving content,
+ * and allowing floating elements like titles to always remain clear."
+ *
+ * 356 @11:32 says what it is not, and the first implementation here did exactly that: "they don't
+ * block or darken like overlays. They simply clarify where UI and content meet."
+ */
+export const SCROLL_EDGE = {
+  /** How far the content has to slide under the panel for the effect to fully engage, dp. */
+  engageDp: 24,
+  /**
+   * How far the blur reaches BELOW the bar's lower lip, as a multiple of the bar's own height.
+   *
+   * MEASURED, frames/scroll-edge/z576 at 320x413. High-frequency energy (mean |laplacian| per row,
+   * which a brightness gradient in the content cannot fake) reads 1.4 through the zone under the
+   * bar and 14 in the sharp content below — a factor of ten. The bar's lip is at y≈45 and the zone
+   * runs to y≈130, so the reach is about 1.9 times the bar's own height.
+   *
+   * The same frame confirms 219 @9:22 in passing: the floating title sits inside that zone at 32,
+   * twenty times its surroundings. Titles stay crisp while everything behind them dissolves, which
+   * is why the effect belongs behind the glass in the stack rather than over the content.
+   */
+  reachOfBarHeight: 1.9,
+  /** The blur the content dissolves into at the edge, dp. This is the effect itself — the content
+   *  goes out of focus into the background rather than being covered by anything. UNMEASURED. */
+  dissolveBlurDp: 10,
+  /**
+   * Over dark content the glass turns dark and 219 @9:33 switches the effect "to apply a subtle
+   * dimming instead". Dimming is a reduction in luminance: dark content under dark glass merges
+   * with it, and pushing the content down is what lets the glass sit above it. UNMEASURED.
+   */
+  dimAlpha: 0.1,
+  /** A pinned view under the panel (column headers) gets a flat band instead of a gradual fade
+   *  (219 @9:41) — "a stronger, more opaque boundary" (356 @12:12). UNMEASURED. */
+  hardBlurDp: 14,
+  hardAlpha: 0.18,
 } as const;

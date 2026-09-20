@@ -1,6 +1,9 @@
 import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import { mergeAccessibility, useSystemAccessibility } from './system-accessibility';
 import type { VireGlassAccessibility } from '../accessibility';
+import { applyGlassScale, GLASS_SCALE_DEFAULT } from '../glass-scale';
+import { applyAccessibility } from '../accessibility';
+import type { VireGlassOptics } from '../material';
 
 /**
  * Host app policy for VireGlass, provided once at the root.
@@ -13,12 +16,16 @@ import type { VireGlassAccessibility } from '../accessibility';
 type VireGlassContextValue = {
   glassEnabled: boolean;
   reduceMotion: boolean;
+  /** The user's clear-to-tinted preference (docs/reference.md §3). iOS 27 made this continuous and
+   *  apps get it without recompiling, so the material has to stay usable across the whole range. */
+  scale: number;
   backdropAllowed?: (topLayer: boolean) => boolean;
 };
 
 const DEFAULT_CONTEXT: VireGlassContextValue = {
   glassEnabled: true,
   reduceMotion: false,
+  scale: GLASS_SCALE_DEFAULT,
 };
 
 /** A default value, not a throw: a host that hasn't mounted the provider still gets working
@@ -28,17 +35,19 @@ const VireGlassContext = createContext<VireGlassContextValue>(DEFAULT_CONTEXT);
 export function VireGlassProvider({
   glassEnabled = true,
   reduceMotion = false,
+  scale = GLASS_SCALE_DEFAULT,
   backdropAllowed,
   children,
 }: {
   glassEnabled?: boolean;
   reduceMotion?: boolean;
+  scale?: number;
   backdropAllowed?: (topLayer: boolean) => boolean;
   children: ReactNode;
 }) {
   const value = useMemo<VireGlassContextValue>(
-    () => ({ glassEnabled, reduceMotion, backdropAllowed }),
-    [glassEnabled, reduceMotion, backdropAllowed],
+    () => ({ glassEnabled, reduceMotion, scale, backdropAllowed }),
+    [glassEnabled, reduceMotion, scale, backdropAllowed],
   );
   return <VireGlassContext.Provider value={value}>{children}</VireGlassContext.Provider>;
 }
@@ -55,4 +64,15 @@ export function useAccessibilityModifiers(): VireGlassAccessibility {
 export function useBackdropEnabled(topLayer?: boolean): boolean {
   const { glassEnabled, backdropAllowed } = useContext(VireGlassContext);
   return backdropAllowed?.(topLayer ?? false) ?? glassEnabled;
+}
+
+/**
+ * Causes to effects, then the user's clarity, then the system — in that order. §9 is explicit that
+ * a system setting outranks the material preset: even a transparent preset moves to the edge of the
+ * scale under increased contrast, because the user needs contrast more than the aesthetic.
+ */
+export function useResolvedOptics(optics: VireGlassOptics): VireGlassOptics {
+  const { scale } = useContext(VireGlassContext);
+  const mods = useAccessibilityModifiers();
+  return useMemo(() => applyAccessibility(applyGlassScale(optics, scale), mods), [optics, scale, mods]);
 }

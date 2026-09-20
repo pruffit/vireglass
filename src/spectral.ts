@@ -77,18 +77,26 @@ export function spectralHue(
   let g = 1;
   let b = 1;
 
+  // `t` is 1 at the silhouette and 0 at the inner edge of the bevel, as below.
+  const t = 1 - clamp01(bevel > 0 ? e / bevel : 1);
+
   if (optics.iridescence > 0.001) {
-    const cosI = clamp01(surfaceCosine(surfaceSlope(e, bevel, rim, thick)));
-    const i = interference(cosI, optics.film);
-    r += (i[0] - 1) * optics.iridescence;
-    g += (i[1] - 1) * optics.iridescence;
-    b += (i[2] - 1) * optics.iridescence;
+    // Windowed to the edge, for the same reason diffraction is: §2 puts the iridescence on the
+    // opposing arc, and an arc is at the silhouette. Unwindowed, the surface angle stops changing a
+    // third of the way in and the film paints the rest of the bevel one flat colour.
+    const w = optics.iridescence * smoothstep(SPECTRAL.iridescenceOnset, 1, t);
+    if (w > 0) {
+      const cosI = clamp01(surfaceCosine(surfaceSlope(e, bevel, rim, thick)));
+      const i = interference(cosI, optics.film);
+      r += (i[0] - 1) * w;
+      g += (i[1] - 1) * w;
+      b += (i[2] - 1) * w;
+    }
   }
 
   if (optics.diffraction > 0.001) {
-    // `t` is 1 at the silhouette and 0 at the inner edge of the bevel — the fringes live at the
-    // outer end of it, which is what makes this an EDGE effect rather than a sheen over the bevel.
-    const t = 1 - clamp01(bevel > 0 ? e / bevel : 1);
+    // The fringes live at the outer end of the bevel, which is what makes this an EDGE effect
+    // rather than a sheen over it.
     const w = optics.diffraction * smoothstep(SPECTRAL.diffractionOnset, 1, t);
     if (w > 0) {
       const d = diffraction(e, bevel);
