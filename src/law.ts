@@ -375,10 +375,23 @@ export const DERIVE = {
    *  one the fringes are not visible at all. UNMEASURED. */
   diffractionPerDispersion: 0.5,
   /** Multiple internal reflection — the denser the medium, the more light it circulates and the
-   *  more it is tinted by its surroundings. The ceiling keeps it a medium rather than a fill.
-   *  UNMEASURED. */
+   *  more it is tinted by its surroundings. UNMEASURED slope. */
   colorPickupPerFresnel: 0.9,
-  colorPickupMax: 0.42,
+  /**
+   * The ceiling, which keeps it a medium rather than a fill.
+   *
+   * MEASURED, frames/concentric/shadow-zoom: the same sidebar twice, over a yellow cover and over a
+   * pink one, so the difference between the panels is the pickup with the sidebar's own colour
+   * subtracted out. Sampling a band of rows clear of the text, the bar's hue offset against the
+   * cover's own reaches 0.31 of it at the edge nearest the content in the yellow panel and 0.28 in
+   * the pink one. It was 0.42, which nothing measured.
+   *
+   * Reality is not uniform: the bleed falls to nothing about ninety pixels in, and both panels show
+   * the same falloff. The DOM path has one backdrop sample per element and cannot reproduce that,
+   * so it applies the ceiling across the whole body — right at the edge, too strong in the middle.
+   * That limit is in docs/dom.md rather than papered over with a lower number.
+   */
+  colorPickupMax: 0.3,
 } as const;
 
 /**

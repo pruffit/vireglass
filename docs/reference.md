@@ -244,6 +244,12 @@ settles into in the interface.
   reflects, scatters, and BLEEDS INTO THE SHADOW (219 @8:22), the way it does in life. Frames at
   504–512 s show a panel over a yellow cover taking on yellow, over a pink one taking on pink,
   with the color spilling past its edge.
+- Measured (frames/concentric/shadow-zoom): the same sidebar twice, over a yellow cover and over a
+  pink one — same UI, same layout, two backdrops, so the difference between the panels is the
+  pickup with the sidebar's own colour subtracted out. The bar's hue offset reaches **0.31** of the
+  cover's own at the edge nearest it in the yellow panel and **0.28** in the pink one, and both
+  agree on the falloff: it is gone about ninety pixels in. So the bleed is a gradient from the
+  content's edge, not a tint over the whole body.
 - In the new design a panel is TRANSPARENT and lives with the scroll-edge effect, so persistent
   brand graphics inside it start to crowd the content and lose legibility. The American Airlines
   case (S): the logo was removed from the header and let it scroll away with the content — the

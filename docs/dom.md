@@ -119,6 +119,12 @@ about; that is what two sheets of glass do.
 
 ## Limits
 
+**Colour pickup is uniform, and reality is a gradient.** A large element takes on the colour of the
+content beside it (§7). Measured off the reference, that bleed peaks at about 0.3 of the content's
+own chroma at the edge nearest it and is gone about ninety pixels in. This renderer has one backdrop
+sample per element, so it applies the peak across the whole body: right at the edge, too strong in
+the middle. The WebGL and AGSL paths sample per pixel and do not have this limit.
+
 **The refraction is Chromium-only today.** Firefox does not support a filter reference in
 `backdrop-filter` and has closed the request as not planned. Safari does not yet, though WebKit
 has patches in flight (bug 245510, green on queues as of 2026-09-05). Elsewhere the same optics
