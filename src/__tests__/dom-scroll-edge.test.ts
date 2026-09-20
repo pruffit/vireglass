@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { SCROLL_EDGE_ENGAGE_DP, scrollEdgeStrength, scrollEdgeStyle } from '../scroll-edge';
+import { SCROLL_EDGE_ENGAGE_DP, scrollEdgeReachDp, scrollEdgeStrength, scrollEdgeStyle } from '../scroll-edge';
+import { SCROLL_EDGE } from '../law';
 import { paintFor } from '../dom/scroll-edge';
 
 // The DOM binding needs a layout engine to exercise; what is testable without one is the law it
@@ -85,5 +86,23 @@ describe('what the scroll edge paints (docs/reference.md §10)', () => {
     const hard = Math.max(...alphas(paintFor('hard', 'top').tone));
     const soft = Math.max(...alphas(paintFor('dim', 'top').tone));
     expect(hard).toBeGreaterThan(soft);
+  });
+});
+
+// Measured off frames/scroll-edge/z576: the blur reaches about 1.9 times the bar's own height
+// below its lip. The host positions the edge element, so without this it guesses.
+describe('how far the scroll edge reaches (docs/reference.md §10)', () => {
+  it('scales with the bar it sits under', () => {
+    expect(scrollEdgeReachDp(52)).toBeCloseTo(52 * SCROLL_EDGE.reachOfBarHeight, 6);
+    expect(scrollEdgeReachDp(96)).toBeGreaterThan(scrollEdgeReachDp(52));
+  });
+
+  it('reaches further than the bar is tall, which is what the frame shows', () => {
+    expect(scrollEdgeReachDp(52)).toBeGreaterThan(52);
+  });
+
+  it('is nothing for a bar with no height', () => {
+    expect(scrollEdgeReachDp(0)).toBe(0);
+    expect(scrollEdgeReachDp(-10)).toBe(0);
   });
 });

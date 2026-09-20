@@ -452,6 +452,19 @@ export const SCALE = {
 export const SCROLL_EDGE = {
   /** How far the content has to slide under the panel for the effect to fully engage, dp. */
   engageDp: 24,
+  /**
+   * How far the blur reaches BELOW the bar's lower lip, as a multiple of the bar's own height.
+   *
+   * MEASURED, frames/scroll-edge/z576 at 320x413. High-frequency energy (mean |laplacian| per row,
+   * which a brightness gradient in the content cannot fake) reads 1.4 through the zone under the
+   * bar and 14 in the sharp content below — a factor of ten. The bar's lip is at y≈45 and the zone
+   * runs to y≈130, so the reach is about 1.9 times the bar's own height.
+   *
+   * The same frame confirms 219 @9:22 in passing: the floating title sits inside that zone at 32,
+   * twenty times its surroundings. Titles stay crisp while everything behind them dissolves, which
+   * is why the effect belongs behind the glass in the stack rather than over the content.
+   */
+  reachOfBarHeight: 1.9,
   /** The blur the content dissolves into at the edge, dp. This is the effect itself — the content
    *  goes out of focus into the background rather than being covered by anything. UNMEASURED. */
   dissolveBlurDp: 10,

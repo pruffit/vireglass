@@ -25,6 +25,15 @@ export function scrollEdgeStyle(inkLight: boolean, pinned = false): ScrollEdgeSt
 export const SCROLL_EDGE_ENGAGE_DP = SCROLL_EDGE.engageDp;
 
 /**
+ * How tall to make the edge, given the bar it sits under. The host positions the element; without
+ * this it has to guess a height, and the reference has an answer — measured off the footage rather
+ * than chosen (see `SCROLL_EDGE.reachOfBarHeight`).
+ */
+export function scrollEdgeReachDp(barHeightDp: number): number {
+  return Math.max(barHeightDp, 0) * SCROLL_EDGE.reachOfBarHeight;
+}
+
+/**
  * Edge strength as a function of scroll. With no scroll, content near the top doesn't slide
  * under the panel yet — so there's no effect (a mail screen at the top: the header sits on a
  * clean background). At the bottom, content slides under it for as long as there's room left

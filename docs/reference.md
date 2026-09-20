@@ -278,6 +278,14 @@ content scrolls under a bar (219 @8:52).
   height (356 @12:22).
 - When dark content scrolls under the glass and it switches to the dark style, the dissolve is
   replaced by a light DARKENING (219 @9:28) — the same move as ink polarity.
+- Measured off the footage (frames/scroll-edge/z576, 320x413): high-frequency energy per row —
+  which a brightness gradient in the content cannot fake, and which the row MEANS could not be
+  separated from — reads 1.4 through the zone under the bar against 14 in the sharp content below.
+  A factor of ten, so the content really is going out of focus rather than being covered. The zone
+  runs from the bar's lip at y≈45 to y≈130, about 1.9 times the bar's own height.
+- The same frame confirms @9:22: the floating title sits INSIDE that zone and measures 32, twenty
+  times its surroundings. Titles stay crisp while everything behind them dissolves — which is why
+  the effect goes behind the glass in the stack, not over the content.
 - With no scrolling, there's no effect at all: the bar sits on a plain background.
 - For pinned views under the bar (column headers), the style is HARD: a flat band across the
   full height of the bar and the pinned view, no gradient (219 @9:41).
