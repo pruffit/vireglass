@@ -42,7 +42,7 @@ It checks three things, and reports a fourth:
 - and it names every unmeasured value, every run — and fails if this page or the README states a
   different number, because a count written out in prose goes stale the moment a value is added.
 
-Today that last line reads **43 of 119**. That is the real state of the model, and it is meant to
+Today that last line reads **42 of 120**. That is the real state of the model, and it is meant to
 be uncomfortable. It was 9 until the constants hiding inside `optics.ts`, `geometry.ts` and
 `touch-response.ts` were brought in — the number did not get worse, the instrument got honest.
 
