@@ -126,10 +126,34 @@ function sampleColorAt(el: HTMLElement, x: number, y: number): RgbColor | null {
   }
   const composited = compositeLayers(layers);
   if (composited) return composited;
-  const topmost = behind[0];
-  if (!topmost) return null;
-  return parseColor(getComputedStyle(topmost).color);
+  return canvasColor(el);
 }
+
+/**
+ * The page's own background — the floor everything else is composited over.
+ *
+ * Reached whenever nothing in the stack is opaque, which is not an edge case: CSS propagates the
+ * body's background to the CANVAS, so `getComputedStyle` reports `<html>` and often `<body>` as
+ * transparent on a perfectly ordinary white page. Any element past the end of the body's box —
+ * a widget pinned to a corner, say — sees a stack of nothing.
+ *
+ * This used to fall back to the topmost element's `color`, which is its TEXT colour: a white page
+ * with black text read as black, and the material dressed itself for a dark backdrop over a light
+ * one. The propagation rule says where to look instead — the root element's background, then the
+ * body's, then the user agent's white.
+ */
+function canvasColor(el: HTMLElement): RgbColor | null {
+  const doc = el.ownerDocument;
+  for (const node of [doc.documentElement, doc.body]) {
+    if (!node) continue;
+    const bg = parseColor(getComputedStyle(node).backgroundColor);
+    if (bg && bg.a > 0.001) return bg.a >= 0.999 ? bg : compositeLayers([bg, WHITE]);
+  }
+  return WHITE;
+}
+
+/** What a browser paints the canvas when nobody says otherwise. */
+const WHITE: RgbColor = { r: 255, g: 255, b: 255, a: 1 };
 
 export type ProbeOptions = {
   /** Grid density override — wider for a hero element, narrower for a tight control. */

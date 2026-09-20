@@ -30,6 +30,7 @@ jobs:
           npm run typecheck
           npm test
           npm run check:glsl
+          npm run check:agsl
           npm run check:optics
           npm run check:law
 

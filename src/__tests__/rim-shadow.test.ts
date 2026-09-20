@@ -4,7 +4,7 @@ import { MATERIAL_PRESETS, resolveOptics } from '../material';
 import { lightConicAngle, rimGradientCss, rimLobe } from '../dom/rim';
 import { boxShadowCss, shadowAlphaFrom } from '../dom/shadow';
 import { resolveBody, withPresence } from '../dom/body';
-import { RIM } from '../law';
+import { BODY, RIM } from '../law';
 
 describe('adaptive shadow (docs/reference.md §4)', () => {
   it('lands on the two densities measured off the reference frames', () => {
@@ -161,5 +161,50 @@ describe('how wide the key-light arc is (docs/reference.md §2)', () => {
 
   it('is dark where neither arc reaches', () => {
     expect(rimLobe(90, 1)).toBeCloseTo(0, 6);
+  });
+});
+
+// Reported from an integration: over a flat dark backdrop the body came out matching the backdrop
+// exactly, so a panel over a dark reading page had no separation at all.
+describe('presence over a flat backdrop (docs/reference.md §3)', () => {
+  const optics = { ...resolveOptics(MATERIAL_PRESETS.glass), presence: 0.08 };
+  const flat = (luma: number) => ({ luma, busy: 0 });
+  const separation = (luma: number) => {
+    const body = withPresence(resolveBody(optics, flat(luma), 1), optics, flat(luma));
+    return { reached: Math.abs(body.tintLuma - luma) * body.density, body };
+  };
+
+  it('never lands the body exactly on the backdrop', () => {
+    // The bug: `tintLuma` was clamped to the backdrop's mean whenever the body leaned the other
+    // way, which is the one value that separates from nothing.
+    for (let luma = 0.02; luma <= 0.98; luma += 0.02) {
+      expect(separation(luma).reached, `backdrop ${luma.toFixed(2)}`).toBeGreaterThan(0);
+    }
+  });
+
+  it('separates by what was asked wherever there is room for it', () => {
+    for (const luma of [0.35, 0.5]) {
+      expect(separation(luma).reached).toBeCloseTo(0.08, 3);
+    }
+  });
+
+  it('does not go opaque to get there', () => {
+    // Presence is a floor on visibility, not a licence to stop being a window: where the body's
+    // tint sits close to the backdrop, the density that would deliver the separation is the
+    // ceiling, so it separates as far as transparency allows and no further.
+    //
+    // Measured against what the body already had: presence raises density and never lowers it, so
+    // a body that legibility has already made dense stays that dense.
+    for (let luma = 0.02; luma <= 0.98; luma += 0.02) {
+      const base = resolveBody(optics, flat(luma), 1).density;
+      const ceiling = Math.max(base, BODY.presenceDemand);
+      expect(separation(luma).body.density, `backdrop ${luma.toFixed(2)}`).toBeLessThanOrEqual(ceiling);
+    }
+  });
+
+  it('leaves a body that already stands apart alone', () => {
+    const weak = { ...optics, presence: 0.001 };
+    const before = resolveBody(weak, flat(0.5), 1);
+    expect(withPresence(before, weak, flat(0.5))).toEqual(before);
   });
 });

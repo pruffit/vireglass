@@ -222,6 +222,7 @@ preference; `applyGlassScale` gives that preference its own axis, ultra clear to
 npm run typecheck
 npm test
 npm run check:glsl   # both shaders compile and link as GLSL ES 3.0
+npm run check:agsl   # ...and are valid SkSL, which is what Android runs
 npm run check:optics
 npm run check:law    # every calibrated number is in src/law.ts, cited or named unmeasured
 npm run check:dom    # a real browser: the glass bends live DOM, and only where it should
@@ -281,7 +282,7 @@ timestamp so the claims can be checked. No Apple code, assets or footage is incl
 distributed with this package.
 
 Every calibrated number lives in `src/law.ts` with its provenance, and `check:law` names the ones
-that have none: **42 of 120** today. See [`docs/law.md`](docs/law.md).
+that have none: **43 of 121** today. See [`docs/law.md`](docs/law.md).
 
 ## License
 

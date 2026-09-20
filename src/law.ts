@@ -60,6 +60,13 @@ export const BODY = {
   darkSideTo: 0.58,
   /** Ceiling on any single demand, so one requirement cannot make the glass opaque on its own. */
   maxDemand: 0.92,
+  /**
+   * And a tighter one for presence specifically. It is a FLOOR on visibility, not a licence to go
+   * opaque: wherever the body's tint sits close to the backdrop, the density that would deliver the
+   * separation is the ceiling, and glass at `maxDemand` has stopped being a window. Better to
+   * separate as far as transparency allows and no further. UNMEASURED.
+   */
+  presenceDemand: 0.5,
 } as const;
 
 /** Shadow (§4). The density law lives in `geometry.ts`; these are its measured ends. */
