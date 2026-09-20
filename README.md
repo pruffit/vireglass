@@ -224,6 +224,7 @@ npm run check:glsl   # both shaders compile and link as GLSL ES 3.0
 npm run check:optics
 npm run check:law    # every calibrated number is in src/law.ts, cited or named unmeasured
 npm run check:dom    # a real browser: the glass bends live DOM, and only where it should
+npm run check:package # packs, installs into an empty project, loads every entry point
 ```
 
 `check:optics` is the interesting one. It renders the material over a sweep of backdrops and

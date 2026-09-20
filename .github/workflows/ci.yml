@@ -39,6 +39,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: The package loads from an install
+        run: npm run check:package
+
       # After the build: it drives the published bundle in a real browser, not the source.
       - name: The glass bends live DOM
         run: npm run check:dom

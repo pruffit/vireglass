@@ -18,6 +18,16 @@ the material is, and every one of them was invisible to anything that wanted to 
 experiment journal (`E-43`). A value with none says **UNMEASURED** in its own comment, and says
 why nobody has measured it.
 
+It is part of the package's surface, not an internal detail:
+
+```js
+import { RIM, BODY, TOUCH, DERIVE } from 'vireglass/law';
+```
+
+A fourth renderer has to agree with the other three, and it cannot do that against numbers it
+cannot read. The groups are on a subpath rather than the main entry because names like `SIZE`,
+`SCALE` and `TOUCH` have no business in a top-level namespace.
+
 ## The gate
 
 ```bash

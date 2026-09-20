@@ -79,7 +79,15 @@ export const DISPERSION = {
 /** Response to a finger (§5). The springs and decay live in `touch-response.ts`; these shape the
  *  field the finger deforms. */
 export const TOUCH = {
-  /** The element grows under pressure (M 3:51; HIG: interactive "expands"). */
+  /**
+   * The element grows under pressure (M 3:51; HIG: interactive "expands").
+   *
+   * CHECKED, not measured: across frames/knob/switch-press, a 4x5 sheet of one switch being
+   * pressed, the control's extent runs 764 px in the three settled frames and 787 to 822 under the
+   * finger — 3 to 8 per cent. This value sits inside that, which is a consistency check and not a
+   * derivation: the measurement cannot separate the knob stretching from the track growing, and the
+   * settled frames agreeing to the pixel is the only part of it that is tight.
+   */
   pressGrow: 0.06,
   /** The ridge around the contact blob: material displaced from under the finger ends up
    *  somewhere. Without it the shape balloons, and a dense medium does not do that. */

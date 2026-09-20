@@ -6,6 +6,7 @@ export default defineConfig({
     react: 'src/react.ts',
     'web/index': 'src/web/index.ts',
     dom: 'src/dom/index.ts',
+    law: 'src/law.ts',
   },
   format: ['esm', 'cjs'],
   dts: true,
