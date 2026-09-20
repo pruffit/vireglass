@@ -50,6 +50,27 @@ code — only structural rules do.
   scattering (M 7:02–7:25). Bevel and thickness scale with size, they aren't a fixed constant.
 - **Appearance is by modulating the lens, not by fading opacity** (M 2:55).
 
+### The displacement, measured off a real lens
+
+frames/crops/disc-ul is a disc over a regular lattice — the one place in the reference where the
+lens's own displacement can be read off directly instead of inferred. Tracing the grid line row by
+row, following the previous row's answer so the trace stays on the same line as it bends:
+
+- The disc's geometry comes from fitting a circle to its bright rim: centre (687, 612), radius 592
+  px, mean residual **0.6 px** over 34 points.
+- The grid line stands exactly where the lattice puts it from the bottom of the frame up to y ≈ 286
+  — **the middle of the lens passes the backdrop through untouched**, which is the claim §1 rests
+  on and which nothing had ever checked against a measured lens.
+- From there it sweeps, reaching 36 px of lateral shift before the line breaks up in the caustic at
+  the rim. Fitting our own bevel profile to the 26 rows that kept their contrast gives a refracting
+  zone **0.18 of the radius** deep and an rms error of **1.1 px — under 0.2% of the radius**.
+- A plain linear ramp fits half as well (1.5 px), so the profile is carrying real information and
+  not just a scale. A sagitta — `1 − sqrt(1 − t²)` — fits better still (0.29 px), and that is an
+  open question rather than a correction: a ray's deflection goes with the surface's SLOPE, which
+  is the form we use, and the traced rows stop short of the rim where the two differ most.
+- The zone's depth does not transfer. This is a studio puck, and §6 says those show the material at
+  its limit; the same fraction on a UI control would be a bevel three times what any preset carries.
+
 ### What counts as "larger"
 
 219 @6:36: as glass "flexes and morphs to larger sizes, it simulates a thicker material with deeper
