@@ -73,6 +73,9 @@ export type DisplacementState = {
   smoothing?: number;
   morph?: MorphShape;
   morph2?: MorphShape;
+  /** Any number of shapes flowing into this one. `morph`/`morph2` are the first two, kept so a
+   *  caller that only ever had two does not have to change. */
+  morphs?: readonly MorphShape[];
 };
 
 /**
@@ -97,6 +100,8 @@ export function renderDisplacementPixels(
   const rawScale = optics.refraction * thicknessDp(geometry, optics) * SCALE_GAIN;
   const scale = Math.min(rawScale, MAX_SCALE);
   const smoothing = state.smoothing ?? 0;
+  // One list, whichever way the caller expressed it.
+  const shapes: (MorphShape | undefined)[] = [state.morph, state.morph2, ...(state.morphs ?? [])];
 
   const data = new Uint8ClampedArray(width * height * 4);
   const halfW = geometry.width / 2;
@@ -109,7 +114,7 @@ export function renderDisplacementPixels(
       const i = (py * width + px) * 4;
       // Warp the FIELD first, then read the scene at the warped point — the shader's own order.
       const [wx, wy] = state.touch ? touchWarp(x, y, state.touch) : [x, y];
-      const sd = sceneDistance(wx, wy, geometry.width, geometry.height, geometry.cornerRadius, smoothing, state.morph, state.morph2);
+      const sd = sceneDistance(wx, wy, geometry.width, geometry.height, geometry.cornerRadius, smoothing, ...shapes);
       const t = Math.min(Math.max((sd + bevel) / bevel, 0), 1);
       if (t <= 0 || scale <= 0) {
         data[i] = 128;
@@ -118,7 +123,7 @@ export function renderDisplacementPixels(
         data[i + 3] = 255;
         continue;
       }
-      const [gx, gy] = sceneGradient(wx, wy, geometry.width, geometry.height, geometry.cornerRadius, smoothing, state.morph, state.morph2);
+      const [gx, gy] = sceneGradient(wx, wy, geometry.width, geometry.height, geometry.cornerRadius, smoothing, ...shapes);
       // The rim reaches half the scale: the encoding can only span ±scale/2, so the derived
       // displacement is expressed as a fraction of that half-range.
       const magnitude = bevelProfile(t) * (scale / 2);

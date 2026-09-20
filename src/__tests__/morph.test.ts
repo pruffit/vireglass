@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { morphBetween, morphOutOf } from '../adapters';
 import { roundedRectGeometry } from '../geometry';
-import { neckToBridge, sceneDistance } from '../sdf';
+import { neckToBridge, sceneDistance, sceneGradient } from '../sdf';
 
 const pill = roundedRectGeometry(80, 44, 22);
 const button = roundedRectGeometry(80, 80, 20);
@@ -145,5 +145,72 @@ describe('the neck, against the reference frame (docs/reference.md §5)', () => 
       neckHeight({ offsetX: 92, offsetY: 0, width: 82, height: 82, cornerRadius: 41, smoothing: 15 * 2 * fuse });
     expect(at(1.2)).toBeLessThan(25);
     expect(at(1.4)).toBeGreaterThan(31);
+  });
+});
+
+// Несколько независимых элементов, перетекающих в одно целое — это и есть поведение (§5).
+// Сколько их — дело хоста, а раньше было делом материала: счёт жил в ИМЕНАХ полей (`shape`,
+// `shape2`), так что четвёртому элементу было некуда деться.
+describe('any number of shapes, not two (docs/reference.md §5)', () => {
+  const dot = roundedRectGeometry(44, 44, 22);
+  /** A row of `n` dots, each touching the last — a toolbar collapsing into one capsule. */
+  const row = (n: number, step: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      offsetX: step * (i + 1),
+      offsetY: 0,
+      width: 44,
+      height: 44,
+      cornerRadius: 22,
+    }));
+
+  /** Is the whole row one body? Sampled between every neighbouring pair. */
+  function oneBody(shapes: ReturnType<typeof row>, smoothing: number): boolean {
+    const at = [0, ...shapes.map((s) => s.offsetX)];
+    for (let i = 1; i < at.length; i += 1) {
+      const middle = (at[i - 1] + at[i]) / 2;
+      if (sceneDistance(middle, 0, dot.width, dot.height, dot.cornerRadius, smoothing, ...shapes) > 0) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  it('joins five of them into one body', () => {
+    expect(oneBody(row(4, 40), 30)).toBe(true);
+  });
+
+  it('joins eight of them too — nothing in the model counts', () => {
+    expect(oneBody(row(7, 40), 30)).toBe(true);
+  });
+
+  it('leaves them separate when the bridge is too narrow to reach', () => {
+    // Шаг больше ширины: между точками настоящий зазор, и сомкнуть его может только перемычка.
+    expect(oneBody(row(4, 70), 1)).toBe(false);
+    expect(oneBody(row(4, 70), 60)).toBe(true);
+  });
+
+  it('is the same answer whichever order they arrive in', () => {
+    const shapes = row(4, 40);
+    const forward = sceneDistance(60, 0, dot.width, dot.height, dot.cornerRadius, 30, ...shapes);
+    const backward = sceneDistance(60, 0, dot.width, dot.height, dot.cornerRadius, 30, ...[...shapes].reverse());
+    expect(forward).toBeCloseTo(backward, 6);
+  });
+
+  it('still answers exactly as before for the two the old signature allowed', () => {
+    const a = { offsetX: 50, offsetY: 0, width: 44, height: 44, cornerRadius: 22 };
+    const b = { offsetX: 100, offsetY: 0, width: 44, height: 44, cornerRadius: 22 };
+    for (const x of [0, 25, 50, 75, 100]) {
+      const viaRest = sceneDistance(x, 0, dot.width, dot.height, dot.cornerRadius, 24, a, b);
+      const viaList = sceneDistance(x, 0, dot.width, dot.height, dot.cornerRadius, 24, ...[a, b]);
+      expect(viaRest).toBeCloseTo(viaList, 10);
+    }
+  });
+
+  it('keeps the gradient a unit vector across a row of them', () => {
+    const shapes = row(4, 40);
+    for (let x = -30; x <= 190; x += 10) {
+      const [gx, gy] = sceneGradient(x, 0, dot.width, dot.height, dot.cornerRadius, 30, ...shapes);
+      expect(Math.hypot(gx, gy)).toBeCloseTo(1, 6);
+    }
   });
 });

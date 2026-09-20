@@ -227,8 +227,14 @@ export type MorphShape = {
   cornerRadius: number;
 };
 
-/** Mirrors the scene distance: one shape, smoothly unioned with up to two neighbours when
- *  `smoothing` is positive. §5's merging and splitting are this union opening and closing. */
+/**
+ * Mirrors the scene distance: one shape, smoothly unioned with any number of neighbours when
+ * `smoothing` is positive. §5's merging and splitting are this union opening and closing.
+ *
+ * A fold, not a pair. The count used to be in the ARGUMENT NAMES — `b` and `c`, and a fourth
+ * shape would have been `d` — which is not a limit the material has. Several independent elements
+ * flowing into one whole is the behaviour; how many of them there happen to be is the host's.
+ */
 export function sceneDistance(
   x: number,
   y: number,
@@ -236,20 +242,22 @@ export function sceneDistance(
   h: number,
   r: number,
   smoothing = 0,
-  b?: MorphShape,
-  c?: MorphShape,
+  ...shapes: (MorphShape | undefined)[]
 ): number {
-  const a = sdfRoundedRect(x, y, w, h, r);
-  if (smoothing <= 0 || !b || b.width <= 0) return a;
-  const db = sdfRoundedRect(x - b.offsetX, y - b.offsetY, b.width, b.height, b.cornerRadius);
-  const ab = smin(a, db, smoothing);
-  if (!c || c.width <= 0) return ab;
-  const dc = sdfRoundedRect(x - c.offsetX, y - c.offsetY, c.width, c.height, c.cornerRadius);
-  return smin(ab, dc, smoothing);
+  let d = sdfRoundedRect(x, y, w, h, r);
+  if (smoothing <= 0) return d;
+  for (const s of shapes) {
+    if (!s || s.width <= 0) continue;
+    d = smin(d, sdfRoundedRect(x - s.offsetX, y - s.offsetY, s.width, s.height, s.cornerRadius), smoothing);
+  }
+  return d;
 }
 
-/** Mirrors `vgSceneNormal`: normals blend with the same weight that blends the distances, which
- *  the shader derives rather than approximates. */
+/**
+ * Mirrors `vgSceneNormal`: normals blend with the same weight that blends the distances, which the
+ * shader derives rather than approximates. The same fold as `sceneDistance`, carrying the running
+ * distance alongside the running normal because each step's weight is measured against it.
+ */
 export function sceneGradient(
   x: number,
   y: number,
@@ -257,31 +265,31 @@ export function sceneGradient(
   h: number,
   r: number,
   smoothing = 0,
-  b?: MorphShape,
-  c?: MorphShape,
+  ...shapes: (MorphShape | undefined)[]
 ): [number, number] {
-  const na = sdfRoundedRectGradient(x, y, w, h, r);
-  if (smoothing <= 0 || !b || b.width <= 0) return na;
-  const bx = x - b.offsetX;
-  const by = y - b.offsetY;
-  const da = sdfRoundedRect(x, y, w, h, r);
-  const db = sdfRoundedRect(bx, by, b.width, b.height, b.cornerRadius);
-  const hb = Math.min(Math.max(0.5 + (0.5 * (db - da)) / smoothing, 0), 1);
-  const nb = sdfRoundedRectGradient(bx, by, b.width, b.height, b.cornerRadius);
-  let gx = nb[0] + (na[0] - nb[0]) * hb;
-  let gy = nb[1] + (na[1] - nb[1]) * hb;
-  if (c && c.width > 0) {
-    const cx = x - c.offsetX;
-    const cy = y - c.offsetY;
-    const dab = smin(da, db, smoothing);
-    const dc = sdfRoundedRect(cx, cy, c.width, c.height, c.cornerRadius);
-    const hc = Math.min(Math.max(0.5 + (0.5 * (dc - dab)) / smoothing, 0), 1);
-    const nc = sdfRoundedRectGradient(cx, cy, c.width, c.height, c.cornerRadius);
-    gx = nc[0] + (gx - nc[0]) * hc;
-    gy = nc[1] + (gy - nc[1]) * hc;
+  let d = sdfRoundedRect(x, y, w, h, r);
+  let [gx, gy] = sdfRoundedRectGradient(x, y, w, h, r);
+  let blended = false;
+  if (smoothing > 0) {
+    for (const s of shapes) {
+      if (!s || s.width <= 0) continue;
+      const sx = x - s.offsetX;
+      const sy = y - s.offsetY;
+      const ds = sdfRoundedRect(sx, sy, s.width, s.height, s.cornerRadius);
+      const weight = Math.min(Math.max(0.5 + (0.5 * (ds - d)) / smoothing, 0), 1);
+      const [nx, ny] = sdfRoundedRectGradient(sx, sy, s.width, s.height, s.cornerRadius);
+      gx = nx + (gx - nx) * weight;
+      gy = ny + (gy - ny) * weight;
+      d = smin(d, ds, smoothing);
+      blended = true;
+    }
   }
-  // The shader's `+ float2(${EPSILON}, ${EPSILON})` before normalising, and it is not decoration: where two
-  // shapes meet head-on their normals cancel exactly and the blend lands on zero.
+  // With nothing blended in, the base gradient is already a unit vector and is returned untouched —
+  // the shader takes the same early exit (`if (k <= 0.0) return na;`), and nudging it here instead
+  // would put the two renderers a rounding step apart on every flat edge in the material.
+  if (!blended) return [gx, gy];
+  // The shader's `+ float2(${EPSILON}, ${EPSILON})` before normalising, and it is not decoration:
+  // where two shapes meet head-on their normals cancel exactly and the blend lands on zero.
   gx += EPSILON;
   gy += EPSILON;
   const len = Math.hypot(gx, gy) || 1;
