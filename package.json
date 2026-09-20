@@ -94,7 +94,8 @@
     "measure:dom": "node scripts/measure-dom.mjs",
     "prepare": "tsup",
     "check:package": "node scripts/check-package.mjs",
-    "check:readme": "node scripts/check-readme.mjs"
+    "check:readme": "node scripts/check-readme.mjs",
+    "check:agsl": "tsx scripts/check-agsl.mjs"
   },
   "peerDependencies": {
     "@shopify/react-native-skia": ">=2.0.0",
@@ -129,20 +130,21 @@
     }
   },
   "devDependencies": {
+    "@shopify/react-native-skia": "2.6.2",
     "@types/node": "^22.10.0",
     "@types/react": "^19.0.0",
+    "canvaskit-wasm": "^0.42.0",
     "esbuild": "^0.28.2",
-    "playwright": "^1.62.1",
-    "tsup": "^8.5.0",
-    "tsx": "^4.23.13",
-    "typescript": "^5.8.3",
-    "vitest": "^4.1.11",
-    "@shopify/react-native-skia": "2.6.2",
     "expo": "~57.0.18",
     "expo-blur": "~57.0.2",
     "expo-sensors": "~57.0.2",
+    "playwright": "^1.62.1",
     "react": "19.2.3",
     "react-native": "0.86.2",
-    "react-native-reanimated": "4.5.1"
+    "react-native-reanimated": "4.5.1",
+    "tsup": "^8.5.0",
+    "tsx": "^4.23.13",
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.11"
   }
 }

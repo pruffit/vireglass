@@ -29,6 +29,7 @@ jobs:
 
       - name: Shaders compile on both targets
         run: npm run check:glsl
+          npm run check:agsl
 
       - name: Optics stay within their envelope
         run: npm run check:optics

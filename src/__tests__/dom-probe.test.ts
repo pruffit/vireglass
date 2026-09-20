@@ -77,3 +77,21 @@ describe('compositing the stack', () => {
     expect(compositeLayers([])).toBeNull();
   });
 });
+
+// Reported from an integration: a widget pinned past the end of the body's box read a white page
+// as black, and the material dressed itself for a dark backdrop over a light one.
+describe('the page floor (docs/reference.md §3)', () => {
+  it('composites a translucent page background over white, not over nothing', () => {
+    const over = compositeLayers([{ r: 0, g: 0, b: 0, a: 0.1 }, { r: 255, g: 255, b: 255, a: 1 }]);
+    expect(over).not.toBeNull();
+    expect(over!.r).toBeCloseTo(229.5, 0);
+    expect(over!.a).toBeCloseTo(1, 6);
+  });
+
+  it('reports nothing for a stack that is entirely transparent', () => {
+    // `compositeLayers` itself must stay honest — the floor is applied by its caller, which knows
+    // which document it is looking at.
+    expect(compositeLayers([{ r: 0, g: 0, b: 0, a: 0 }])).toBeNull();
+    expect(compositeLayers([])).toBeNull();
+  });
+});

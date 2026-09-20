@@ -78,8 +78,30 @@ const STYLE_ATTR = 'data-vireglass-styles';
  * The mask pair is what makes it a ring rather than a fill: the same box painted twice, once
  * clipped to the content box, composited so only the padding band survives.
  */
-function ensureRimStyles(): void {
-  if (document.querySelector(`style[${STYLE_ATTR}]`)) return;
+/**
+ * Where the filter and the rim styles go.
+ *
+ * `backdrop-filter: url(#id)` resolves the reference in the element's OWN tree. From inside a
+ * shadow root, a filter parked on the page is not found — and the failure is silent, because the
+ * reference is valid CSS: the element gets no backdrop at all, not even the blur fallback. A
+ * widget in a shadow root (which is how you survive a page full of global `!important`) came out
+ * with no material whatsoever.
+ *
+ * So the host is the element's own root node, which is the shadow root when there is one and the
+ * document otherwise. Nothing to configure and nothing to get wrong.
+ */
+function hostFor(el: Element): Document | ShadowRoot {
+  const root = el.getRootNode();
+  return root instanceof ShadowRoot ? root : el.ownerDocument ?? document;
+}
+
+/** A shadow root has no `<head>`; a style element goes straight into it. */
+function styleParent(host: Document | ShadowRoot): Node {
+  return host instanceof ShadowRoot ? host : host.head;
+}
+
+function ensureRimStyles(host: Document | ShadowRoot): void {
+  if (host.querySelector(`style[${STYLE_ATTR}]`)) return;
   const style = document.createElement('style');
   style.setAttribute(STYLE_ATTR, '');
   style.textContent =
@@ -87,11 +109,11 @@ function ensureRimStyles(): void {
     // The touch glow (§5) lights the material from the point of contact. Below the content, above
     // the refraction — it is light inside the glass, not a film over the label.
     `[${GLASS_ATTR}]::before{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--vireglass-glow,none);opacity:var(--vireglass-glow-opacity,0)}`;
-  document.head.appendChild(style);
+  styleParent(host).appendChild(style);
 }
 
-function getFilterHost(): SVGSVGElement {
-  const existing = document.querySelector<SVGSVGElement>(`svg[${FILTER_HOST_ATTR}]`);
+function getFilterHost(host: Document | ShadowRoot): SVGSVGElement {
+  const existing = host.querySelector<SVGSVGElement>(`svg[${FILTER_HOST_ATTR}]`);
   if (existing) return existing;
   const svg = document.createElementNS(SVG_NS, 'svg');
   svg.setAttribute(FILTER_HOST_ATTR, '');
@@ -101,7 +123,8 @@ function getFilterHost(): SVGSVGElement {
   svg.style.position = 'absolute';
   svg.style.pointerEvents = 'none';
   svg.appendChild(document.createElementNS(SVG_NS, 'defs'));
-  document.body.appendChild(svg);
+  // A shadow root takes the svg directly; a document takes it on the body.
+  (host instanceof ShadowRoot ? host : host.body).appendChild(svg);
   return svg;
 }
 
@@ -165,6 +188,9 @@ function buildFilterElement(
       pass.setAttribute('xChannelSelector', 'R');
       pass.setAttribute('yChannelSelector', 'G');
       pass.setAttribute('result', `${name}raw`);
+      // Каждый канал смещается на свою долю базового масштаба. Записываем её в сам элемент:
+      // при нажатии масштаб пересчитывается каждый кадр, и восстановить доли иначе неоткуда.
+      pass.setAttribute('data-vireglass-ratio', String(scale > 0 ? chScale / scale : 1));
       const only = document.createElementNS(SVG_NS, 'feColorMatrix');
       only.setAttribute('in', `${name}raw`);
       only.setAttribute('type', 'matrix');
@@ -403,7 +429,9 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
 
   warnIfNested(el);
 
-  ensureRimStyles();
+  // The element's own tree: a shadow root when it is in one, the document otherwise.
+  const host = hostFor(el);
+  ensureRimStyles(host);
   el.setAttribute(GLASS_ATTR, '');
   // `inset: 0` on the rim needs a positioned ancestor. Only taken over when the host left it at
   // the initial value, and put back on destroy.
@@ -451,7 +479,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       if (key !== mapKey || !filterEl) {
         // Keyed by exactly what the maps are functions of, which is exactly the cache key above.
         const map = cached(`d|${key}`, () => buildDisplacementMap(opticsNow, geometry, devicePixelRatio(), morphState()));
-        const defs = getFilterHost().querySelector('defs') as SVGDefsElement;
+        const defs = getFilterHost(host).querySelector('defs') as SVGDefsElement;
         const hue = hasSpectralEdge(opticsNow)
           ? cached(`h|${key}`, () => buildSpectralMap(opticsNow, geometry, devicePixelRatio()))
           : null;
@@ -551,9 +579,14 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     });
     if (filterEl) {
       const feImage = filterEl.querySelector('feImage');
-      const feDisplace = filterEl.querySelector('feDisplacementMap');
       feImage?.setAttribute('href', map.url);
-      feDisplace?.setAttribute('scale', String(map.scale));
+      // ВСЕ проходы, а не первый. При дисперсии их три, с разными масштабами, и querySelector
+      // возвращал только красный: под пальцем он получал неразделённый масштаб, а зелёный с синим
+      // оставались на том, что был при подключении. Цветной край переставал следовать за пальцем.
+      for (const pass of filterEl.querySelectorAll('feDisplacementMap')) {
+        const ratio = Number(pass.getAttribute('data-vireglass-ratio') ?? 1);
+        pass.setAttribute('scale', String(map.scale * (Number.isFinite(ratio) ? ratio : 1)));
+      }
     }
     mapKey = '';
 

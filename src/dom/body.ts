@@ -78,21 +78,36 @@ export function resolveBody(optics: VireGlassOptics, sample: BodyBackdrop, ink: 
 
 /**
  * PRESENCE (§3): over a uniform backdrop there is nothing to refract and the glass honestly
- * disappears — right for a piece of background, wrong for a control. The sign comes from the
- * BACKDROP, not from ink polarity: lighter over dark, darker over light. It is a minimum, not an
- * addition, so a body that is already dense enough is left alone.
+ * disappears — right for a piece of background, wrong for a control. It is a MINIMUM, not an
+ * addition, so a body that already stands apart is left alone.
+ *
+ * The direction is the body's own. The previous version decided "lighter over dark, darker over
+ * light" from the backdrop alone, and then, when the body disagreed, clamped `tintLuma` to the
+ * backdrop's mean — the one value that separates from nothing. Light ink over a dark backdrop puts
+ * the body at 0.07 against a backdrop of 0.12: already separating, downward, and the clamp pulled
+ * it back onto the backdrop. Measured on the default material at presence 0.08: exactly 0.0000 at
+ * backdrops of 0.12, 0.20 and 0.35.
+ *
+ * What the demand is DIVIDED by is deliberately the distance to the tint's pole rather than to the
+ * body's own tint. Dividing by the latter is arithmetically tighter and asks for far more density
+ * wherever the two are close — enough to drive it to the ceiling over a dark backdrop and stop the
+ * glass being a window at all, which check:optics says plainly. Presence is a floor on visibility,
+ * not a licence to go opaque.
  */
 export function withPresence(body: GlassBody, optics: VireGlassOptics, sample: BodyBackdrop): GlassBody {
   if (optics.presence <= 0) return body;
   const mean = clamp(sample.luma, 0, 1);
-  const lighter = mean < 0.5;
-  const target = lighter ? Math.min(mean + optics.presence, 1) : Math.max(mean - optics.presence, 0);
-  const separation = Math.abs(target - mean);
+  // Whichever side the body is already on; with nothing to go on, the side with more room.
+  const above = Math.abs(body.tintLuma - mean) > 1e-4 ? body.tintLuma > mean : mean < 0.5;
+  const pole = above ? TINT_LIGHT : TINT_DARK;
+  const separation = Math.min(optics.presence, Math.abs(pole - mean));
   const reached = Math.abs(body.tintLuma - mean) * body.density;
   if (reached >= separation) return body;
-  const needed = separation / Math.max(Math.abs((lighter ? TINT_LIGHT : TINT_DARK) - mean), 1e-4);
+  const needed = separation / Math.max(Math.abs(pole - mean), 1e-4);
   return {
-    density: Math.max(body.density, Math.min(needed, MAX_DEMAND)),
-    tintLuma: lighter ? Math.max(body.tintLuma, mean) : Math.min(body.tintLuma, mean),
+    density: Math.max(body.density, Math.min(needed, BODY.presenceDemand)),
+    // Left where the tint law put it, unless it landed exactly on the backdrop — which is the
+    // case that used to be created here rather than avoided.
+    tintLuma: Math.abs(body.tintLuma - mean) > 1e-4 ? body.tintLuma : pole,
   };
 }
