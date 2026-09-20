@@ -64,7 +64,15 @@ export const BODY = {
 
 /** Shadow (§4). The density law lives in `geometry.ts`; these are its measured ends. */
 export const SHADOW = {
-  /** Measured off reference frames 711–723: 4.0% over a flat light backdrop, 19.9% over text. */
+  /**
+   * Measured off reference frames 711–723: 4.0% over a flat light backdrop, 19.9% over text.
+   *
+   * REPRODUCED independently off frames/verify/m-707 and m-711 — the same capsule in the same scene
+   * at the same scale, once below the text over plain background and once scrolled up over it.
+   * Comparing the rows under the capsule against the same rows far to either side, so the
+   * background's own gradient cancels: 3.5% and 19.2%, peaking about 140 px below the capsule.
+   * Two passes, different frames and a different method, agreeing to within 0.7 of a point.
+   */
   alphaFlat: 0.04,
   alphaBusy: 0.199,
 } as const;
@@ -333,6 +341,18 @@ export const DERIVE = {
   /**
    * Frost ceiling, dp. Deliberately low: blur is a SUPPORTING device here, and past about a dozen
    * dp letters under the glass stop being letters. Separating content from ink is the body's job.
+   *
+   * UNMEASURED, and an attempt is recorded here so the next one does not repeat it.
+   * frames/verify/m-711 has the same paragraph sharp beside the capsule and behind it, which looks
+   * like the measurement: match the blur that takes the sharp patch's detail down to the glassed
+   * one's. It gives 2 to 3 px at that frame's scale, and the figure is not trustworthy. Detail is
+   * lost to three things at once there — the frost, the magnification (`refractionScale` lowers the
+   * text's spatial frequency without blurring anything), and the body veiling its contrast — and
+   * the method cannot separate them. What it does bound is the total: the text behind the glass
+   * keeps 68% of the detail it has beside it.
+   *
+   * A clean measurement needs a frame where the glass does not magnify, or a feature of known size
+   * behind it to normalise the magnification out.
    */
   blurMaxDp: 12,
   /** Highlight width from a smooth surface and from a fully rough one, as a specular exponent.

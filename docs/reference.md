@@ -167,6 +167,13 @@ shadow: one value per element. Measured off frames 711–723: 19.9% over text ve
 flat light background, for the same capsule. The absolute number depends on the element — a
 slider knob over white measures 10.5%.
 
+Reproduced independently (frames/verify/m-707 and m-711): the same capsule in the same scene at the
+same scale, once sitting below the text over plain background and once scrolled up over it — the
+sentence's own experiment. Comparing the rows under the capsule against the same rows far to either
+side, so the background's gradient cancels out of it: **3.5%** over plain and **19.2%** over text, a
+5.5x rise, peaking about 140 px below the capsule. The earlier pass over frames 711–723 gave 4.0%
+and 19.9%. Different frames, different method, within 0.7 of a point.
+
 ## 5. Interaction
 
 - Touch: the material **lights up from inside, from the point of contact**, the glow spreads
