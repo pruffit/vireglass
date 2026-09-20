@@ -1,5 +1,39 @@
 # Changelog
 
+## 2.1.0
+
+### Several elements flowing into one whole, however many there are
+
+That is the behaviour §5 describes. How many elements there happen to be is the host's business,
+and it used to be the material's: the count lived in the argument and field NAMES —
+`sceneDistance(x, y, w, h, r, k, b?, c?)`, `GlassMorph { shape?, shape2? }`,
+`DisplacementState { morph?, morph2? }`. A fourth element had nowhere to go without a `d`, a
+`shape3` and a `morph3`, and then a fifth. That is not a limit the material has; it is a limit of
+what somebody once wrote as two optional arguments.
+
+`sceneDistance` and `sceneGradient` are a fold now, taking a rest parameter, so every existing
+call with two shapes works verbatim and the count is unbounded. `GlassMorph` gains `shapes` and
+`DisplacementState` gains `morphs`; the old fields still work and come first.
+
+The gradient's derivation generalises the same way — at each step the normals blend with the
+weight that blends the distances — as long as the running distance is carried alongside the
+running normal, because the next step's weight is measured against it. Verified to agree with the
+previous answer to ten decimal places for the two shapes the old signature allowed.
+
+**The shaders still take two.** There the count is in the uniform NAMES (`u_morphOffset`,
+`u_morph2Offset`), and lifting it means uniform arrays with a count and a loop in both. So the
+live-DOM target takes any number today and WebGL2 and AGSL take two, which is what they took
+before.
+
+### The release workflow creates the release
+
+A tag reached npm and left no release page: the repository went on showing the previous version as
+Latest while the registry had the new one. Three releases existed and every one was made by hand,
+so the fourth did not happen. The notes now come from this file's section for the version being
+released, and a version with no section fails the release rather than publishing something nobody
+wrote down.
+
+
 ## 2.0.0
 
 Ready to be depended on: what the package exports, and a gate for every promise the docs make.
