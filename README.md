@@ -2,8 +2,9 @@
 
 A liquid glass material for interfaces, derived from optics rather than assembled from effects.
 
-One material model, one shader source, two render targets: **WebGL2** in the browser and
-**AGSL** on Android. Apache-2.0.
+One material model, three render targets: **WebGL2** and **live DOM** in the browser, **AGSL** on
+Android. The DOM target refracts the page itself — real elements, real text, no canvas — so glass
+can go over content a renderer never drew. Apache-2.0.
 
 ```bash
 npm install vireglass
@@ -225,6 +226,7 @@ npm run check:optics
 npm run check:law    # every calibrated number is in src/law.ts, cited or named unmeasured
 npm run check:dom    # a real browser: the glass bends live DOM, and only where it should
 npm run check:package # packs, installs into an empty project, loads every entry point
+npm run check:readme  # every name the documentation tells you to import exists
 ```
 
 `check:optics` is the interesting one. It renders the material over a sweep of backdrops and

@@ -7,6 +7,7 @@ export default defineConfig({
     'web/index': 'src/web/index.ts',
     dom: 'src/dom/index.ts',
     law: 'src/law.ts',
+    reference: 'src/reference.ts',
   },
   format: ['esm', 'cjs'],
   dts: true,

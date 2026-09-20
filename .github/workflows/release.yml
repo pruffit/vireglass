@@ -38,6 +38,9 @@ jobs:
       - name: The package loads from an install
         run: npm run check:package
 
+      - name: Every name the docs tell you to import exists
+        run: npm run check:readme
+
       # Needs the build: it drives the published bundle in a real browser, not the source.
       - name: The glass bends live DOM
         run: npm run check:dom

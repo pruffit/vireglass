@@ -37,7 +37,7 @@ try {
   run(npm, ['install', '--silent', '--no-audit', '--no-fund', join(ROOT, tarball)], sandbox);
 
   // Deliberately NOT installing react: the core must not need it.
-  const entries = ['vireglass', 'vireglass/law', 'vireglass/dom', 'vireglass/web'];
+  const entries = ['vireglass', 'vireglass/law', 'vireglass/dom', 'vireglass/web', 'vireglass/reference'];
   const cjs = entries.map((e) => `require(${JSON.stringify(e)});`).join('\n');
   const esm = entries.map((e, i) => `import * as m${i} from ${JSON.stringify(e)};`).join('\n');
 
@@ -52,6 +52,39 @@ try {
     }
   }
 
+  // The Android entry ships as TypeScript on purpose — Metro transpiles it, and its peers are
+  // React Native's, which a Node import cannot resolve. So it is checked structurally instead:
+  // the source has to be IN the tarball, and every bare module it imports has to be declared.
+  // An undeclared import there fails in someone's Expo build, which is the worst place to find it.
+  const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
+  const declared = new Set([
+    ...Object.keys(pkg.dependencies ?? {}),
+    ...Object.keys(pkg.peerDependencies ?? {}),
+    ...Object.keys(pkg.optionalDependencies ?? {}),
+  ]);
+  const nativeDir = join(sandbox, 'node_modules', 'vireglass', 'src', 'native');
+  let nativeFiles = [];
+  try {
+    nativeFiles = readdirSync(nativeDir).filter((f) => f.endsWith('.ts') || f.endsWith('.tsx'));
+  } catch {
+    fail('vireglass/native ships no source — the Android entry points at files that are not in the tarball');
+  }
+  if (nativeFiles.length > 0) {
+    const undeclared = new Set();
+    for (const file of nativeFiles) {
+      const text = readFileSync(join(nativeDir, file), 'utf8');
+      for (const m of text.matchAll(/froms+'([^']+)'/g)) {
+        const spec = m[1];
+        if (spec.startsWith('.')) continue;
+        const name = spec.startsWith('@') ? spec.split('/').slice(0, 2).join('/') : spec.split('/')[0];
+        if (!declared.has(name)) undeclared.add(`${name} (in src/native/${file})`);
+      }
+    }
+    if (undeclared.size > 0) {
+      fail(`vireglass/native imports modules the package does not declare: ${[...undeclared].join(', ')}`);
+    }
+  }
+
   // React belongs on its own subpath, and asking for it without react installed must fail loudly
   // rather than the core dragging it in.
   writeFileSync(join(sandbox, 'react.cjs'), `require('vireglass/react');`);
@@ -59,7 +92,12 @@ try {
   try { run(process.execPath, [join(sandbox, 'react.cjs')], sandbox); } catch { reactThrew = true; }
   if (!reactThrew) fail('vireglass/react loaded without react installed — it cannot be doing anything');
 
-  if (!failed) console.log(`check-package: every entry point loads from an install, in CommonJS and ESM, with no react present`);
+  if (!failed) {
+    console.log(
+      `check-package: every entry point loads from an install, in CommonJS and ESM, with no react ` +
+        `present; the Android source ships and imports nothing undeclared (${nativeFiles.length} files)`,
+    );
+  }
 } finally {
   rmSync(sandbox, { recursive: true, force: true });
   try { unlinkSync(join(ROOT, tarball)); } catch {}
