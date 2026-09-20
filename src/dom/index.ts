@@ -344,6 +344,14 @@ export type GlassMorph = {
   smoothing: number;
   shape?: MorphShape;
   shape2?: MorphShape;
+  /**
+   * Any number of shapes flowing into this one. Several independent elements becoming one whole is
+   * the behaviour; how many of them there are is the host's business, and it used to be the
+   * material's — the count lived in the field NAMES, so a fourth element had nowhere to go.
+   *
+   * `shape` and `shape2` still work and come first.
+   */
+  shapes?: readonly MorphShape[];
 };
 
 export type GlassHandle = {
@@ -419,7 +427,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
 
   function morphState() {
     if (!morph) return {};
-    return { smoothing: morph.smoothing, morph: morph.shape, morph2: morph.shape2 };
+    return { smoothing: morph.smoothing, morph: morph.shape, morph2: morph.shape2, morphs: morph.shapes };
   }
 
   function morphKey(): string {

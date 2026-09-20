@@ -64,6 +64,32 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+      # A tag that reaches npm but leaves no release page is half a release: the repository goes
+      # on showing the previous version as Latest while the registry has the new one. Three
+      # releases existed here and every one of them was made by hand, so the fourth did not.
+      #
+      # The notes are the CHANGELOG section for this version. If it has none, that is a release
+      # nobody wrote down, which is worth failing over.
+      - name: Release notes from the changelog
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          node -e "
+            const fs = require('fs');
+            const md = fs.readFileSync('CHANGELOG.md', 'utf8');
+            const head = '## ' + process.argv[1];
+            const start = md.indexOf(head);
+            if (start < 0) { console.error('no CHANGELOG section for ' + head); process.exit(1); }
+            const next = md.indexOf(String.fromCharCode(10) + '## ', start + head.length);
+            const body = md.slice(start + head.length, next < 0 ? undefined : next).trim();
+            if (!body) { console.error('the CHANGELOG section for ' + head + ' is empty'); process.exit(1); }
+            fs.writeFileSync('RELEASE_NOTES.md', body);
+          " "$VERSION"
+
+      - name: Publish the release on GitHub
+        run: gh release create "$GITHUB_REF_NAME" --title "VireGlass $(node -p "require('./package.json').version")" --notes-file RELEASE_NOTES.md
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       - name: Say what went out
         run: |
           NAME=$(node -p "require('./package.json').name")
