@@ -127,3 +127,39 @@ describe('body (docs/reference.md §3)', () => {
     expect(withPresence(resolveBody(optics, flatLight, 1), optics, flatLight).tintLuma).toBeLessThan(0.5);
   });
 });
+
+// Measured off frames/crops/cap158-left and cap158-right: the bright arc's full width at half its
+// peak is 53 degrees in the first and 30 in the second. The model's own width is the exponent's:
+// 2*acos(0.5^(1/n)). It was 3, whose arc is 75 degrees wide — broader than both measurements.
+describe('how wide the key-light arc is (docs/reference.md §2)', () => {
+  /** Full width at half maximum of the lobe, in degrees, read off the function itself. */
+  function lobeWidth(): number {
+    const peak = rimLobe(0, 1);
+    let edge = 0;
+    for (let d = 0; d <= 180; d += 0.05) {
+      if (rimLobe(d, 1) < peak / 2) break;
+      edge = d;
+    }
+    return edge * 2;
+  }
+
+  it('matches the arc the reference frame shows', () => {
+    expect(lobeWidth()).toBeGreaterThan(50);
+    expect(lobeWidth()).toBeLessThan(57);
+  });
+
+  it('is narrower than the cubic lobe it replaced', () => {
+    // 2*acos(0.5^(1/3)) is 74.9 degrees. The old value was broader than either measurement.
+    expect(lobeWidth()).toBeLessThan(74.9);
+  });
+
+  it('still opposes: the far arc is weaker, not absent', () => {
+    expect(rimLobe(180, 1)).toBeCloseTo(RIM.opposingArc, 6);
+    expect(rimLobe(180, 1)).toBeLessThan(rimLobe(0, 1));
+    expect(rimLobe(180, 1)).toBeGreaterThan(0);
+  });
+
+  it('is dark where neither arc reaches', () => {
+    expect(rimLobe(90, 1)).toBeCloseTo(0, 6);
+  });
+});

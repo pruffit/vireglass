@@ -79,6 +79,25 @@ more surface is more glass.
   specular highlights" (P). Before this, the dark line read as "wherever there's no highlight";
   now it reads as "along the whole silhouette, with the highlight on top of it."
 
+### How wide the arc is
+
+Measured off two close-ups of real end caps (frames/crops/cap158-left, cap158-right), sampling the
+luminance radially every degree around the silhouette and taking the lift over the local backdrop.
+
+- The bright arc's full width at half its peak is **53°** in the first and **30°** in the second.
+  Both arcs saturate to white at the top — 38° of clipping in the first, 9° in the second — so
+  those widths are if anything OVERestimates.
+- A `cos^n` lobe is `2·acos(0.5^(1/n))` wide, so the two imply exponents of 6 and 20. The model's
+  was 3, whose arc is 75° wide: broader than either measurement, with the error in the same
+  direction both times.
+- One exponent cannot serve both, and the disagreement is not noise. A specular lobe's width
+  depends on the light's angular size as much as on the surface, and these are two different
+  scenes. The model has no term for the light's size; 6 is the conservative end of what was
+  measured.
+- The dark edge runs the whole way round, including underneath the bright arc — measured at 12 to
+  50 levels below the local backdrop, deepest on the same side the arc is on. Which is the
+  reference's own note that the hairline does not rule out the highlight sitting on top of it.
+
 ## 3. Body and adaptation (the Regular variant)
 
 - Over a light background: milky-light glass with dark glyphs; over a dark one: smoky-dark glass

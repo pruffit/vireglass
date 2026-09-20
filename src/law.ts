@@ -17,9 +17,19 @@
 export const RIM = {
   /**
    * The key-light lobe's exponent. Two opposing arcs come out of one expression, which is why
-   * they are opposed rather than placed: `pow(max(facing, 0), 3) + 0.45 * pow(max(-facing, 0), 3)`.
+   * they are opposed rather than placed: `pow(max(facing, 0), n) + 0.45 * pow(max(-facing, 0), n)`.
+   *
+   * MEASURED off two close-ups of real end caps, frames/crops/cap158-left and cap158-right. The
+   * bright arc's full width at half its peak is 53 degrees in the first and 30 in the second; this
+   * exponent's own width is `2·acos(0.5^(1/n))`, so they imply 6 and 20. It was 3, whose arc is 75
+   * degrees wide — broader than either measurement, and the error is in the same direction in both.
+   *
+   * 6 is the conservative end: it reproduces the wider crop exactly, and a broader arc is the more
+   * forgiving error. One exponent cannot serve both, and that is not noise — a specular lobe's
+   * width depends on the light's angular size as well as the surface, and those are two different
+   * scenes. The model has no term for the light's size.
    */
-  lobeExponent: 3,
+  lobeExponent: 6,
   /** The far arc, weaker than the one facing the light (§2). */
   opposingArc: 0.45,
   /**
