@@ -222,6 +222,18 @@ export const SPECTRAL = {
   /** How far into the bevel the fringes reach, as a fraction of it measured from the silhouette.
    *  Diffraction is an EDGE effect; past this the bevel is plain glass. */
   diffractionOnset: 0.45,
+  /**
+   * The same window for interference, which had none. §2 puts the iridescence on the opposing ARC —
+   * "the opposing arc carries an iridescent fringe" — and a fringe is a thing at an edge.
+   *
+   * Without it the term applies wherever the surface angle puts it, and across the inner bevel the
+   * angle barely changes, so a film that should read as a fringe reads as a flat colour filter.
+   * Measured on a 680x64 bar with the default preset: a multiplier of 1.68, 1.26, 0.05 held CONSTANT
+   * from a third of the way through the bevel to its inner edge — red boosted by two thirds and blue
+   * removed outright. UNMEASURED window; wider than diffraction's because interference reaches
+   * further in than the fringes do.
+   */
+  iridescenceOnset: 0.25,
   /** Fringes across the bevel. Denser as the bevel sharpens, which is what the phase term does. */
   diffractionFringes: 4,
   /** The channel the hue is measured against, nm. Green is the eye's own reference. */
@@ -396,12 +408,24 @@ export const DERIVE = {
    * just separated it from the ink — eating its own legibility work. UNMEASURED.
    */
   edgeLightGain: 6,
-  /** Iridescence rides the REFLECTED ray, so it is tied to Fresnel and has no knob of its own.
-   *  UNMEASURED gain. */
-  iridescencePerFresnel: 1.6,
+  /**
+   * Iridescence rides the REFLECTED ray, so it is tied to Fresnel and has no knob of its own.
+   *
+   * MEASURED against how coloured a real rim is. In frames/crops the brightest rim pixels have a
+   * channel spread — (max − min) / max — of 13% in cap158-left and 20% in cap158-right, against
+   * their own backdrops' 14.6% and 14.3%. So the rim is no more coloured than the scene it stands
+   * in: §2's "iridescent fringe" adds a few points at most, and in one of the two crops it adds
+   * nothing measurable.
+   *
+   * At 1.6 this put ordinary glass at 0.945 iridescence and the spectral multiplier reached a 97%
+   * channel spread — red boosted by two thirds and blue removed. Rendered over a coloured page that
+   * is a neon tube around every control, which is what sent me to measure it.
+   */
+  iridescencePerFresnel: 0.042,
   /** Edge diffraction shares dispersion's λ-dependence, at the stylised amplitude: at the physical
-   *  one the fringes are not visible at all. UNMEASURED. */
-  diffractionPerDispersion: 0.5,
+   *  one the fringes are not visible at all. MEASURED with the same crops and the same target as
+   *  iridescence — on its own it was reaching a 93% channel spread. */
+  diffractionPerDispersion: 0.05,
   /** Multiple internal reflection — the denser the medium, the more light it circulates and the
    *  more it is tinted by its surroundings. UNMEASURED slope. */
   colorPickupPerFresnel: 0.9,

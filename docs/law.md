@@ -1,6 +1,6 @@
 # The law
 
-`src/law.ts` holds every calibrated number in the material — 119 of them, in 20 groups —
+`src/law.ts` holds every calibrated number in the material — 120 of them, in 20 groups —
 and nothing else in the source is allowed to hold one. Renderers, shaders and helpers read from
 it; the shader templates interpolate it into their GLSL and AGSL, so the same constant reaches
 the web, Android and the DOM path without being copied.
