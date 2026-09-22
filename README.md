@@ -219,6 +219,7 @@ preference; `applyGlassScale` gives that preference its own axis, ultra clear to
 ## Quality gates
 
 ```bash
+npm run check:english # every tracked file is English
 npm run typecheck
 npm test
 npm run check:glsl   # both shaders compile and link as GLSL ES 3.0

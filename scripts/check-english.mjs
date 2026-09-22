@@ -4,7 +4,11 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
-const CYRILLIC = /[Ѐ-ӿ]/;
+// Cyrillic and Cyrillic Supplement, compared as code points so this file stays ASCII itself.
+const isCyrillic = (line) => [...line].some((ch) => {
+  const code = ch.codePointAt(0) ?? 0;
+  return code >= 0x0400 && code <= 0x052f;
+});
 
 const files = execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8' }).split('\0').filter(Boolean);
 const hits = [];
@@ -15,7 +19,7 @@ for (const file of files) {
     .toString('utf8')
     .split('\n')
     .forEach((line, i) => {
-      if (CYRILLIC.test(line)) hits.push(`${file}:${i + 1}: ${line.trim().slice(0, 100)}`);
+      if (isCyrillic(line)) hits.push(`${file}:${i + 1}: ${line.trim().slice(0, 100)}`);
     });
 }
 

@@ -49,7 +49,7 @@ npm run check:english   # every tracked file is English
 npm run typecheck
 npm test
 npm run check:glsl      # both shaders compile as GLSL ES 3.0
-npm run check:agsl      # ...and as AGSL
+npm run check:agsl      # ...and as valid SkSL, which is what Android runs
 npm run check:optics
 npm run check:law       # every calibrated value is written once
 npm run build
