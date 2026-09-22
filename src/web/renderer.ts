@@ -3,10 +3,13 @@
 // collapsed into one pass, otherwise the lab stops predicting the phone (there they're two
 // separate layers):
 //
-//   1. scene backdrop           — rasterized into an offscreen 2D canvas (text and cover art are
-//                                 easier there than in GL) and uploaded into the `content`
-//                                 texture. This texture plays the role of the spec's FBO(scene):
-//                                 later passes only SAMPLE it, never redraw it.
+//   1. backdrop                 — fills the `content` texture one of two ways: `scene` rasterizes
+//                                 into an offscreen 2D canvas (text and cover art are easier there
+//                                 than in GL) and uploads it via `texSubImage2D`; `backdrop` draws
+//                                 straight into `content` with its own GPU pass instead, no canvas,
+//                                 no readback (see `VireGlassBackdropPass`). Either way the texture
+//                                 plays the role of the spec's FBO(scene): later passes only SAMPLE
+//                                 it, never redraw it.
 //   2. blit backdrop to screen  — `content` is drawn as the backing; without it the screen would
 //                                 show only the element, and the material is compared against
 //                                 exactly what's around it.
@@ -43,10 +46,14 @@ import { SURFACE_SHADER } from '../surface-shader';
 import { toGLSL } from '../targets/glsl';
 import {
   bindTextureAt,
+  createFramebuffer,
   createProgram,
   createTexture,
   drawFullscreenTriangle,
   FULLSCREEN_TRIANGLE_VERTEX_SOURCE,
+  locationCache,
+  setUniform,
+  type UniformValue,
 } from './gl';
 import { createProbe, type ProbeStats } from './probe';
 
@@ -64,6 +71,41 @@ export type VireGlassSceneDrawer = (
    *  on a phone, and an element of the same size looked completely different on the lab bench
    *  than on a device. */
   density: number,
+) => void;
+
+/** The target a `VireGlassBackdropPass` must finish its frame in — the FBO wraps `contentTexture`
+ *  itself, so drawing into it needs no readback: the very texture the lens samples gets the pixels
+ *  directly. */
+export type VireGlassBackdropTarget = {
+  framebuffer: WebGLFramebuffer;
+  width: number;
+  height: number;
+};
+
+/**
+ * Alternative to `scene`: draws the backdrop with a GPU pass, in this same WebGL2 context, straight
+ * into the texture the lens samples — no offscreen 2D canvas, no `texSubImage2D` readback. The
+ * renderer doesn't know or care what's drawn; a fluid sim, a video frame, anything that ends up as
+ * pixels.
+ *
+ * ORIENTATION CONTRACT. `contentTexture` carries the same layout the `scene` path has always
+ * produced: uploaded from a 2D canvas without a Y flip, so texel row 0 (`v≈0`) is the scene's TOP
+ * row (see `BLIT_FRAGMENT_SOURCE` below) — and that row sits at `gl_FragCoord.y = 0` in this FBO,
+ * the window-coordinate BOTTOM, not the top. A pass that copies an ordinary top-row-first image
+ * (one loaded the normal way, via `texImage2D` from a canvas or an `<img>`) straight across with
+ * `texture(src, gl_FragCoord.xy / vec2(target.width, target.height))` reproduces it correctly,
+ * with no flip of its own. A pass that instead treats INCREASING y as its own "up" — the natural
+ * convention for a physical simulation — must flip before this final write, or its top ends up
+ * stored as the scene's bottom and appears upside down once the lens samples it.
+ *
+ * The pass may render through as many of its own FBOs first as it likes (a multi-step simulation)
+ * and leave the GL context in whatever state suits it; it must finish by drawing into
+ * `target.framebuffer` at `viewport(0, 0, target.width, target.height)`. The renderer rebinds the
+ * default framebuffer and resets viewport/blend/scissor right after, before its own next pass.
+ */
+export type VireGlassBackdropPass = (
+  gl: WebGL2RenderingContext,
+  target: VireGlassBackdropTarget,
 ) => void;
 
 /** One glass element in the frame. Each has its own material — that's how they're compared side by side. */
@@ -107,7 +149,13 @@ export type VireGlassRenderOptions = {
   density: number;
   debug: VireGlassDebugMode;
   pieces: readonly VireGlassPiece[];
-  scene: VireGlassSceneDrawer;
+  /** CPU-side backdrop: draws into an offscreen 2D canvas, uploaded via `texSubImage2D`. Exactly
+   *  one of `scene`/`backdrop` is required — see `backdrop` for the GPU alternative. */
+  scene?: VireGlassSceneDrawer;
+  /** GPU-side backdrop: draws straight into the texture the lens samples, in this context, no
+   *  readback. Takes over from `scene` entirely when set — see `VireGlassBackdropPass` for the
+   *  orientation contract it must honor. */
+  backdrop?: VireGlassBackdropPass | null;
   /** Canvas offset under stationary elements, device-px. */
   offsetX?: number;
   offsetY?: number;
@@ -142,6 +190,10 @@ export type VireGlassRenderResult = {
 export type VireGlassRenderer = {
   resize(widthPx: number, heightPx: number): void;
   render(options: VireGlassRenderOptions): VireGlassRenderResult;
+  /** GPU time of the last `render()` call, milliseconds, via
+   *  `EXT_disjoint_timer_query_webgl2`. `null` when the extension is unavailable or the sample
+   *  came back disjoint — never an error either way. */
+  getLastGpuMs(): number | null;
   destroy(): void;
 };
 
@@ -160,48 +212,6 @@ void main() {
   fragColor = texture(u_content, uv);
 }
 `;
-
-type UniformValue = number | readonly number[];
-
-function locationCache(gl: WebGL2RenderingContext, program: WebGLProgram) {
-  const cache = new Map<string, WebGLUniformLocation | null>();
-  return (name: string): WebGLUniformLocation | null => {
-    let loc = cache.get(name);
-    if (loc === undefined) {
-      loc = gl.getUniformLocation(program, name);
-      cache.set(name, loc);
-    }
-    return loc;
-  };
-}
-
-function setUniform(
-  gl: WebGL2RenderingContext,
-  loc: WebGLUniformLocation | null,
-  value: UniformValue,
-): void {
-  if (!loc) return;
-  if (typeof value === 'number') {
-    gl.uniform1f(loc, value);
-    return;
-  }
-  switch (value.length) {
-    case 1:
-      gl.uniform1f(loc, value[0]);
-      break;
-    case 2:
-      gl.uniform2f(loc, value[0], value[1]);
-      break;
-    case 3:
-      gl.uniform3f(loc, value[0], value[1], value[2]);
-      break;
-    case 4:
-      gl.uniform4f(loc, value[0], value[1], value[2], value[3]);
-      break;
-    default:
-      throw new Error(`vireglass/web: unsupported uniform size (${value.length})`);
-  }
-}
 
 /** The material arrives as ONE channel (web-core spec §4, "Uniform contract"): name/size/value
  *  as three parallel arrays — exactly the layout that used to get lost with Android Props. */
@@ -292,6 +302,67 @@ export function createVireGlassRenderer(canvas: HTMLCanvasElement): VireGlassRen
     height: Math.max(height, 1),
   });
 
+  // FBO for the `backdrop` path, wrapping `contentTexture` itself — lazy, so a `scene`-only
+  // caller never pays for it. Stale after `resize` (it points at a texture that's about to be
+  // deleted); dropped there and rebuilt against the new one on next use.
+  let backdropFbo: WebGLFramebuffer | null = null;
+  function ensureBackdropFbo(): WebGLFramebuffer {
+    if (!backdropFbo) backdropFbo = createFramebuffer(gl, contentTexture);
+    return backdropFbo;
+  }
+
+  // GPU timing for `getLastGpuMs()`. A ring of 3 queries: `EXT_disjoint_timer_query_webgl2`
+  // results arrive asynchronously, often a few frames late, so one query per frame would mean
+  // starting a new query before the previous one's result is available — undefined by spec.
+  // Missing the extension (most headless/CI setups) degrades to `null` forever, never an error.
+  const timerExt = gl.getExtension('EXT_disjoint_timer_query_webgl2');
+  type TimerSlot = { query: WebGLQuery; pending: boolean };
+  const timerSlots: TimerSlot[] = timerExt
+    ? [0, 1, 2].map(() => ({ query: gl.createQuery() as WebGLQuery, pending: false }))
+    : [];
+  let timerCursor = 0;
+  let activeTimerSlot: TimerSlot | null = null;
+  let lastGpuMs: number | null = null;
+
+  function pollGpuTimers(): void {
+    if (!timerExt) return;
+    for (const slot of timerSlots) {
+      if (!slot.pending) continue;
+      if (!gl.getQueryParameter(slot.query, gl.QUERY_RESULT_AVAILABLE)) continue;
+      slot.pending = false;
+      // A disjoint event (e.g. the GPU clock changed) invalidates every query since the last
+      // check — the sample is discarded, not reported as zero or stale.
+      if (gl.getParameter(timerExt.GPU_DISJOINT_EXT)) continue;
+      const ns = gl.getQueryParameter(slot.query, gl.QUERY_RESULT) as number;
+      lastGpuMs = ns / 1e6;
+    }
+  }
+
+  function beginGpuTimer(): void {
+    activeTimerSlot = null;
+    if (!timerExt || timerSlots.length === 0) return;
+    pollGpuTimers();
+    const slot = timerSlots[timerCursor];
+    // The ring hasn't caught up (this slot's previous result isn't back yet) — skip timing this
+    // frame rather than reuse a query that's still in flight.
+    if (slot.pending) return;
+    gl.beginQuery(timerExt.TIME_ELAPSED_EXT, slot.query);
+    activeTimerSlot = slot;
+  }
+
+  function endGpuTimer(): void {
+    if (!timerExt || !activeTimerSlot) return;
+    gl.endQuery(timerExt.TIME_ELAPSED_EXT);
+    activeTimerSlot.pending = true;
+    timerCursor = (timerCursor + 1) % timerSlots.length;
+    activeTimerSlot = null;
+  }
+
+  function getLastGpuMs(): number | null {
+    pollGpuTimers();
+    return lastGpuMs;
+  }
+
   // The icon mask is ONE per frame, the size of the canvas. The shader samples it at the pixel's
   // screen coordinate (`u_center + p` is exactly `xy`), so each element's icon is simply drawn
   // into the mask at its own spot: no separate texture per button is needed here.
@@ -326,19 +397,44 @@ export function createVireGlassRenderer(canvas: HTMLCanvasElement): VireGlassRen
 
     gl.deleteTexture(contentTexture);
     contentTexture = createTexture(gl, { width, height });
+
+    if (backdropFbo) {
+      gl.deleteFramebuffer(backdropFbo);
+      backdropFbo = null;
+    }
   }
 
   function render(options: VireGlassRenderOptions): VireGlassRenderResult {
     if (!sceneCtx) throw new Error('vireglass/web: renderer not initialized (resize was never called)');
 
-    // 1. Scene backdrop: a 2D canvas is easier for text and "cover art" (task, item 3), and the
-    // texture itself plays the role of the plan's FBO(scene) — everything after this only reads
-    // it.
-    sceneCtx.clearRect(0, 0, width, height);
-    options.scene(sceneCtx, width, height, options.offsetX ?? 0, options.offsetY ?? 0, options.density);
-    gl.bindTexture(gl.TEXTURE_2D, contentTexture);
-    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, sceneCanvas);
-    gl.bindTexture(gl.TEXTURE_2D, null);
+    beginGpuTimer();
+
+    // 1. Backdrop. Exactly one of two paths fills `contentTexture` — everything after this only
+    // SAMPLES it, never redraws it.
+    if (options.backdrop) {
+      // GPU pass, straight into `contentTexture` via its own FBO: no 2D canvas, no readback. See
+      // `VireGlassBackdropPass` for the orientation contract the pass has to honor.
+      const fbo = ensureBackdropFbo();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      gl.viewport(0, 0, width, height);
+      options.backdrop(gl, { framebuffer: fbo, width, height });
+      // The pass may leave the context in any state; put back what step 2 depends on before it
+      // runs (which then makes its own explicit program/texture bindings regardless).
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, width, height);
+      gl.disable(gl.BLEND);
+      gl.disable(gl.SCISSOR_TEST);
+    } else if (options.scene) {
+      // CPU-side: a 2D canvas is easier for text and "cover art" (task, item 3), and the texture
+      // itself plays the role of the plan's FBO(scene).
+      sceneCtx.clearRect(0, 0, width, height);
+      options.scene(sceneCtx, width, height, options.offsetX ?? 0, options.offsetY ?? 0, options.density);
+      gl.bindTexture(gl.TEXTURE_2D, contentTexture);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, sceneCanvas);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+    } else {
+      throw new Error('vireglass/web: render() needs either options.scene or options.backdrop');
+    }
 
     if (options.colorLayer) {
       gl.bindTexture(gl.TEXTURE_2D, colorTexture);
@@ -507,6 +603,8 @@ export function createVireGlassRenderer(canvas: HTMLCanvasElement): VireGlassRen
     }
     gl.disable(gl.SCISSOR_TEST);
 
+    endGpuTimer();
+
     return { probes };
   }
 
@@ -518,7 +616,9 @@ export function createVireGlassRenderer(canvas: HTMLCanvasElement): VireGlassRen
     gl.deleteTexture(contentTexture);
     gl.deleteTexture(iconTexture);
     gl.deleteTexture(colorTexture);
+    if (backdropFbo) gl.deleteFramebuffer(backdropFbo);
+    for (const slot of timerSlots) gl.deleteQuery(slot.query);
   }
 
-  return { resize, render, destroy };
+  return { resize, render, getLastGpuMs, destroy };
 }
