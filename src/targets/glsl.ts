@@ -86,12 +86,9 @@ const ENTRY_RE = /half4\s+main\s*\(\s*float2\s+(\w+)\s*\)\s*\{/;
  * (both coordinate systems center the pixel at `+0.5`, so no X shift or constant is needed).
  * `out vec4 fragColor` and `uniform vec2 u_resolution` are declared in the prologue (`addPrologue`).
  *
- * `xy` and a raw `.eval()`/`texture()` call live in the SAME flipped convention once this
- * function has run — `convertEvalCalls` divides by size, it doesn't touch the coordinate. A
- * `VireGlassBackdropPass` (`web/renderer.ts`) that reads its own previous frame back from an FBO
- * is not translated by this function at all, though, and works in raw, unflipped `gl_FragCoord`;
- * a pass built out of AGSL-style helpers still has to flip explicitly before sampling that FBO
- * with them, or it reads its own output upside down.
+ * `xy` and `.eval()` are flipped together — but only inside a shader THIS function translates. A
+ * `VireGlassBackdropPass` (`web/renderer.ts`) that reads its own previous frame from an FBO is raw
+ * `gl_FragCoord`, unflipped; reusing AGSL-style helpers there needs an explicit flip of its own.
  */
 export function convertEntryPoint(src: string): string {
   const match = ENTRY_RE.exec(src);
