@@ -92,7 +92,7 @@ const FIXTURE = `<!doctype html>
       // 'rest' keeps the pointer listeners — the claim is that an ATTACHED interactive element
       // shows nothing until it is touched, and detaching them would prove a different thing.
       interactive: which === 'rest' || which === 'press',
-      shadow: which === 'rest' ? false : false,
+      shadow: false,
       variant: which === 'rest' ? 'interactive' : 'present',
     });
   };
@@ -292,7 +292,11 @@ try {
     fail('no displacement pass was found under a finger — the filter is not being rebuilt');
   } else if (pressed.length !== restScales.length) {
     fail(`the filter changed shape under a finger (${restScales.length} passes -> ${pressed.length})`);
-  } else if (pressed.length > 1) {
+  } else if (pressed.length === 1) {
+    // One pass means the fixture material has no dispersion, and everything below would pass
+    // silently while proving nothing about the bug it exists for.
+    fail('only one displacement pass under a finger — the fixture has no dispersion to check');
+  } else {
     // The scale itself does not move under a finger — pressing changes what the map CONTAINS, not
     // how far it displaces. What must survive is the spread between the channels: the bug set one
     // pass to the undispersed scale and left the others at whatever they had, so the ratios broke
