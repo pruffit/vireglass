@@ -188,8 +188,9 @@ function buildFilterElement(
       pass.setAttribute('xChannelSelector', 'R');
       pass.setAttribute('yChannelSelector', 'G');
       pass.setAttribute('result', `${name}raw`);
-      // Каждый канал смещается на свою долю базового масштаба. Записываем её в сам элемент:
-      // при нажатии масштаб пересчитывается каждый кадр, и восстановить доли иначе неоткуда.
+      // Each channel displaces by its own share of the base scale. The share is stored on the
+      // element itself: under a press the scale is recomputed every frame, with nowhere else to
+      // recover the shares from.
       pass.setAttribute('data-vireglass-ratio', String(scale > 0 ? chScale / scale : 1));
       const only = document.createElementNS(SVG_NS, 'feColorMatrix');
       only.setAttribute('in', `${name}raw`);
@@ -580,9 +581,9 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     if (filterEl) {
       const feImage = filterEl.querySelector('feImage');
       feImage?.setAttribute('href', map.url);
-      // ВСЕ проходы, а не первый. При дисперсии их три, с разными масштабами, и querySelector
-      // возвращал только красный: под пальцем он получал неразделённый масштаб, а зелёный с синим
-      // оставались на том, что был при подключении. Цветной край переставал следовать за пальцем.
+      // EVERY pass, not the first. With dispersion there are three at different scales, and
+      // querySelector returned only red: under a finger it got the undispersed scale while green
+      // and blue kept their attach-time values, and the coloured rim stopped following the finger.
       for (const pass of filterEl.querySelectorAll('feDisplacementMap')) {
         const ratio = Number(pass.getAttribute('data-vireglass-ratio') ?? 1);
         pass.setAttribute('scale', String(map.scale * (Number.isFinite(ratio) ? ratio : 1)));

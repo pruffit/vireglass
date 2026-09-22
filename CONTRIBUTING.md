@@ -42,13 +42,20 @@ written down next to the arithmetic that implements them.
 
 ## Gates
 
-All four must be green before a PR is considered:
+CI runs all of these, and every one must be green before a PR is considered:
 
 ```bash
+npm run check:english   # every tracked file is English
 npm run typecheck
 npm test
-npm run check:glsl
+npm run check:glsl      # both shaders compile as GLSL ES 3.0
+npm run check:agsl      # ...and as valid SkSL, which is what Android runs
 npm run check:optics
+npm run check:law       # every calibrated value is written once
+npm run build
+npm run check:package   # the package loads from an install
+npm run check:readme    # every name the docs import exists
+npm run check:dom       # the glass bends live DOM (needs the build)
 ```
 
 `check:optics` is behavioural, not a compile check: it renders the material across a sweep of

@@ -18,6 +18,9 @@ jobs:
 
       - run: npm ci
 
+      - name: Everything in the repository is English
+        run: npm run check:english
+
       - name: Install Chromium for shader gates
         run: npx playwright install --with-deps chromium chromium-headless-shell
 
