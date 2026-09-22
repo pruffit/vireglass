@@ -96,7 +96,8 @@
     "prepare": "tsup",
     "check:package": "node scripts/check-package.mjs",
     "check:readme": "node scripts/check-readme.mjs",
-    "check:agsl": "tsx scripts/check-agsl.mjs"
+    "check:agsl": "tsx scripts/check-agsl.mjs",
+    "check:english": "node scripts/check-english.mjs"
   },
   "peerDependencies": {
     "@shopify/react-native-skia": ">=2.0.0",

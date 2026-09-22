@@ -148,9 +148,9 @@ describe('the neck, against the reference frame (docs/reference.md §5)', () => 
   });
 });
 
-// Несколько независимых элементов, перетекающих в одно целое — это и есть поведение (§5).
-// Сколько их — дело хоста, а раньше было делом материала: счёт жил в ИМЕНАХ полей (`shape`,
-// `shape2`), так что четвёртому элементу было некуда деться.
+// Several independent elements flowing into one body is the behaviour itself (§5). How many is
+// the host's business; it used to be the material's, with the count living in field NAMES
+// (`shape`, `shape2`), so a fourth element had nowhere to go.
 describe('any number of shapes, not two (docs/reference.md §5)', () => {
   const dot = roundedRectGeometry(44, 44, 22);
   /** A row of `n` dots, each touching the last — a toolbar collapsing into one capsule. */
@@ -184,7 +184,7 @@ describe('any number of shapes, not two (docs/reference.md §5)', () => {
   });
 
   it('leaves them separate when the bridge is too narrow to reach', () => {
-    // Шаг больше ширины: между точками настоящий зазор, и сомкнуть его может только перемычка.
+    // The step is wider than a dot: there is a real gap, and only the bridge can close it.
     expect(oneBody(row(4, 70), 1)).toBe(false);
     expect(oneBody(row(4, 70), 60)).toBe(true);
   });

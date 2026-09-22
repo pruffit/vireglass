@@ -27,6 +27,7 @@ jobs:
 
       - name: Gates
         run: |
+          npm run check:english
           npm run typecheck
           npm test
           npm run check:glsl
