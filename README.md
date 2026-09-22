@@ -87,6 +87,43 @@ and variegation of what lies under it. That is what the adaptation layer reads.
 > **WebGL does not see the DOM**, so this renderer refracts only what it drew itself — hence the
 > `scene` callback. For glass over your actual page, use `vireglass/dom` below.
 
+### GPU backdrop
+
+`scene` costs a CPU rasterize and a `texSubImage2D` upload every frame. If your backdrop is
+already a GPU simulation — a fluid, a shader animation, a video frame — draw it straight into the
+texture the lens samples with `backdrop` instead, in the same WebGL2 context, no canvas and no
+readback:
+
+```ts
+import { createProgram, drawFullscreenTriangle, FULLSCREEN_TRIANGLE_VERTEX_SOURCE } from 'vireglass/web';
+
+let program: WebGLProgram | undefined;
+
+renderer.render({
+  density: devicePixelRatio,
+  debug: 'normal',
+  pieces: [/* ... */],
+  backdrop: (gl, target) => {
+    program ??= createProgram(gl, FULLSCREEN_TRIANGLE_VERTEX_SOURCE, MY_FRAGMENT_SOURCE);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
+    gl.viewport(0, 0, target.width, target.height);
+    gl.useProgram(program);
+    drawFullscreenTriangle(gl);
+  },
+});
+```
+
+`backdrop: (gl: WebGL2RenderingContext, target: { framebuffer, width, height }) => void` takes
+over from `scene` entirely — exactly one of the two is required. The pass may render through as
+many of its own FBOs first as it likes; it must finish by drawing into `target.framebuffer`.
+
+**Orientation.** The texture this FBO wraps is top-row-first (row 0 is the scene's top row), and
+that row sits at `gl_FragCoord.y = 0` — the window-coordinate bottom, not the top. A pass that
+blits an ordinary image (loaded the normal way, via `texImage2D`) needs no flip at all:
+`texture(src, gl_FragCoord.xy / size)` lands it correctly. A pass that treats increasing `y` as
+its own "up", the natural convention for a physics simulation, has to flip before this final
+write, or its top ends up stored as the scene's bottom.
+
 ## Live DOM
 
 ```ts
@@ -224,6 +261,7 @@ npm test
 npm run check:glsl   # both shaders compile and link as GLSL ES 3.0
 npm run check:agsl   # ...and are valid SkSL, which is what Android runs
 npm run check:optics
+npm run check:backdrop # the GPU backdrop path reproduces the scene path, pixel for pixel
 npm run check:law    # every calibrated number is in src/law.ts, cited or named unmeasured
 npm run check:dom    # a real browser: the glass bends live DOM, and only where it should
 npm run check:package # packs, installs into an empty project, loads every entry point
