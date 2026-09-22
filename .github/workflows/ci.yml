@@ -28,7 +28,8 @@ jobs:
         run: npm test
 
       - name: Shaders compile on both targets
-        run: npm run check:glsl
+        run: |
+          npm run check:glsl
           npm run check:agsl
 
       - name: Optics stay within their envelope
