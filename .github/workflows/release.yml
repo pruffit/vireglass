@@ -33,6 +33,7 @@ jobs:
           npm run check:glsl
           npm run check:agsl
           npm run check:optics
+          npm run check:backdrop
           npm run check:law
 
       - run: npm run build

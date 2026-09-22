@@ -51,6 +51,7 @@ npm test
 npm run check:glsl      # both shaders compile as GLSL ES 3.0
 npm run check:agsl      # ...and as valid SkSL, which is what Android runs
 npm run check:optics
+npm run check:backdrop  # the GPU backdrop path reproduces the scene path, pixel for pixel
 npm run check:law       # every calibrated value is written once
 npm run build
 npm run check:package   # the package loads from an install
