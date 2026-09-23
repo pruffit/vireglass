@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### New: a GPU backdrop pass
+
+`scene` costs a CPU rasterize and a `texSubImage2D` upload every frame — fine for text and cover
+art, wrong for a backdrop that is already a GPU simulation. `renderer.render({ backdrop })` draws
+straight into the texture the lens samples, in the same WebGL2 context, with no canvas and no
+readback; `scene` and `backdrop` are now both optional on `VireGlassRenderOptions`, exactly one is
+required. See *GPU backdrop* under *Web* in the README for the signature and its orientation
+contract, and `check:backdrop` for the gate that holds the two paths equivalent — including a
+canary for a pass that gets the orientation backwards.
+
+`vireglass/web` also gains the low-level GL helpers the renderer itself is built on —
+`createProgram`, `createTexture`, `createFramebuffer`, `bindTextureAt`, `drawFullscreenTriangle`,
+`locationCache`, `setUniform` — public now that a backdrop pass needs them too. `TextureOptions`
+gains `wrap` (`CLAMP_TO_EDGE` by default, applied to both S and T) for a simulation with a
+periodic domain.
+
+`VireGlassRenderer.getLastGpuMs()` reports the GPU time of the last `render()` call via
+`EXT_disjoint_timer_query_webgl2` — `null` without the extension or on a disjoint sample, never an
+error.
+
 ## 2.2.0
 
 Four bugs from the first real integration, and a gate for the target that had none.

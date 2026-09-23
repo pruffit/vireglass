@@ -59,11 +59,19 @@ export type TextureOptions = {
   internalFormat?: number;
   format?: number;
   type?: number;
+  /** CLAMP_TO_EDGE by default. A simulation with a periodic domain (a tiling pattern, a torus)
+   *  wants REPEAT on its own textures instead — applied to both S and T, there's no case here
+   *  that wants them to differ. */
+  wrap?: number;
 };
 
 /**
- * content/probe texture: LINEAR on MIN and MAG, no mipmaps, CLAMP_TO_EDGE. Skia's `.eval` is
- * bilinear by default — NEAREST would break the disc gather into pixel-stepped bands (spec §4).
+ * General-purpose texture allocator: LINEAR on MIN and MAG, no mipmaps, CLAMP_TO_EDGE by default.
+ * Used throughout `web/` for `contentTexture` and the probe's downsample buffer, and public so a
+ * `VireGlassBackdropPass` can build its own textures the same way. LINEAR rather than NEAREST
+ * because Skia's `.eval` is bilinear by default — NEAREST would break the disc gather into
+ * pixel-stepped bands (spec §4); a pass with different needs overrides `internalFormat`/`format`/
+ * `type`/`wrap` directly.
  */
 export function createTexture(gl: WebGL2RenderingContext, options: TextureOptions): WebGLTexture {
   const texture = gl.createTexture();
@@ -71,6 +79,7 @@ export function createTexture(gl: WebGL2RenderingContext, options: TextureOption
   const internalFormat = options.internalFormat ?? gl.RGBA8;
   const format = options.format ?? gl.RGBA;
   const type = options.type ?? gl.UNSIGNED_BYTE;
+  const wrap = options.wrap ?? gl.CLAMP_TO_EDGE;
   gl.bindTexture(gl.TEXTURE_2D, texture);
   gl.texImage2D(
     gl.TEXTURE_2D,
@@ -85,10 +94,54 @@ export function createTexture(gl: WebGL2RenderingContext, options: TextureOption
   );
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, wrap);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, wrap);
   gl.bindTexture(gl.TEXTURE_2D, null);
   return texture;
+}
+
+export type UniformValue = number | readonly number[];
+
+/** One cache per program: `getUniformLocation` is a name lookup, and every piece re-sets every
+ *  uniform every frame. */
+export function locationCache(gl: WebGL2RenderingContext, program: WebGLProgram) {
+  const cache = new Map<string, WebGLUniformLocation | null>();
+  return (name: string): WebGLUniformLocation | null => {
+    let loc = cache.get(name);
+    if (loc === undefined) {
+      loc = gl.getUniformLocation(program, name);
+      cache.set(name, loc);
+    }
+    return loc;
+  };
+}
+
+export function setUniform(
+  gl: WebGL2RenderingContext,
+  loc: WebGLUniformLocation | null,
+  value: UniformValue,
+): void {
+  if (!loc) return;
+  if (typeof value === 'number') {
+    gl.uniform1f(loc, value);
+    return;
+  }
+  switch (value.length) {
+    case 1:
+      gl.uniform1f(loc, value[0]);
+      break;
+    case 2:
+      gl.uniform2f(loc, value[0], value[1]);
+      break;
+    case 3:
+      gl.uniform3f(loc, value[0], value[1], value[2]);
+      break;
+    case 4:
+      gl.uniform4f(loc, value[0], value[1], value[2], value[3]);
+      break;
+    default:
+      throw new Error(`vireglass/web: unsupported uniform size (${value.length})`);
+  }
 }
 
 export function createFramebuffer(gl: WebGL2RenderingContext, texture: WebGLTexture): WebGLFramebuffer {

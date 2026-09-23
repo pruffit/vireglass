@@ -89,6 +89,7 @@
     "test:watch": "vitest",
     "check:glsl": "tsx scripts/check-glsl.mjs",
     "check:optics": "tsx scripts/check-optics.mjs",
+    "check:backdrop": "tsx scripts/check-backdrop.mjs",
     "check:law": "node scripts/check-law.mjs",
     "check:dom": "node scripts/check-dom.mjs",
     "measure:dom": "node scripts/measure-dom.mjs",
