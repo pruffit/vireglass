@@ -13,7 +13,9 @@ import { LENS_SHADER } from './lens-shader';
 import { neckToBridge } from './sdf';
 import { debugIndex, type VireGlassDebugMode, type VireGlassOptics } from './material';
 
-/** Smooth union with a second shape — bench morphing experiment only. */
+/** A second shape joined to the element by a smooth union: the geometry that merges and growth
+ *  transitions are built on (a capsule drawn into a drop, then grown into its menu). Offsets from
+ *  the element's centre and sizes in dp. */
 export type VireGlassMorph = {
   offsetX: number;
   offsetY: number;
