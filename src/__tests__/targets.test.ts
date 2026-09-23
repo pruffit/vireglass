@@ -123,8 +123,9 @@ describe('comments never reach the rewrites', () => {
   });
 
   it('an unterminated block comment is an error, not a silently truncated shader', () => {
-    expect(() => stripComments('float a; /* never closed
-float b;')).toThrow(/unterminated block comment/);
+    expect(() => stripComments(['float a; /* never closed', 'float b;'].join('\n'))).toThrow(
+      /unterminated block comment/,
+    );
   });
 
   it('a comment mentioning return does not swallow the code after it', () => {
