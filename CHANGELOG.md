@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 2.3.0
+
+A backdrop that is already a GPU simulation can now be what the glass refracts, without a
+detour through a 2D canvas.
 
 ### New: a GPU backdrop pass
 
@@ -21,6 +24,17 @@ periodic domain.
 `VireGlassRenderer.getLastGpuMs()` reports the GPU time of the last `render()` call via
 `EXT_disjoint_timer_query_webgl2` — `null` without the extension or on a disjoint sample, never an
 error.
+
+A render that throws — a backdrop pass with a shader typo, say — no longer leaves the timer query
+open: every later reading used to fail silently and `getLastGpuMs()` froze. After a backdrop pass
+the renderer resets every piece of GL state its own passes rely on, so a pass may leave depth,
+culling, stencil, masks, its VAO or the unpack flags however it likes.
+
+### Repository
+
+`check:agsl` runs on pull requests again: a folded YAML scalar had merged it into `check:glsl`'s
+arguments. `check:dom` now renders in a shadow root and under a finger, and `check:english` keeps
+every tracked file in English.
 
 ## 2.2.0
 
