@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.3.1
 
 ### toGLSL no longer rewrites comments
 
