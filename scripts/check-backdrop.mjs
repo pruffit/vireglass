@@ -11,8 +11,14 @@
  * or a transpose all show up as a large mismatch rather than accidentally lining back up.
  *
  * The canary is the point of this file as much as the equivalence check: a pass that gets the
- * orientation contract backwards (no flip where the contract requires one) must fail loudly. If
- * the canary ever stopped failing, the gate would have quietly stopped checking anything.
+ * orientation contract backwards (a flip added where the contract calls for none) must fail
+ * loudly. If the canary ever stopped failing, the gate would have quietly stopped checking
+ * anything.
+ *
+ * Two more cases live here: a "dirty" pass that leaves depth/stencil/cull/blend/scissor enabled,
+ * flips the unpack alignment, and leaves its own VAO and program bound — the renderer's own reset
+ * has to make the frame come out right regardless — and the `scene`+`backdrop` misuse cases
+ * (`render()` must throw given both or neither, never silently pick one).
  *
  * Run: npm run check:backdrop
  */
@@ -30,9 +36,10 @@ const WEB = resolve(HERE, '../src/web/index.ts').replace(/\\/g, '/');
  * upload the exact same `paintTestScene` canvas — one via `texSubImage2D`, the other via
  * `texImage2D` into a texture a GPU pass then blits — so a correct pass reproduces it losslessly;
  * only the glass itself adds any per-pixel variation on top. Measured on this scene with the
- * contract honored: max diff 0, 0% of texels mismatched. The threshold sits well above that and
- * well below the canary's (max 168, see `MIN_CANARY_MEAN_DIFF`), so it separates "same rendering"
- * from "wrong orientation" without being tuned to either number exactly.
+ * contract honored: max diff 0, 0% of texels mismatched — same result for the "dirty" pass below,
+ * which draws the identical content and only leaves GL state behind. The threshold sits well above
+ * both of those and well below the canary's (max 168, see `MIN_CANARY_MEAN_DIFF`), so it separates
+ * "same rendering" from "wrong orientation" without being tuned to either number exactly.
  */
 const MAX_CHANNEL_DIFF = 24;
 /** Fraction of texels allowed past `MAX_CHANNEL_DIFF` — measured 0% with the contract honored;
@@ -89,6 +96,26 @@ function testPiece() {
     centerY: HEIGHT / 2,
     appear: 1,
   };
+}
+
+// Ink mask, white (top half) on black (bottom half) per the frame's contract — sensitive
+// specifically to UNPACK_FLIP_Y_WEBGL, which nothing else in this file's comparisons exercises:
+// texSubImage2D (the scene path's own content upload) does not consult that flag the way
+// texImage2D from an icon/color-layer source does.
+function makeIconMask() {
+  const mask = document.createElement('canvas');
+  mask.width = WIDTH;
+  mask.height = HEIGHT;
+  const ctx = mask.getContext('2d');
+  ctx.fillStyle = '#000000';
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, WIDTH, HEIGHT / 2);
+  return mask;
+}
+
+function testPieceWithIcon() {
+  return { ...testPiece(), icon: true, inkIdle: [1, 1, 1, 1], inkActive: [1, 1, 1, 1] };
 }
 
 // Lets the backdrop probe settle to the same steady state the scene path reaches, so the
@@ -219,6 +246,114 @@ globalThis.vgBackdropNoScene = () => {
     return { threw: true, message: String(error && error.message) };
   }
 };
+
+globalThis.vgBackdropBoth = () => {
+  const { renderer } = makeStage();
+  try {
+    renderer.render({
+      density: 1,
+      debug: 'normal',
+      pieces: [testPiece()],
+      scene: paintTestScene,
+      backdrop: () => {},
+    });
+    return { threw: false };
+  } catch (error) {
+    return { threw: true, message: String(error && error.message) };
+  }
+};
+
+let dirtyBlitProgram = null;
+let dirtyLeftoverProgram = null;
+let dirtyVao = null;
+
+/**
+ * Draws the correct backdrop first — this pass's own output is right — and only THEN leaves the
+ * context in the state a careless real pass might: depth/stencil/cull test enabled, a blend func
+ * and a scissor rect that would blank the screen if either survived, the unpack flags flipped
+ * (which the icon-mask upload right after this call is sensitive to), and its own VAO and program
+ * left bound. None of this is undone by the pass — the renderer's own reset is what is on trial.
+ */
+function makeDirtyBackdropPass(refCanvas) {
+  return (gl, target) => {
+    if (!refTexture) {
+      refTexture = createTexture(gl, { width: WIDTH, height: HEIGHT });
+      gl.bindTexture(gl.TEXTURE_2D, refTexture);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, refCanvas);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+    }
+    if (!dirtyBlitProgram) {
+      dirtyBlitProgram = createProgram(gl, FULLSCREEN_TRIANGLE_VERTEX_SOURCE, FOLLOWS_FRAGMENT_SOURCE);
+    }
+    gl.useProgram(dirtyBlitProgram);
+    bindTextureAt(gl, 0, refTexture, dirtyBlitProgram, 'u_src');
+    gl.uniform2f(gl.getUniformLocation(dirtyBlitProgram, 'u_res'), target.width, target.height);
+    drawFullscreenTriangle(gl);
+
+    if (!dirtyVao) dirtyVao = gl.createVertexArray();
+    if (!dirtyLeftoverProgram) {
+      dirtyLeftoverProgram = createProgram(gl, FULLSCREEN_TRIANGLE_VERTEX_SOURCE, FOLLOWS_FRAGMENT_SOURCE);
+    }
+    gl.enable(gl.DEPTH_TEST);
+    gl.enable(gl.CULL_FACE);
+    gl.enable(gl.STENCIL_TEST);
+    gl.colorMask(false, false, false, false);
+    gl.depthMask(false);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ZERO, gl.ZERO);
+    gl.enable(gl.SCISSOR_TEST);
+    gl.scissor(0, 0, 1, 1);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+    gl.activeTexture(gl.TEXTURE5);
+    gl.bindVertexArray(dirtyVao);
+    gl.useProgram(dirtyLeftoverProgram);
+  };
+}
+
+globalThis.vgBackdropDirty = async () => {
+  const mask = makeIconMask();
+
+  const cleanStage = makeStage();
+  await settle(() =>
+    cleanStage.renderer.render({
+      density: 1,
+      debug: 'normal',
+      pieces: [testPieceWithIcon()],
+      scene: paintTestScene,
+      iconMask: mask,
+    }),
+  );
+  const cleanFrame = readFrame(cleanStage.canvas);
+
+  const refCanvas = document.createElement('canvas');
+  refCanvas.width = WIDTH;
+  refCanvas.height = HEIGHT;
+  paintTestScene(refCanvas.getContext('2d'), WIDTH, HEIGHT);
+
+  const dirtyStage = makeStage();
+  // Each stage's renderer owns its OWN WebGL2 context: a texture or program created against a
+  // previous stage's context (left over from an earlier compare in this same page) is foreign to
+  // this one, and binding it is invalid. Every module-level cache the dirty pass touches has to
+  // start fresh here, same as vgBackdropCompare already resets refTexture/blitProgram before its
+  // own second stage.
+  refTexture = null;
+  dirtyBlitProgram = null;
+  dirtyLeftoverProgram = null;
+  dirtyVao = null;
+  await settle(() =>
+    dirtyStage.renderer.render({
+      density: 1,
+      debug: 'normal',
+      pieces: [testPieceWithIcon()],
+      backdrop: makeDirtyBackdropPass(refCanvas),
+      iconMask: mask,
+    }),
+  );
+  const dirtyFrame = readFrame(dirtyStage.canvas);
+
+  return diffStats(cleanFrame, dirtyFrame);
+};
 `;
 
 async function main() {
@@ -248,7 +383,7 @@ async function main() {
     );
   }
 
-  console.log('--- canary: pass with the Y flip removed must NOT match ---');
+  console.log('--- canary: pass with an extra Y flip must NOT match ---');
   const bad = await page.evaluate((a) => globalThis.vgBackdropCompare(a), { correct: false });
   console.log(
     `  max ${bad.maxDiff}, mean ${bad.meanDiff.toFixed(2)}, mismatched ${(bad.mismatchFraction * 100).toFixed(2)}%`,
@@ -259,11 +394,29 @@ async function main() {
     );
   }
 
+  console.log('--- a pass that leaves depth/stencil/cull/blend/scissor/unpack/VAO/program dirty must still match ---');
+  const dirty = await page.evaluate(() => globalThis.vgBackdropDirty());
+  console.log(
+    `  max ${dirty.maxDiff}, mean ${dirty.meanDiff.toFixed(2)}, mismatched ${(dirty.mismatchFraction * 100).toFixed(2)}%`,
+  );
+  if (!(dirty.maxDiff <= MAX_CHANNEL_DIFF) || !(dirty.mismatchFraction <= MAX_MISMATCH_FRACTION)) {
+    failed.push(
+      `a dirty pass changed the frame (max ${dirty.maxDiff}, mismatched ${(dirty.mismatchFraction * 100).toFixed(2)}%) — the renderer's state reset after backdrop() is incomplete`,
+    );
+  }
+
   console.log('--- render() with neither scene nor backdrop throws ---');
   const noScene = await page.evaluate(() => globalThis.vgBackdropNoScene());
   console.log(`  threw: ${noScene.threw}${noScene.threw ? ` (${noScene.message})` : ''}`);
   if (!noScene.threw) {
     failed.push('render() with neither scene nor backdrop did not throw');
+  }
+
+  console.log('--- render() with BOTH scene and backdrop throws ---');
+  const both = await page.evaluate(() => globalThis.vgBackdropBoth());
+  console.log(`  threw: ${both.threw}${both.threw ? ` (${both.message})` : ''}`);
+  if (!both.threw) {
+    failed.push('render() with both scene and backdrop did not throw (it must not silently pick one)');
   }
 
   await browser.close();
