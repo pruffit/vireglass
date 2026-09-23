@@ -67,11 +67,35 @@ export function convertEvalCalls(src: string): string {
   return out;
 }
 
+/** Comments are prose, and the rewrites here are regexes over raw text: a comment mentioning
+ *  "return" became one, and a brace in a comment ended the entry point early. Newlines inside
+ *  block comments survive, so a compile error still points at the source line. */
+export function stripComments(src: string): string {
+  let out = '';
+  let i = 0;
+  while (i < src.length) {
+    if (src.startsWith('//', i)) {
+      const end = src.indexOf('\n', i);
+      i = end < 0 ? src.length : end;
+    } else if (src.startsWith('/*', i)) {
+      const end = src.indexOf('*/', i + 2);
+      const stop = end < 0 ? src.length : end + 2;
+      out += src.slice(i, stop).replace(/[^\n]/g, '');
+      i = stop;
+    } else {
+      out += src[i];
+      i += 1;
+    }
+  }
+  return out;
+}
+
 /**
  * Early `return <expression>;` inside `main` → `fragColor = <expression>; return;`. Takes ONLY
  * the body of main (see `convertEntryPoint`) — ordinary `return`s in helper functions live
  * outside this text and are untouched. Expressions never contain a `;` of their own (shaders have
- * none — the only `;` lives inside `for(...)`, which isn't a return), so `[^;]+` is safe.
+ * none — the only `;` lives inside `for(...)`, which isn't a return), so `[^;]+` is safe once
+ * comments are gone (`stripComments`).
  */
 export function convertReturns(mainBody: string): string {
   return mainBody.replace(/\breturn\s+([^;]+);/g, 'fragColor = $1; return;');
@@ -133,7 +157,7 @@ export function addPrologue(src: string): string {
  *  literal AGSL signature BEFORE type conversion, otherwise `half4 main(float2 xy)` can't be
  *  found. */
 export function toGLSL(shaderSource: string): string {
-  let out = shaderSource;
+  let out = stripComments(shaderSource);
   out = convertEntryPoint(out);
   out = convertShaderUniforms(out);
   out = convertEvalCalls(out);

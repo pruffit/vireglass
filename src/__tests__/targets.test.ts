@@ -10,6 +10,7 @@ import {
   convertReturns,
   convertShaderUniforms,
   convertVecTypes,
+  stripComments,
   toGLSL,
 } from '../targets/glsl';
 
@@ -113,6 +114,28 @@ describe('convertReturns', () => {
 
   it('leaves a return with no expression as-is', () => {
     expect(convertReturns('return;')).toBe('return;');
+  });
+});
+
+describe('comments never reach the rewrites', () => {
+  it('strips line and block comments and keeps the line count', () => {
+    expect(stripComments('a // x\nb /* y\nz */ c')).toBe('a \nb \n c');
+  });
+
+  it('a comment mentioning return does not swallow the code after it', () => {
+    const src =
+      'uniform float u_a;\nhalf4 main(float2 xy) {\n' +
+      '  // The return is distributed by the caller\n' +
+      '  float v = u_a * 2.0;\n  return half4(v);\n}\n';
+    const out = toGLSL(src);
+    expect(out).toContain('\n  float v = u_a * 2.0;\n');
+    expect(out.match(/fragColor =/g)).toHaveLength(1);
+    expect(out).toContain('fragColor = vec4(v); return;');
+  });
+
+  it('a brace inside a comment does not end the entry point early', () => {
+    const src = 'half4 main(float2 xy) {\n  // a stray } in prose\n  return half4(xy.x);\n}\n';
+    expect(toGLSL(src)).toContain('fragColor = vec4(xy.x); return;');
   });
 });
 

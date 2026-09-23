@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### toGLSL no longer rewrites comments
+
+The transpiler's rewrites are regexes over raw text, and they read comments as code. A comment in
+`main` that mentioned "return" was turned into one — with `[^;]+` running across lines to the
+next semicolon — so everything up to that semicolon vanished and the shader still compiled. A
+brace in a comment ended the entry point early. Comments are now stripped before any rewrite
+(line breaks kept, so compile errors still point at the source line). The package's own lens and
+surface shaders were not affected: their output is identical apart from comments. Shaders of your
+own passed through `toGLSL` — a backdrop pass, say — could have been.
+
 ## 2.3.0
 
 A backdrop that is already a GPU simulation can now be what the glass refracts, without a
