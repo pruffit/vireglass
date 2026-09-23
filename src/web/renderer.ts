@@ -55,6 +55,7 @@ import {
   setUniform,
   type UniformValue,
 } from './gl';
+import { createGpuTimer } from './gpu-timer';
 import { createProbe, type ProbeStats } from './probe';
 
 /** The scene draws itself with an offset: the lenses in the frame stay put while the canvas
@@ -77,6 +78,9 @@ export type VireGlassSceneDrawer = (
  *  itself, so drawing into it needs no readback: the very texture the lens samples gets the pixels
  *  directly. */
 export type VireGlassBackdropTarget = {
+  /** Owned by the renderer — the FBO wrapping `contentTexture` itself, recreated on `resize` and
+   *  freed in `destroy`. The pass must not delete it, and must not hold onto it past the call:
+   *  the object may be gone or pointing at a different texture by the next `render()`. */
   framebuffer: WebGLFramebuffer;
   width: number;
   height: number;
@@ -100,8 +104,11 @@ export type VireGlassBackdropTarget = {
  *
  * The pass may render through as many of its own FBOs first as it likes (a multi-step simulation)
  * and leave the GL context in whatever state suits it; it must finish by drawing into
- * `target.framebuffer` at `viewport(0, 0, target.width, target.height)`. The renderer rebinds the
- * default framebuffer and resets viewport/blend/scissor right after, before its own next pass.
+ * `target.framebuffer` at `viewport(0, 0, target.width, target.height)`. The renderer puts back
+ * every piece of state its own remaining steps depend on right after — framebuffer, viewport,
+ * blend, scissor, depth/stencil/cull, the vertex array binding, the active texture unit, and the
+ * `UNPACK_*` pixel-store flags used to upload `iconMask`/`colorLayer` — so the pass is free to
+ * change any of it without arranging its own cleanup.
  */
 export type VireGlassBackdropPass = (
   gl: WebGL2RenderingContext,
@@ -150,10 +157,11 @@ export type VireGlassRenderOptions = {
   debug: VireGlassDebugMode;
   pieces: readonly VireGlassPiece[];
   /** CPU-side backdrop: draws into an offscreen 2D canvas, uploaded via `texSubImage2D`. Exactly
-   *  one of `scene`/`backdrop` is required — see `backdrop` for the GPU alternative. */
+   *  one of `scene`/`backdrop` is required — `render()` throws if both or neither are given — see
+   *  `backdrop` for the GPU alternative. */
   scene?: VireGlassSceneDrawer;
   /** GPU-side backdrop: draws straight into the texture the lens samples, in this context, no
-   *  readback. Takes over from `scene` entirely when set — see `VireGlassBackdropPass` for the
+   *  readback. Exactly one of `scene`/`backdrop` is required — see `VireGlassBackdropPass` for the
    *  orientation contract it must honor. */
   backdrop?: VireGlassBackdropPass | null;
   /** Canvas offset under stationary elements, device-px. */
@@ -311,57 +319,10 @@ export function createVireGlassRenderer(canvas: HTMLCanvasElement): VireGlassRen
     return backdropFbo;
   }
 
-  // GPU timing for `getLastGpuMs()`. A ring of 3 queries: `EXT_disjoint_timer_query_webgl2`
-  // results arrive asynchronously, often a few frames late, so one query per frame would mean
-  // starting a new query before the previous one's result is available — undefined by spec.
-  // Missing the extension (most headless/CI setups) degrades to `null` forever, never an error.
-  const timerExt = gl.getExtension('EXT_disjoint_timer_query_webgl2');
-  type TimerSlot = { query: WebGLQuery; pending: boolean };
-  const timerSlots: TimerSlot[] = timerExt
-    ? [0, 1, 2].map(() => ({ query: gl.createQuery() as WebGLQuery, pending: false }))
-    : [];
-  let timerCursor = 0;
-  let activeTimerSlot: TimerSlot | null = null;
-  let lastGpuMs: number | null = null;
-
-  function pollGpuTimers(): void {
-    if (!timerExt) return;
-    for (const slot of timerSlots) {
-      if (!slot.pending) continue;
-      if (!gl.getQueryParameter(slot.query, gl.QUERY_RESULT_AVAILABLE)) continue;
-      slot.pending = false;
-      // A disjoint event (e.g. the GPU clock changed) invalidates every query since the last
-      // check — the sample is discarded, not reported as zero or stale.
-      if (gl.getParameter(timerExt.GPU_DISJOINT_EXT)) continue;
-      const ns = gl.getQueryParameter(slot.query, gl.QUERY_RESULT) as number;
-      lastGpuMs = ns / 1e6;
-    }
-  }
-
-  function beginGpuTimer(): void {
-    activeTimerSlot = null;
-    if (!timerExt || timerSlots.length === 0) return;
-    pollGpuTimers();
-    const slot = timerSlots[timerCursor];
-    // The ring hasn't caught up (this slot's previous result isn't back yet) — skip timing this
-    // frame rather than reuse a query that's still in flight.
-    if (slot.pending) return;
-    gl.beginQuery(timerExt.TIME_ELAPSED_EXT, slot.query);
-    activeTimerSlot = slot;
-  }
-
-  function endGpuTimer(): void {
-    if (!timerExt || !activeTimerSlot) return;
-    gl.endQuery(timerExt.TIME_ELAPSED_EXT);
-    activeTimerSlot.pending = true;
-    timerCursor = (timerCursor + 1) % timerSlots.length;
-    activeTimerSlot = null;
-  }
-
-  function getLastGpuMs(): number | null {
-    pollGpuTimers();
-    return lastGpuMs;
-  }
+  // GPU timing for `getLastGpuMs()` — the ring buffer and disjoint handling live in
+  // `gpu-timer.ts`, isolated so they can be unit-tested against a fake (this extension is
+  // unavailable in the headless Chromium the shader gates run in).
+  const gpuTimer = createGpuTimer(gl);
 
   // The icon mask is ONE per frame, the size of the canvas. The shader samples it at the pixel's
   // screen coordinate (`u_center + p` is exactly `xy`), so each element's icon is simply drawn
@@ -406,206 +367,232 @@ export function createVireGlassRenderer(canvas: HTMLCanvasElement): VireGlassRen
 
   function render(options: VireGlassRenderOptions): VireGlassRenderResult {
     if (!sceneCtx) throw new Error('vireglass/web: renderer not initialized (resize was never called)');
+    // Narrowed once, before the timed section: a `let` read from inside the closure below would
+    // widen back to `| null`, since TS cannot see that nothing reassigns it in between.
+    const ctx = sceneCtx;
 
-    beginGpuTimer();
+    // Validated BEFORE the GPU timer starts, not inside it: a bad call here has to throw cleanly
+    // with no query left open, which an error thrown mid-timing would risk.
+    if (options.backdrop && options.scene) {
+      throw new Error(
+        'vireglass/web: render() needs exactly one of options.scene or options.backdrop, not both',
+      );
+    }
+    if (!options.backdrop && !options.scene) {
+      throw new Error('vireglass/web: render() needs either options.scene or options.backdrop');
+    }
 
-    // 1. Backdrop. Exactly one of two paths fills `contentTexture` — everything after this only
-    // SAMPLES it, never redraws it.
-    if (options.backdrop) {
-      // GPU pass, straight into `contentTexture` via its own FBO: no 2D canvas, no readback. See
-      // `VireGlassBackdropPass` for the orientation contract the pass has to honor.
-      const fbo = ensureBackdropFbo();
-      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
-      gl.viewport(0, 0, width, height);
-      options.backdrop(gl, { framebuffer: fbo, width, height });
-      // The pass may leave the context in any state; put back what step 2 depends on before it
-      // runs (which then makes its own explicit program/texture bindings regardless).
+    // The rest of the frame, including a caller-supplied `backdrop` pass that may itself throw
+    // (a shader typo, a bad uniform), runs inside `time`'s own try/finally — `endQuery` always
+    // pairs with `beginQuery` no matter how this exits.
+    return gpuTimer.time((): VireGlassRenderResult => {
+      // 1. Backdrop. Exactly one of two paths fills `contentTexture` — everything after this only
+      // SAMPLES it, never redraws it.
+      if (options.backdrop) {
+        // GPU pass, straight into `contentTexture` via its own FBO: no 2D canvas, no readback. See
+        // `VireGlassBackdropPass` for the orientation contract the pass has to honor.
+        const fbo = ensureBackdropFbo();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+        gl.viewport(0, 0, width, height);
+        options.backdrop(gl, { framebuffer: fbo, width, height });
+        // The pass is free to leave the context in ANY state (per its own JSDoc) — put back
+        // everything the rest of this render depends on, not just the obvious framebuffer/
+        // viewport pair: a pass that enables depth/stencil/face culling, binds its own VAO, or
+        // changes the unpack flags used to upload `iconMask`/`colorLayer` just below would
+        // otherwise corrupt a step it never touched directly.
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.viewport(0, 0, width, height);
+        gl.disable(gl.BLEND);
+        gl.disable(gl.SCISSOR_TEST);
+        gl.disable(gl.DEPTH_TEST);
+        gl.disable(gl.CULL_FACE);
+        gl.disable(gl.STENCIL_TEST);
+        gl.colorMask(true, true, true, true);
+        gl.depthMask(true);
+        gl.bindVertexArray(null);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+        gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+        gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.BROWSER_DEFAULT_WEBGL);
+      } else {
+        // CPU-side: a 2D canvas is easier for text and "cover art" (task, item 3), and the texture
+        // itself plays the role of the plan's FBO(scene).
+        ctx.clearRect(0, 0, width, height);
+        options.scene?.(ctx, width, height, options.offsetX ?? 0, options.offsetY ?? 0, options.density);
+        gl.bindTexture(gl.TEXTURE_2D, contentTexture);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, sceneCanvas);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+      }
+
+      if (options.colorLayer) {
+        gl.bindTexture(gl.TEXTURE_2D, colorTexture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, options.colorLayer);
+      }
+      if (options.iconMask) {
+        gl.bindTexture(gl.TEXTURE_2D, iconTexture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, options.iconMask);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+      }
+
+      // 2. Backdrop to screen — the backing the element is seen against.
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.viewport(0, 0, width, height);
       gl.disable(gl.BLEND);
       gl.disable(gl.SCISSOR_TEST);
-    } else if (options.scene) {
-      // CPU-side: a 2D canvas is easier for text and "cover art" (task, item 3), and the texture
-      // itself plays the role of the plan's FBO(scene).
-      sceneCtx.clearRect(0, 0, width, height);
-      options.scene(sceneCtx, width, height, options.offsetX ?? 0, options.offsetY ?? 0, options.density);
-      gl.bindTexture(gl.TEXTURE_2D, contentTexture);
-      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, sceneCanvas);
-      gl.bindTexture(gl.TEXTURE_2D, null);
-    } else {
-      throw new Error('vireglass/web: render() needs either options.scene or options.backdrop');
-    }
+      gl.useProgram(blitProgram);
+      bindTextureAt(gl, 0, contentTexture, blitProgram, 'u_content');
+      setUniform(gl, blitLoc('u_resolution'), [width, height]);
+      drawFullscreenTriangle(gl);
 
-    if (options.colorLayer) {
-      gl.bindTexture(gl.TEXTURE_2D, colorTexture);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, options.colorLayer);
-    }
-    if (options.iconMask) {
-      gl.bindTexture(gl.TEXTURE_2D, iconTexture);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, options.iconMask);
-      gl.bindTexture(gl.TEXTURE_2D, null);
-    }
+      const probes: (ProbeStats | null)[] = [];
 
-    // 2. Backdrop to screen — the backing the element is seen against.
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, width, height);
-    gl.disable(gl.BLEND);
-    gl.disable(gl.SCISSOR_TEST);
-    gl.useProgram(blitProgram);
-    bindTextureAt(gl, 0, contentTexture, blitProgram, 'u_content');
-    setUniform(gl, blitLoc('u_resolution'), [width, height]);
-    drawFullscreenTriangle(gl);
+      for (let index = 0; index < options.pieces.length; index += 1) {
+        const piece = options.pieces[index];
 
-    const probes: (ProbeStats | null)[] = [];
+        // 3. Downsample + stats for the rectangle of VISIBLE glass (no lens/surface margins — the
+        // same `glassWidth`/`glassHeight` that go into toLensProps). Only the first element
+        // captures the grid: it's shared for the frame, the rest just need their own rectangle out
+        // of it.
+        const halfWidth = (piece.geometry.width * options.density) / 2;
+        const halfHeight = (piece.geometry.height * options.density) / 2;
+        const rect = {
+          centerX: piece.centerX,
+          centerY: piece.centerY,
+          halfWidth,
+          halfHeight,
+        };
+        const fresh =
+          index === 0
+            ? probe.sample(contentTexture, width, height, rect)
+            : probe.statsFor(width, height, rect);
+        // The backdrop estimate eases toward the new value instead of jumping to it. On Android
+        // the native view does this (`GlassLensView.kt`, a per-frame SETTLE); nobody did it on the
+        // web: under a moving canvas, body density used to jerk with the instantaneous sample, and
+        // on screen that read as lighting artifacts.
+        const stats = fresh ? settleStats(index, fresh) : null;
+        probes.push(stats);
+        // Restore the viewport and the content texture binding — the probe pass reuses TEXTURE0
+        // and its own FBO, unbinds them itself, but does change the viewport.
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.viewport(0, 0, width, height);
 
-    for (let index = 0; index < options.pieces.length; index += 1) {
-      const piece = options.pieces[index];
+        gl.enable(gl.BLEND);
+        // Premultiplied-over: both the lens and the surface emit premultiplied alpha (see `return
+        // half4(half3(...) * alpha, alpha)` in both shaders).
+        gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
-      // 3. Downsample + stats for the rectangle of VISIBLE glass (no lens/surface margins — the
-      // same `glassWidth`/`glassHeight` that go into toLensProps). Only the first element
-      // captures the grid: it's shared for the frame, the rest just need their own rectangle out
-      // of it.
-      const halfWidth = (piece.geometry.width * options.density) / 2;
-      const halfHeight = (piece.geometry.height * options.density) / 2;
-      const rect = {
-        centerX: piece.centerX,
-        centerY: piece.centerY,
-        halfWidth,
-        halfHeight,
-      };
-      const fresh =
-        index === 0
-          ? probe.sample(contentTexture, width, height, rect)
-          : probe.statsFor(width, height, rect);
-      // The backdrop estimate eases toward the new value instead of jumping to it. On Android
-      // the native view does this (`GlassLensView.kt`, a per-frame SETTLE); nobody did it on the
-      // web: under a moving canvas, body density used to jerk with the instantaneous sample, and
-      // on screen that read as lighting artifacts.
-      const stats = fresh ? settleStats(index, fresh) : null;
-      probes.push(stats);
-      // Restore the viewport and the content texture binding — the probe pass reuses TEXTURE0
-      // and its own FBO, unbinds them itself, but does change the viewport.
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-      gl.viewport(0, 0, width, height);
+        // Both passes draw a fullscreen triangle, but the element covers only a small part of the
+        // frame: without scissoring, a row of samples multiplies cost by the number of elements (on
+        // a headless software renderer this pushed a frame into seconds). Margin is added on both
+        // sides — the shadow, bevel and light gathering all reach past the element's own bounds.
+        // The morph drop travels past the element's bounds — its travel is part of the margin,
+        // otherwise scissoring would cut off the tail right where it matters.
+        const reachOf = (m?: VireGlassMorph) =>
+          m ? Math.hypot(m.offsetX, m.offsetY) + Math.max(m.width, m.height) / 2 + m.smoothing : 0;
+        const morphReach = Math.max(reachOf(piece.morph), reachOf(piece.morph2));
+        // Field deformation pushes the element's edge past its own bounds — drag, wave amplitude
+        // and growth on press. Without this term, scissoring cuts off exactly the part being
+        // dragged toward.
+        const touchReach = piece.touch
+          ? Math.hypot(piece.touch.pullX, piece.touch.pullY) +
+            piece.touch.waveAmp * 2 +
+            Math.max(piece.geometry.width, piece.geometry.height) * 0.05 * piece.touch.press
+          : 0;
+        const padPx =
+          (lensPadDp(piece.geometry, piece.optics) + surfacePadDp(piece.geometry, 0) + morphReach + touchReach) *
+          options.density;
+        const left = Math.max(0, Math.floor(piece.centerX - halfWidth - padPx));
+        const right = Math.min(width, Math.ceil(piece.centerX + halfWidth + padPx));
+        const top = Math.max(0, Math.floor(height - (piece.centerY + halfHeight + padPx)));
+        const bottom = Math.min(height, Math.ceil(height - (piece.centerY - halfHeight - padPx)));
+        gl.enable(gl.SCISSOR_TEST);
+        gl.scissor(left, top, Math.max(0, right - left), Math.max(0, bottom - top));
 
-      gl.enable(gl.BLEND);
-      // Premultiplied-over: both the lens and the surface emit premultiplied alpha (see `return
-      // half4(half3(...) * alpha, alpha)` in both shaders).
-      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+        // 4. Lens.
+        gl.useProgram(lensProgram);
+        bindTextureAt(gl, 0, contentTexture, lensProgram, 'content');
+        setUniform(gl, lensLoc('u_contentSize'), [width, height]);
+        setUniform(gl, lensLoc('u_resolution'), [width, height]);
+        setUniform(gl, lensLoc('u_center'), [piece.centerX, piece.centerY]);
+        // There's no local-view margin here (one shared coordinate space) — on Android `u_reach`
+        // capped adaptive-blur gathering at the edge of the lens view's PADDING; there's no such
+        // boundary here, so the value is chosen deliberately larger than any real gather radius, so
+        // the `reach - length(p)` condition never triggers before `u_contentMin/Max` does.
+        setUniform(gl, lensLoc('u_reach'), Math.max(width, height));
+        setUniform(gl, lensLoc('u_contentMin'), [1, 1]);
+        setUniform(gl, lensLoc('u_contentMax'), [width - 1, height - 1]);
+        if (stats) {
+          setUniform(gl, lensLoc('u_probeLuma'), stats.luma);
+          setUniform(gl, lensLoc('u_probeBusy'), stats.busy);
+          setUniform(gl, lensLoc('u_probeRange'), [stats.lo, stats.hi]);
+          setUniform(gl, lensLoc('u_probeSlope'), [stats.slopeX, stats.slopeY]);
+          setUniform(gl, lensLoc('u_probe'), [stats.r, stats.g, stats.b]);
+        } else {
+          // The probe hasn't reported yet (the first frame or two) — the -1 sentinel keeps the
+          // shader on its own point samples (see the comment in `lens-shader.ts`).
+          setUniform(gl, lensLoc('u_probeLuma'), -1);
+        }
+        const lens = toLensProps(piece.optics, piece.geometry, options.density, {
+          debug: options.debug,
+          morph: piece.morph,
+          morph2: piece.morph2,
+          touch: piece.touch,
+          progress: piece.progress,
+          light: piece.light,
+          appear: piece.appear,
+          accent: piece.accent,
+        });
+        applyChannel(gl, lensLoc, lens.uniformNames, lens.uniformSizes, lens.uniformValues);
+        drawFullscreenTriangle(gl);
 
-      // Both passes draw a fullscreen triangle, but the element covers only a small part of the
-      // frame: without scissoring, a row of samples multiplies cost by the number of elements (on
-      // a headless software renderer this pushed a frame into seconds). Margin is added on both
-      // sides — the shadow, bevel and light gathering all reach past the element's own bounds.
-      // The morph drop travels past the element's bounds — its travel is part of the margin,
-      // otherwise scissoring would cut off the tail right where it matters.
-      const reachOf = (m?: VireGlassMorph) =>
-        m ? Math.hypot(m.offsetX, m.offsetY) + Math.max(m.width, m.height) / 2 + m.smoothing : 0;
-      const morphReach = Math.max(reachOf(piece.morph), reachOf(piece.morph2));
-      // Field deformation pushes the element's edge past its own bounds — drag, wave amplitude
-      // and growth on press. Without this term, scissoring cuts off exactly the part being
-      // dragged toward.
-      const touchReach = piece.touch
-        ? Math.hypot(piece.touch.pullX, piece.touch.pullY) +
-          piece.touch.waveAmp * 2 +
-          Math.max(piece.geometry.width, piece.geometry.height) * 0.05 * piece.touch.press
-        : 0;
-      const padPx =
-        (lensPadDp(piece.geometry, piece.optics) + surfacePadDp(piece.geometry, 0) + morphReach + touchReach) *
-        options.density;
-      const left = Math.max(0, Math.floor(piece.centerX - halfWidth - padPx));
-      const right = Math.min(width, Math.ceil(piece.centerX + halfWidth + padPx));
-      const top = Math.max(0, Math.floor(height - (piece.centerY + halfHeight + padPx)));
-      const bottom = Math.min(height, Math.ceil(height - (piece.centerY - halfHeight - padPx)));
-      gl.enable(gl.SCISSOR_TEST);
-      gl.scissor(left, top, Math.max(0, right - left), Math.max(0, bottom - top));
-
-      // 4. Lens.
-      gl.useProgram(lensProgram);
-      bindTextureAt(gl, 0, contentTexture, lensProgram, 'content');
-      setUniform(gl, lensLoc('u_contentSize'), [width, height]);
-      setUniform(gl, lensLoc('u_resolution'), [width, height]);
-      setUniform(gl, lensLoc('u_center'), [piece.centerX, piece.centerY]);
-      // There's no local-view margin here (one shared coordinate space) — on Android `u_reach`
-      // capped adaptive-blur gathering at the edge of the lens view's PADDING; there's no such
-      // boundary here, so the value is chosen deliberately larger than any real gather radius, so
-      // the `reach - length(p)` condition never triggers before `u_contentMin/Max` does.
-      setUniform(gl, lensLoc('u_reach'), Math.max(width, height));
-      setUniform(gl, lensLoc('u_contentMin'), [1, 1]);
-      setUniform(gl, lensLoc('u_contentMax'), [width - 1, height - 1]);
-      if (stats) {
-        setUniform(gl, lensLoc('u_probeLuma'), stats.luma);
-        setUniform(gl, lensLoc('u_probeBusy'), stats.busy);
-        setUniform(gl, lensLoc('u_probeRange'), [stats.lo, stats.hi]);
-        setUniform(gl, lensLoc('u_probeSlope'), [stats.slopeX, stats.slopeY]);
-        setUniform(gl, lensLoc('u_probe'), [stats.r, stats.g, stats.b]);
-      } else {
-        // The probe hasn't reported yet (the first frame or two) — the -1 sentinel keeps the
-        // shader on its own point samples (see the comment in `lens-shader.ts`).
-        setUniform(gl, lensLoc('u_probeLuma'), -1);
+        // 5. Surface — shares its center with the lens (see the comment at the top of this file).
+        // `toSurfaceUniforms`'s contract is dp, shared with Android; the core converts it to pixels.
+        gl.useProgram(surfaceProgram);
+        const rawSurface = toSurfaceUniforms(piece.optics, piece.geometry, {
+          debug: options.debug,
+          morph: piece.morph,
+          morph2: piece.morph2,
+          bodyInLens: true,
+          touch: piece.touch,
+          progress: piece.progress,
+          // The shadow is denser over text, weaker over a flat backdrop (M 11:47). The rule lives
+          // in the core: while it lived here, Android didn't have it at all.
+          shadow: stats ? shadowOpacity(stats.busy) : 1,
+          // The probe has already computed the ambient color — the shadow gets it for free. Taken
+          // as-is: `settleStats` has already smoothed it, and rounding would bring back exactly the
+          // steps the smoothing was written to remove.
+          ambient: stats ? ([stats.r, stats.g, stats.b] as const) : undefined,
+          appear: piece.appear,
+          lift: piece.lift,
+        });
+        // The dp → device pixel conversion lives in the core (`toDeviceSurfaceUniforms`): one list
+        // of lengths for every field, so a new field can't be forgotten here by oversight.
+        applyObject(gl, surfaceLoc, {
+          ...toDeviceSurfaceUniforms(rawSurface, options.density),
+          u_center: [piece.centerX, piece.centerY],
+        });
+        // What's worklet dynamics on Android (press, active, tilt) arrives here as fields on the element.
+        setUniform(gl, surfaceLoc(DYNAMIC_UNIFORMS[0]), piece.press ?? 0);
+        setUniform(gl, surfaceLoc(DYNAMIC_UNIFORMS[1]), piece.active ?? 0);
+        const hasIcon = Boolean(piece.icon && options.iconMask);
+        setUniform(gl, surfaceLoc(ICON_UNIFORMS[0]), hasIcon ? 1 : 0);
+        // Scale 1: the coordinate is already in screen space, the sampler itself normalizes by size.
+        setUniform(gl, surfaceLoc(ICON_UNIFORMS[1]), 1);
+        setUniform(gl, surfaceLoc(ICON_UNIFORMS[2]), piece.inkIdle ?? [1, 1, 1, 1]);
+        setUniform(gl, surfaceLoc(ICON_UNIFORMS[3]), piece.inkActive ?? [1, 1, 1, 1]);
+        bindTextureAt(gl, 1, iconTexture, surfaceProgram, 'u_icon');
+        setUniform(gl, surfaceLoc('u_iconSize'), hasIcon ? [width, height] : [1, 1]);
+        const hasColor = Boolean(piece.overlay && options.colorLayer);
+        setUniform(gl, surfaceLoc(OVERLAY_UNIFORMS[0]), hasColor ? 1 : 0);
+        bindTextureAt(gl, 2, colorTexture, surfaceProgram, 'u_overlay');
+        setUniform(gl, surfaceLoc('u_overlaySize'), hasColor ? [width, height] : [1, 1]);
+        setUniform(gl, surfaceLoc('u_resolution'), [width, height]);
+        drawFullscreenTriangle(gl);
       }
-      const lens = toLensProps(piece.optics, piece.geometry, options.density, {
-        debug: options.debug,
-        morph: piece.morph,
-        morph2: piece.morph2,
-        touch: piece.touch,
-        progress: piece.progress,
-        light: piece.light,
-        appear: piece.appear,
-        accent: piece.accent,
-      });
-      applyChannel(gl, lensLoc, lens.uniformNames, lens.uniformSizes, lens.uniformValues);
-      drawFullscreenTriangle(gl);
+      gl.disable(gl.SCISSOR_TEST);
 
-      // 5. Surface — shares its center with the lens (see the comment at the top of this file).
-      // `toSurfaceUniforms`'s contract is dp, shared with Android; the core converts it to pixels.
-      gl.useProgram(surfaceProgram);
-      const rawSurface = toSurfaceUniforms(piece.optics, piece.geometry, {
-        debug: options.debug,
-        morph: piece.morph,
-        morph2: piece.morph2,
-        bodyInLens: true,
-        touch: piece.touch,
-        progress: piece.progress,
-        // The shadow is denser over text, weaker over a flat backdrop (M 11:47). The rule lives
-        // in the core: while it lived here, Android didn't have it at all.
-        shadow: stats ? shadowOpacity(stats.busy) : 1,
-        // The probe has already computed the ambient color — the shadow gets it for free. Taken
-        // as-is: `settleStats` has already smoothed it, and rounding would bring back exactly the
-        // steps the smoothing was written to remove.
-        ambient: stats ? ([stats.r, stats.g, stats.b] as const) : undefined,
-        appear: piece.appear,
-        lift: piece.lift,
-      });
-      // The dp → device pixel conversion lives in the core (`toDeviceSurfaceUniforms`): one list
-      // of lengths for every field, so a new field can't be forgotten here by oversight.
-      applyObject(gl, surfaceLoc, {
-        ...toDeviceSurfaceUniforms(rawSurface, options.density),
-        u_center: [piece.centerX, piece.centerY],
-      });
-      // What's worklet dynamics on Android (press, active, tilt) arrives here as fields on the element.
-      setUniform(gl, surfaceLoc(DYNAMIC_UNIFORMS[0]), piece.press ?? 0);
-      setUniform(gl, surfaceLoc(DYNAMIC_UNIFORMS[1]), piece.active ?? 0);
-      const hasIcon = Boolean(piece.icon && options.iconMask);
-      setUniform(gl, surfaceLoc(ICON_UNIFORMS[0]), hasIcon ? 1 : 0);
-      // Scale 1: the coordinate is already in screen space, the sampler itself normalizes by size.
-      setUniform(gl, surfaceLoc(ICON_UNIFORMS[1]), 1);
-      setUniform(gl, surfaceLoc(ICON_UNIFORMS[2]), piece.inkIdle ?? [1, 1, 1, 1]);
-      setUniform(gl, surfaceLoc(ICON_UNIFORMS[3]), piece.inkActive ?? [1, 1, 1, 1]);
-      bindTextureAt(gl, 1, iconTexture, surfaceProgram, 'u_icon');
-      setUniform(gl, surfaceLoc('u_iconSize'), hasIcon ? [width, height] : [1, 1]);
-      const hasColor = Boolean(piece.overlay && options.colorLayer);
-      setUniform(gl, surfaceLoc(OVERLAY_UNIFORMS[0]), hasColor ? 1 : 0);
-      bindTextureAt(gl, 2, colorTexture, surfaceProgram, 'u_overlay');
-      setUniform(gl, surfaceLoc('u_overlaySize'), hasColor ? [width, height] : [1, 1]);
-      setUniform(gl, surfaceLoc('u_resolution'), [width, height]);
-      drawFullscreenTriangle(gl);
-    }
-    gl.disable(gl.SCISSOR_TEST);
-
-    endGpuTimer();
-
-    return { probes };
+      return { probes };
+    });
   }
 
   function destroy(): void {
@@ -617,8 +604,8 @@ export function createVireGlassRenderer(canvas: HTMLCanvasElement): VireGlassRen
     gl.deleteTexture(iconTexture);
     gl.deleteTexture(colorTexture);
     if (backdropFbo) gl.deleteFramebuffer(backdropFbo);
-    for (const slot of timerSlots) gl.deleteQuery(slot.query);
+    gpuTimer.destroy();
   }
 
-  return { resize, render, getLastGpuMs, destroy };
+  return { resize, render, getLastGpuMs: gpuTimer.getLastMs, destroy };
 }

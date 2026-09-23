@@ -66,9 +66,12 @@ export type TextureOptions = {
 };
 
 /**
- * content/probe texture: LINEAR on MIN and MAG, no mipmaps, CLAMP_TO_EDGE by default. Skia's
- * `.eval` is bilinear by default — NEAREST would break the disc gather into pixel-stepped bands
- * (spec §4).
+ * General-purpose texture allocator: LINEAR on MIN and MAG, no mipmaps, CLAMP_TO_EDGE by default.
+ * Used throughout `web/` for `contentTexture` and the probe's downsample buffer, and public so a
+ * `VireGlassBackdropPass` can build its own textures the same way. LINEAR rather than NEAREST
+ * because Skia's `.eval` is bilinear by default — NEAREST would break the disc gather into
+ * pixel-stepped bands (spec §4); a pass with different needs overrides `internalFormat`/`format`/
+ * `type`/`wrap` directly.
  */
 export function createTexture(gl: WebGL2RenderingContext, options: TextureOptions): WebGLTexture {
   const texture = gl.createTexture();
