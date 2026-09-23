@@ -79,7 +79,8 @@ export function stripComments(src: string): string {
       i = end < 0 ? src.length : end;
     } else if (src.startsWith('/*', i)) {
       const end = src.indexOf('*/', i + 2);
-      const stop = end < 0 ? src.length : end + 2;
+      if (end < 0) throw new Error('vireglass/targets/glsl: unterminated block comment');
+      const stop = end + 2;
       out += src.slice(i, stop).replace(/[^\n]/g, '');
       i = stop;
     } else {
