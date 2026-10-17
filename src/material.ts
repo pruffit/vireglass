@@ -63,8 +63,8 @@ export type VireGlassMaterial = {
   /** Lightness of what the app draws OVER the glass: 1 is light icons and text, 0 is dark. A
    *  cause, not a knob: the calling screen knows it. */
   ink: number;
-  /** Minimum PRESENCE of the element itself: how far its body must stand off in lightness from
-   *  the backdrop behind it. Not the same as `legibility` — that's about the ink OVER the glass,
+  /** Minimum PRESENCE of the element itself: a floor on its body density, tinted toward light and
+   *  fading as the backdrop nears the light pole. Not the same as `legibility` — that's about the ink OVER the glass,
    *  this is about the element itself. Over a uniform backdrop the glass has nothing to refract,
    *  and the element disappears; for a control that's unacceptable. 0 means no presence is
    *  required.

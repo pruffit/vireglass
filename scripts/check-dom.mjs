@@ -476,10 +476,10 @@ try {
     fail(`canary: with no body drawn the element still read ${signed(noBody.body)} over dark`);
   }
 
-  // 8e. And over a mid-light surround (L about 0.55, where the glyph is still white) the body is
-  //    still lighter than it, as in the reference; the canary is the dark body the old law drew there.
+  // 8e. Over a mid-light surround (L about 0.55, glyph still white) a presence-carrying body is
+  //    lighter than it, as in the reference; the canary is the old direction on the same material.
   if (!(denseBright.body >= BODY_BRIGHT_MIN)) {
-    fail(`the body over a mid-light surround reads ${signed(brightOrb.body)}, not lighter than it`);
+    fail(`the body over a mid-light surround reads ${signed(denseBright.body)}, not lighter than it`);
   }
   if (!(oldDirection.body < BODY_BRIGHT_MIN)) {
     fail(`canary: the old direction over mid-light read ${signed(oldDirection.body)} and passed the gate`);

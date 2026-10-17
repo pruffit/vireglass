@@ -254,9 +254,9 @@ described by a plane, so density rises as a whole, driven by the lightness range
 real glass does with roughness: it stops being a window.
 
 **Presence.** Over a uniform backdrop there is nothing to refract, and the glass honestly
-disappears. Correct for a piece of background, wrong for a control. `presence` sets a minimum
-lightness separation from the backdrop, always toward light and only as far as the range allows:
-the reference body is lighter than its surroundings from dark video to sky, whatever the glyph on
+disappears. Correct for a piece of background, wrong for a control. `presence` is a floor on the
+body's density, tinted toward light and fading as the backdrop nears the light pole, so there is no
+veil or seam near white: the reference body is lighter than its surroundings from dark video to sky, whatever the glyph on
 it. What sends it to the ink's own pole is the ink's legibility over texture, a system setting
 (reduced transparency, increased contrast), or a density past `BODY.inkPoleTo`.
 

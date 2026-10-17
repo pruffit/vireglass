@@ -122,6 +122,10 @@ describe('the lens draws the same rim', () => {
     expect(LENS_SHADER).toContain(`lineW * ${RIM.lineInset}`);
     expect(LENS_SHADER).not.toContain('u_presence * 2.0');
   });
+
+  it('keeps the same presence floor on the body as the DOM path', () => {
+    expect(LENS_SHADER).toContain(`min(u_presence / VG_TINT_LIGHT, ${BODY.presenceDemand})`);
+  });
 });
 
 describe('body as one layer over the backdrop (docs/reference.md §3)', () => {
@@ -233,11 +237,7 @@ describe('how wide the key-light arc is (docs/reference.md §2)', () => {
   });
 });
 
-// Reported from an integration: over a flat dark backdrop the body came out matching the backdrop
-// exactly, so a panel over a dark reading page had no separation at all.
-// The floor used to ask for min(presence, room) and divide by the room: toward the light pole the
-// quotient went to its ceiling, and at 0.94 the room was gone and the floor switched off. A body
-// that read 0.54 opaque at #efefef read 0.10 at #f0f0f0.
+// A floor divided by the room left under the light pole jumps where that room runs out (0.94).
 describe('the body is continuous across the lightness scale', () => {
   const lumas = Array.from({ length: 101 }, (_, i) => 0.8 + i * 0.002);
   const materials = [VIREGLASS_MATERIAL, VIREGLASS_CONTROL_MATERIAL, ...Object.values(MATERIAL_PRESETS)];
@@ -266,6 +266,8 @@ describe('the body is continuous across the lightness scale', () => {
   });
 });
 
+// Reported from an integration: over a flat dark backdrop the body came out matching the backdrop
+// exactly, so a panel over a dark reading page had no separation at all.
 describe('presence over a flat backdrop (docs/reference.md §3)', () => {
   const optics = { ...resolveOptics(MATERIAL_PRESETS.glass), presence: 0.08 };
   const flat = (luma: number) => ({ luma, busy: 0 });
