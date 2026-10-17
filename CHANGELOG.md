@@ -1,5 +1,73 @@
 # Changelog
 
+## 3.0.0
+
+What a resting control looked like against the reference, measured and corrected in the live DOM
+target; the lens shader carries the rim change and the same law.
+
+### The rim follows its surroundings and goes all the way round
+
+The key-light lobe was drawn full white on every backdrop and only on the lit side: over dark video
+the brightest rim bin read 0.95 in OKLab lightness against 0.42 to 0.53 in the reference, and 0.70
+to 0.80 over the surround against 0.24 to 0.27. The rim is now a thin light line round the whole
+contour, brighter toward the key light, over the dark edge, and its strength follows the lightness
+around the element (`RIM.strengthDark` to `RIM.strengthLight`), scaled by the medium's reflectance
+up to that of ordinary glass (`RIM.reflectanceRef`). Rim strength is therefore derived, not a new
+cause: a denser medium draws the line no brighter than glass at index 1.5 does, a thinner one
+fainter. The same law is in `lens-shader.ts`, so WebGL2 and AGSL draw it too; there the light line
+starts a third of the way into the band so the dark edge stays visible over bright canvases.
+`rimGradientCss` now returns two gradients (the light line, then the dark edge) as one background
+list; `rimStrength`, `rimLineAlpha` and `ambientLuma` are exported from `vireglass/dom`.
+
+### The body is drawn on the SVG path, and it is lighter than its surroundings
+
+`bodyCss` was applied as `background-color` only where SVG backdrop filters are missing; elsewhere
+only `--vireglass-body-color` was published, and over dark that colour was darker than the surround.
+The body is now one translucent layer composed from the lens's chain (tint, matte lift, the medium's
+pull, ambient spill, concentration), painted on both paths (`bodyLayer`).
+
+The law's direction changed with it, in the shader as much as here. The reference body is lighter
+than its surroundings from dark video to sky, under a white glyph as much as a dark one, and the
+old law darkened it wherever light ink met a backdrop above about 0.5, and under light ink over dark
+as well. Now the tint is toward light on every backdrop: `presence` lifts toward light only, as far
+as the range allows, and the ink's legibility requirement binds over texture only (`BODY.inkBusyFrom`,
+`BODY.inkBusyTo`), going to the ink's own pole where it is what holds the density (or a system
+setting has raised it: `BODY.inkPoleTo`). `BODY.darkSideFrom` and `BODY.darkSideTo` are gone.
+`VIREGLASS_CONTROL_MATERIAL.presence` is 0, from 0.176: with the body lifting toward light, that floor
+read 0.22 to 0.28 of OKLab lightness over dark video against the reference's 0.05 to 0.13.
+
+The lens's key-light glint inside the reflection is scaled by the same ambient strength as the rim,
+and the shader's presence floor now uses `BODY.presenceDemand` as the DOM path does.
+
+### A host can feed the probe and change it later
+
+`attachGlass(el, { sample })` already existed; `handle.setSample(sample | null)` updates it without
+re-attaching and repaints, and `null` returns to probing. `statsFromSamples` accepts colours
+without an alpha. `GlassHandle` gains `setSample`, so code that implements the type (a test double)
+has to add it.
+
+### Breaking changes
+
+- `attachGlass` now paints the body inline as `background-color`. A host that paints
+  `var(--vireglass-body-color)` itself passes `body: false`; the property is emitted either way.
+- `GlassHandle` gained `setSample`. Code that implements the type (test doubles, wrappers) must add
+  it.
+- `rimGradientCss` returns two gradients, the light line and the dark edge, as one background list,
+  and the light line is part of it all the way round. A host that sets it as the value of
+  `--vireglass-rim` needs nothing; one that parses the string does.
+- `resolveBody` and `withPresence` return `need` and `pole` as well as `density` and `tintLuma`,
+  and the tint they return is toward light unless the ink asked for its pole; a host that builds its
+  body from them directly gets the new direction.
+- `VIREGLASS_CONTROL_MATERIAL.presence` is 0.
+
+### Gates
+
+`check:dom` measures a control-sized circle against the reference's numbers: rim faint over dark and
+plain over bright, the line unbroken round the contour, the body lighter than the surround over dark
+and over a mid-light backdrop where the glyph is still white, and `setSample`. Each has a canary that
+must fail: a full-white lobe, a rim drawn for dark over bright, a lobe with no contour, no body
+drawn, a dark body over mid-light.
+
 ## 2.3.1
 
 ### toGLSL no longer rewrites comments

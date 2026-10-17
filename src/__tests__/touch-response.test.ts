@@ -113,7 +113,7 @@ describe('control material', () => {
     expect(c.thickness).toBeGreaterThan(b.thickness);
     expect(c.ior).toBeGreaterThan(b.ior);
     expect(c.roughness).toBeLessThan(b.roughness);
-    expect(c.presence).toBeGreaterThan(b.presence);
+    expect(c.presence).toBeLessThanOrEqual(b.presence);
   });
 
   it('environment and film stay at baseline: their role does not depend on being a control', () => {

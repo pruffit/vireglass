@@ -40,7 +40,7 @@ function luma(r: number, g: number, b: number): number {
  * formula here would mean the ink-polarity decision quietly drifts between renderers on the same
  * page. `samples` are 0..255 per channel, matching what `parseColor` returns.
  */
-export function statsFromSamples(samples: readonly RgbColor[]): BackdropSample {
+export function statsFromSamples(samples: readonly (Omit<RgbColor, 'a'> & { a?: number })[]): BackdropSample {
   const n = samples.length;
   if (n === 0) return { luma: 0.5, busy: 0, lo: 0.5, hi: 0.5, r: 0.5, g: 0.5, b: 0.5 };
 

@@ -69,8 +69,10 @@ export type VireGlassMaterial = {
    *  and the element disappears; for a control that's unacceptable. 0 means no presence is
    *  required.
    *
-   *  The sign is taken FROM THE BACKDROP, not from ink polarity: over dark the body lightens,
-   *  over light it darkens. So the requirement works the same way on any backdrop. */
+   *  The direction is always toward light, whatever the ink: the reference body is lighter than
+   *  its surroundings from dark video to sky, under a white glyph as much as a dark one, and only
+   *  as far as the range allows. It never darkens the element on its own account; the ink's
+   *  legibility over texture can, and says so through `legibility`. */
   presence: number;
   /** Surface film thickness, nm. This is where interference comes from: the optical path
    *  difference in the film becomes comparable to the wavelength, and the reflection picks up
@@ -229,8 +231,10 @@ export const VIREGLASS_LYRICS_MATERIAL: VireGlassMaterial = {
  * a native lens that sets body density: there the element is denser by 2.4 percentage points. On
  * the web the surface has no body at all; the effect only shows on Android below 13.
  *
- * `presence` is raised for the same reason: a piece of background is allowed to disappear over a
- * uniform canvas, a control isn't — it has to be visible before it's been tapped.
+ * `presence` is left at none. It was 0.176, a floor on how far the body stands off a uniform
+ * backdrop, and with the body lifting toward light on every backdrop that floor read 0.22 to 0.28
+ * of OKLab lightness over dark video against the reference's 0.05 to 0.13. The medium's own lift
+ * already separates the body by that much, and the rim carries the silhouette.
  *
  * IMPORTANT about size. The bevel is specified by the medium in dp and doesn't depend on the
  * element's size, but the geometry clamps it to half the smaller half-size (`MAX_BEVEL_FRACTION`).
@@ -244,7 +248,7 @@ export const VIREGLASS_CONTROL_MATERIAL: VireGlassMaterial = {
   thickness: 44,
   bevel: 8,
   roughness: 0.035,
-  presence: 0.176,
+  presence: 0,
 };
 
 export const VIREGLASS_MATERIAL = VIREGLASS_MATERIAL_V5;

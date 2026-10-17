@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { roundedRectGeometry } from '../geometry';
-import { MATERIAL_PRESETS, resolveOptics } from '../material';
-import { lightConicAngle, rimGradientCss, rimLobe } from '../dom/rim';
+import { MATERIAL_PRESETS, VIREGLASS_CONTROL_MATERIAL, resolveOptics } from '../material';
+import { lightConicAngle, rimGradientCss, rimLobe, rimStrength } from '../dom/rim';
 import { boxShadowCss, shadowAlphaFrom } from '../dom/shadow';
-import { resolveBody, withPresence } from '../dom/body';
+import { bodyLayer, resolveBody, withPresence } from '../dom/body';
 import { BODY, RIM } from '../law';
+import { LENS_SHADER } from '../lens-shader';
 
 describe('adaptive shadow (docs/reference.md §4)', () => {
   it('lands on the two densities measured off the reference frames', () => {
@@ -30,6 +31,11 @@ describe('adaptive shadow (docs/reference.md §4)', () => {
     expect(small.startsWith('0 0 ')).toBe(true);
   });
 });
+
+/** The gradients of a rim value, the light line first and the dark edge second. */
+function layers(css: string): string[] {
+  return css.split(/, (?=conic-gradient)/);
+}
 
 /** Every alpha in a conic-gradient string, in order. */
 function alphas(css: string): number[] {
@@ -63,15 +69,38 @@ describe('rim light (docs/reference.md §2)', () => {
     expect(overWarm.startsWith('conic-gradient(')).toBe(true);
   });
 
-  it('outlines the rest of the silhouette with a dark line rather than leaving it bare', () => {
+  it('outlines the whole silhouette with a dark line, as a layer of its own', () => {
     const optics = resolveOptics(MATERIAL_PRESETS.glass);
-    const css = rimGradientCss(optics, [0.5, 0.5, 0.5], [0, -1]);
-    // The side of the ring, away from both arcs, is the dark edge iOS 27 made its own layer.
+    const [, dark] = layers(rimGradientCss(optics, [0.5, 0.5, 0.5], [0, -1]));
     // Matched on the value, not its spelling: the alpha is formatted, and a test that pins the
     // formatting fails on a change that moved nothing.
-    const darkest = Math.min(...alphas(css));
-    expect(darkest).toBeCloseTo(RIM.darkEdge, 3);
-    expect(css).toContain('rgba(0,0,0,');
+    expect(Math.max(...alphas(dark!))).toBeCloseTo(RIM.darkEdge, 3);
+    expect(dark).toContain('rgba(0,0,0,');
+  });
+
+  it('runs a light line the whole way round, brighter toward the key light', () => {
+    const optics = resolveOptics(VIREGLASS_CONTROL_MATERIAL);
+    const [line] = layers(rimGradientCss(optics, [0.15, 0.13, 0.1], [0, -1]));
+    const a = alphas(line!);
+    const half = (a.length - 1) / 2;
+    const near = a[0]!;
+    const far = a[half]!;
+    const side = a[half / 2]!;
+    expect(Math.min(...a)).toBeGreaterThan(0.05);
+    expect(side).toBeGreaterThan(0);
+    expect(near).toBeGreaterThan(far);
+    expect(far).toBeGreaterThan(side);
+  });
+
+  it('follows the surroundings: faint over dark, plain over bright', () => {
+    const optics = resolveOptics(VIREGLASS_CONTROL_MATERIAL);
+    const peak = (ambient: [number, number, number]) => Math.max(...alphas(layers(rimGradientCss(optics, ambient, [0, -1]))[0]!));
+    const dark = peak([0.08, 0.08, 0.08]);
+    const bright = peak([0.7, 0.7, 0.7]);
+    expect(dark).toBeCloseTo(RIM.strengthDark, 1);
+    expect(bright).toBeGreaterThan(dark * 2);
+    expect(rimStrength(0)).toBeCloseTo(RIM.strengthDark, 6);
+    expect(rimStrength(1)).toBeCloseTo(RIM.strengthLight, 6);
   });
 
   // §1: an element that is not fully there yet is not yet outlined either. The dark edge is the
@@ -79,24 +108,59 @@ describe('rim light (docs/reference.md §2)', () => {
   // nothing — which is what the browser gate caught.
   it('fades with the element rather than outlining an absent one', () => {
     const optics = resolveOptics(MATERIAL_PRESETS.glass);
-    const present = alphas(rimGradientCss(optics, [0.5, 0.5, 0.5], [0, -1], 1));
-    const half = alphas(rimGradientCss(optics, [0.5, 0.5, 0.5], [0, -1], 0.5));
-    const absent = alphas(rimGradientCss(optics, [0.5, 0.5, 0.5], [0, -1], 0));
-    expect(Math.max(...half)).toBeCloseTo(Math.max(...present) * 0.5, 3);
-    expect(Math.max(...absent)).toBe(0);
+    const at = (appear: number) => alphas(rimGradientCss(optics, [0.5, 0.5, 0.5], [0, -1], appear));
+    expect(Math.max(...at(0.5))).toBeCloseTo(Math.max(...at(1)) * 0.5, 2);
+    expect(Math.max(...at(0))).toBe(0);
+  });
+});
+
+describe('the lens draws the same rim', () => {
+  it('reads its strength from the law and keeps no presence floor on the line', () => {
+    expect(LENS_SHADER).toContain(String(RIM.strengthDark));
+    expect(LENS_SHADER).toContain(String(RIM.strengthLight));
+    expect(LENS_SHADER).toContain(String(RIM.contour));
+    expect(LENS_SHADER).not.toContain('u_presence * 2.0');
+  });
+});
+
+describe('body as one layer over the backdrop (docs/reference.md §3)', () => {
+  const dark = { luma: 0.12, lo: 0.12, hi: 0.12, busy: 0, r: 0.12, g: 0.11, b: 0.1 };
+  const over = (layer: ReturnType<typeof bodyLayer>, backdrop: number) => (1 - layer.alpha) * backdrop + layer.alpha * layer.g;
+
+  it('reads lighter than the surround over dark and over sky, under a light glyph', () => {
+    const optics = resolveOptics(VIREGLASS_CONTROL_MATERIAL);
+    const sky = { luma: 0.55, lo: 0.55, hi: 0.55, busy: 0, r: 0.37, g: 0.58, b: 0.75 };
+    for (const backdrop of [dark, sky]) {
+      const layer = bodyLayer(optics, backdrop, 1, [backdrop.r, backdrop.g, backdrop.b]);
+      expect(over(layer, backdrop.g)).toBeGreaterThan(backdrop.g + 0.02);
+    }
+  });
+
+  it('is absent when the element is', () => {
+    const optics = resolveOptics(VIREGLASS_CONTROL_MATERIAL);
+    expect(bodyLayer(optics, dark, 1, [dark.r, dark.g, dark.b], 0).alpha).toBe(0);
   });
 });
 
 describe('body (docs/reference.md §3)', () => {
   const flatDark = { luma: 0.1, lo: 0.08, hi: 0.12, busy: 0.01 };
-  const flatLight = { luma: 0.92, lo: 0.9, hi: 0.94, busy: 0.01 };
+  const flatMid = { luma: 0.55, lo: 0.55, hi: 0.55, busy: 0 };
   const busyMid = { luma: 0.5, lo: 0.1, hi: 0.9, busy: 0.5 };
 
-  it('tints toward light over a dark backdrop and toward dark over a light one', () => {
-    const optics = resolveOptics({ ...MATERIAL_PRESETS.glass, legibility: 0 });
-    // With no ink on it the direction comes from the backdrop, not from polarity.
-    expect(resolveBody(optics, flatDark, 1).tintLuma).toBeGreaterThan(0.5);
-    expect(resolveBody(optics, flatLight, 1).tintLuma).toBeLessThan(0.5);
+  it('tints toward light over any flat backdrop, under a light glyph as much as a dark one', () => {
+    const optics = resolveOptics(VIREGLASS_CONTROL_MATERIAL);
+    for (const ink of [0, 1]) {
+      expect(resolveBody(optics, flatDark, ink).tintLuma).toBeGreaterThan(0.5);
+      expect(resolveBody(optics, flatMid, ink).tintLuma).toBeGreaterThan(0.5);
+    }
+  });
+
+  it('goes to the ink pole only where the ink asks for it over texture', () => {
+    const optics = resolveOptics({ ...VIREGLASS_CONTROL_MATERIAL, legibility: 0.95 });
+    const light = { luma: 0.8, lo: 0.4, hi: 1, busy: 0.4 };
+    const body = resolveBody(optics, light, 1);
+    expect(body.need).toBeGreaterThan(0.2);
+    expect(body.tintLuma).toBeLessThan(0.3);
   });
 
   it('asks for more medium over a busy backdrop than over a flat one', () => {
@@ -107,7 +171,8 @@ describe('body (docs/reference.md §3)', () => {
   it('promises transparent glass to an element carrying no ink', () => {
     const inked = resolveOptics({ ...MATERIAL_PRESETS.glass, legibility: 0.95 });
     const bare = resolveOptics({ ...MATERIAL_PRESETS.glass, legibility: 0 });
-    expect(resolveBody(bare, flatLight, 1).density).toBeLessThan(resolveBody(inked, flatLight, 1).density);
+    const textured = { luma: 0.8, lo: 0.4, hi: 1, busy: 0.4 };
+    expect(resolveBody(bare, textured, 1).density).toBeLessThan(resolveBody(inked, textured, 1).density);
   });
 
   it('lifts a vanishing element off a uniform backdrop, and leaves a dense one alone', () => {
@@ -116,15 +181,18 @@ describe('body (docs/reference.md §3)', () => {
     const present = withPresence(plain, optics, flatDark);
     expect(present.density).toBeGreaterThan(plain.density);
 
-    const dense = { density: 0.9, tintLuma: 0.94 };
+    const dense = { density: 0.9, tintLuma: 0.94, need: 0, pole: 0.94 };
     expect(withPresence(dense, optics, flatDark).density).toBeCloseTo(0.9, 6);
   });
 
-  it('takes the sign of the lift from the backdrop, not from the ink', () => {
-    const optics = resolveOptics({ ...MATERIAL_PRESETS.glass, legibility: 0, presence: 0.2 });
-    // Same ink polarity both times; only the backdrop changes.
-    expect(withPresence(resolveBody(optics, flatDark, 1), optics, flatDark).tintLuma).toBeGreaterThan(0.5);
-    expect(withPresence(resolveBody(optics, flatLight, 1), optics, flatLight).tintLuma).toBeLessThan(0.5);
+  it('lifts toward light on every backdrop, whatever the ink', () => {
+    const optics = resolveOptics({ ...MATERIAL_PRESETS.glass, presence: 0.2 });
+    for (const ink of [0, 1]) {
+      for (const backdrop of [flatDark, flatMid]) {
+        const body = withPresence(resolveBody(optics, backdrop, ink), optics, backdrop);
+        expect(body.tintLuma).toBeGreaterThan(backdrop.luma);
+      }
+    }
   });
 });
 

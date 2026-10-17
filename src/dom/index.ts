@@ -20,7 +20,7 @@ import { resolveOptics, VIREGLASS_MATERIAL, type VireGlassMaterial, type VireGla
 import { probeBackdrop } from './probe';
 import { supportsSvgBackdropFilter } from './support';
 import { boxShadowCss } from './shadow';
-import { resolveBody, withPresence } from './body';
+import { bodyLayer, resolveBody, withPresence } from './body';
 import { systemAccessibility, watchAccessibility } from './preferences';
 import { applyAccessibility, contrastRimLuma, elasticAllowed, type VireGlassAccessibility } from '../accessibility';
 import { applyGlassScale, GLASS_SCALE_DEFAULT } from '../glass-scale';
@@ -289,7 +289,7 @@ function rgbCss(r: number, g: number, b: number): string {
 
 /**
  * The body, from the model's own law (`./body`, ported from the lens shader §3): density is what
- * legibility and presence demand over THIS backdrop, `tintLuma` is the lightness it tints toward,
+ * legibility and presence demand over THIS backdrop, the tint is the lightness it tints toward,
  * and the hue is the surroundings' — glass has no colour of its own, only the colour of what lies
  * beneath it. A flat fill in place of a tint is what breaks the material.
  */
@@ -297,22 +297,22 @@ function bodyCss(
   optics: VireGlassOptics,
   sample: BackdropSample,
   ink: number,
-  accent?: VireGlassAccent,
+  accent: VireGlassAccent | undefined,
+  appear: number,
 ): string {
-  const body = withPresence(resolveBody(optics, sample, ink), optics, sample);
-
   // A tinted element takes its colour from the accent rather than from its surroundings, but it is
   // still the MEDIUM that is coloured: the amount stays short of one so the content keeps coming
   // through. A fill at full opacity is the thing §7 says breaks the material.
   if (accent) {
+    const settled = applyAppear(optics, appear);
+    const body = withPresence(resolveBody(settled, sample, ink), settled, sample);
     const [r, g, b] = accentTone(accent.color, sample.luma);
     const amount = Math.max(accentAmount(accent), body.density);
     return `rgba(${to255(r)}, ${to255(g)}, ${to255(b)}, ${amount.toFixed(3)})`;
   }
 
-  const [r, g, b] = ambientFrom(sample);
-  const hue = (c: number) => body.tintLuma + (c - body.tintLuma) * optics.colorPickup;
-  return `rgba(${to255(hue(r))}, ${to255(hue(g))}, ${to255(hue(b))}, ${body.density.toFixed(3)})`;
+  const layer = bodyLayer(optics, sample, ink, ambientFrom(sample), appear);
+  return `rgba(${to255(layer.r)}, ${to255(layer.g)}, ${to255(layer.b)}, ${layer.alpha.toFixed(3)})`;
 }
 
 export type AttachGlassOptions = {
@@ -354,9 +354,19 @@ export type AttachGlassOptions = {
   onGlow?: (glow: { pageX: number; pageY: number; strength: number } | null) => void;
   /** Pointer response (§5). On by default. */
   interactive?: boolean;
-  /** Overrides the probe entirely — images and video are invisible to it, and the host app
-   *  already knows its own cover-art accent. */
+  /**
+   * Overrides the probe entirely. The probe reads declared backgrounds, so images, video and
+   * canvases are invisible to it; a host that knows its backdrop (a cover's accent, a gradient)
+   * states it here, and changes it later with `setSample`. `statsFromSamples` builds one from
+   * a handful of colours.
+   */
   sample?: BackdropSample;
+  /**
+   * Whether `attachGlass` paints the body as the element's `background-color`. On by default;
+   * turn it off if the host owns that property — `--vireglass-body-color` is always emitted
+   * either way and carries the same colour.
+   */
+  body?: boolean;
 };
 
 /**
@@ -395,6 +405,11 @@ export type GlassHandle = {
   /** A glow that started on a neighbour, in page coordinates (§5). Null clears it. */
   setNeighbourGlow(glow: { pageX: number; pageY: number; strength: number } | null): void;
   setMorph(morph: GlassMorph | null): void;
+  /**
+   * Replaces the backdrop the glass adapts to, without re-attaching, and repaints. The same
+   * object as `sample` in the options; `null` goes back to probing declared backgrounds.
+   */
+  setSample(sample: BackdropSample | null): void;
   destroy(): void;
 };
 
@@ -418,6 +433,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   const onlyWhenTouched = opts.variant === 'interactive';
   let appear = onlyWhenTouched ? 0 : (opts.appear ?? 1);
   let accent = opts.accent;
+  let supplied = opts.sample;
   // Read once at attach, then followed: a setting turned on while the page is open has to reach
   // the material, not wait for a reload.
   let a11y = systemAccessibility();
@@ -445,13 +461,16 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
    * edge of the scale under increased contrast, because the user needs contrast more than they
    * need the aesthetic.
    */
-  function optics(patch?: Partial<VireGlassMaterial>): VireGlassOptics {
+  function settledOptics(patch?: Partial<VireGlassMaterial>): VireGlassOptics {
     const base = resolveOptics(patch ?? opts.material);
     const scaled = applyGlassScale(base, opts.scale ?? GLASS_SCALE_DEFAULT);
-    const settled = applyAccessibility(scaled, opts.accessibility ?? a11y);
+    return applyAccessibility(scaled, opts.accessibility ?? a11y);
+  }
+
+  function optics(patch?: Partial<VireGlassMaterial>): VireGlassOptics {
     // Appearance last, and by modulating the lens rather than by fading the element: §1 is
     // explicit that opacity is the wrong instrument for this.
-    return applyAppear(settled, appear);
+    return applyAppear(settledOptics(patch), appear);
   }
 
   function morphState() {
@@ -470,7 +489,10 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     if (destroyed) return;
     const geometry = opts.geometry ?? measureGeometry(el);
     const opticsNow = optics();
-    const sample = opts.sample ?? probeBackdrop(el);
+    const sample = supplied ?? probeBackdrop(el);
+    const light = shouldInkBeLight(sample, wasLight);
+    wasLight = light;
+    const body = opts.body === false ? null : bodyCss(settledOptics(), sample, light ? 1 : 0, accent, appear);
 
     if (svgSupported) {
       // The map depends only on geometry, optics and density — never on the backdrop. Rebuilding
@@ -495,11 +517,9 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     } else {
       el.style.setProperty('backdrop-filter', fallbackFilterCss(opticsNow));
       el.style.setProperty('-webkit-backdrop-filter', fallbackFilterCss(opticsNow));
-      el.style.backgroundColor = bodyCss(opticsNow, sample, wasLight ? 1 : 0, accent);
     }
+    if (body) el.style.backgroundColor = body;
 
-    const light = shouldInkBeLight(sample, wasLight);
-    wasLight = light;
     const [tr, tg, tb] = ambientFrom(sample);
     el.style.setProperty('--vireglass-ink', light ? '1' : '0');
     el.style.setProperty('--vireglass-tint', `${tr} ${tg} ${tb}`);
@@ -511,7 +531,10 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     const inkLevel = Math.round((light ? INK_LIGHT : INK_DARK) * 255);
     el.style.setProperty('--vireglass-ink-color', `rgb(${inkLevel} ${inkLevel} ${inkLevel})`);
     el.style.setProperty('--vireglass-tint-color', rgbCss(tr, tg, tb));
-    el.style.setProperty('--vireglass-body-color', bodyCss(opticsNow, sample, light ? 1 : 0, accent));
+    el.style.setProperty(
+      '--vireglass-body-color',
+      body ?? bodyCss(settledOptics(), sample, light ? 1 : 0, accent, appear),
+    );
 
     // Rim and shadow follow the SAMPLE, not just the geometry, so they sit outside the map's
     // cache key: the environment they take their colour and density from moves under a scroll
@@ -616,7 +639,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       el.style.setProperty('--vireglass-glow-opacity', '0');
       return;
     }
-    const [gr, gg, gb] = ambientFrom(opts.sample ?? probeBackdrop(el));
+    const [gr, gg, gb] = ambientFrom(supplied ?? probeBackdrop(el));
     const cx = ((x + geometry.width / 2) / geometry.width) * 100;
     const cy = ((y + geometry.height / 2) / geometry.height) * 100;
     const reach = halfMinDp(geometry) * TOUCH_RADIUS_FRACTION;
@@ -725,7 +748,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     mapKey = '';
     el.style.removeProperty('backdrop-filter');
     el.style.removeProperty('-webkit-backdrop-filter');
-    el.style.removeProperty('background-color');
+    if (opts.body !== false) el.style.removeProperty('background-color');
     el.style.removeProperty('--vireglass-ink');
     el.style.removeProperty('--vireglass-tint');
     el.style.removeProperty('--vireglass-body-density');
@@ -772,6 +795,10 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     setMorph(next) {
       morph = next && next.smoothing > 0 ? next : null;
       mapKey = '';
+      apply();
+    },
+    setSample(next) {
+      supplied = next ?? undefined;
       apply();
     },
     destroy,

@@ -39,6 +39,37 @@ export const RIM = {
   darkEdge: 0.22,
   /** Width of the hairline, CSS px. "About a point, not a band and not a bevel" (§2). */
   widthPx: 1,
+  /**
+   * How strongly the line is drawn, by the lightness around the element. The rim is a reflection
+   * of the surroundings, so it is faint over a dark one and plain over a bright one, not white at
+   * full strength everywhere (§2, §6).
+   *
+   * MEASURED off the controls of A 2:17 (over dark video), M 2:52 (over sky) and A 2:18 (over
+   * grass), as the brightest rim bin's OKLab lightness over the surround's: 0.24 to 0.27 over dark,
+   * 0.25 over sky, 0.37 over grass. Through the DOM path onto the same backdrops these land within
+   * 0.05 of the dark and sky controls (docs/dom.md); the line used to be white at full strength,
+   * 0.70 to 0.80 over the dark frames.
+   */
+  strengthDark: 0.37,
+  strengthLight: 0.95,
+  /** The surround lightness between which the strength moves from one to the other. */
+  ambientFrom: 0.15,
+  ambientTo: 0.45,
+  /**
+   * The share of the peak that the line keeps along the whole contour, away from the key light.
+   * MEASURED: the reference line goes all the way round. Its dimmest bin sits 0.06 to 0.12 of
+   * lightness over the surround on the dark frames, against a peak of 0.24 to 0.27 (A 2:17).
+   */
+  contour: 0.3,
+  /** How far the line's colour is lifted from the surroundings' toward white. UNMEASURED: the
+   *  lens always had 0.75 here, and this is that figure with a name. */
+  whiteShare: 0.75,
+  /**
+   * The reflectance (`fresnelStrength`) at which the line is drawn at the strengths above: that
+   * of ordinary glass, index 1.5. A denser medium does not draw it brighter than they say; a
+   * thinner one draws it fainter. UNMEASURED.
+   */
+  reflectanceRef: 0.7,
 } as const;
 
 /** How the medium stands between the backdrop and the eye (§3). */
@@ -54,10 +85,14 @@ export const BODY = {
   busyEdge: 0.75,
   /** Fine texture the body has to stop being a window for. */
   groundSpan: 0.06,
-  /** Where the tint flips direction, by the element's AVERAGE lightness — a local threshold cuts
-   *  a diagonal step across the body on a gradient. */
-  darkSideFrom: 0.42,
-  darkSideTo: 0.58,
+  /**
+   * The spread under the element at which the ink's legibility requirement starts to bind, and the
+   * spread where it binds fully. Over a flat backdrop polarity flips before the ink drowns, so
+   * the body does not darken under a light glyph there; over texture it does. UNMEASURED: the
+   * reference shows a lighter body under a white glyph over sky, nothing about texture.
+   */
+  inkBusyFrom: 0.02,
+  inkBusyTo: 0.12,
   /** Ceiling on any single demand, so one requirement cannot make the glass opaque on its own. */
   maxDemand: 0.92,
   /**
@@ -67,6 +102,12 @@ export const BODY = {
    * separate as far as transparency allows and no further. UNMEASURED.
    */
   presenceDemand: 0.5,
+  /**
+   * The density at which the body is wholly the ink's own pole. Between `presenceDemand` and this
+   * the body moves from the light a thin body carries to the pole: a density no presence floor
+   * reaches is one the ink's legibility, or a system setting, has asked for. UNMEASURED.
+   */
+  inkPoleTo: 0.8,
 } as const;
 
 /** Shadow (§4). The density law lives in `geometry.ts`; these are its measured ends. */
