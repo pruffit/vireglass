@@ -30,6 +30,7 @@ import type { VireGlassAccent } from '../adapters';
 import { concentricRadius } from '../concentric';
 import { RIM_WIDTH_PX, contrastRimCss, rimGradientCss } from './rim';
 import { GLASS_ATTR, warnIfNested } from './nesting';
+import { holdProperty } from './style-hold';
 import { REST_LIGHT } from '../adapters';
 import { refractionStrength } from '../optics';
 import { DISPERSION, TOUCH } from '../law';
@@ -452,6 +453,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   el.setAttribute(GLASS_ATTR, '');
   // `inset: 0` on the rim needs a positioned ancestor. Only taken over when the host left it at
   // the initial value, and put back on destroy.
+  const restoreBackground = holdProperty(el.style, 'background-color');
   const positionWasStatic = getComputedStyle(el).position === 'static';
   if (positionWasStatic) el.style.setProperty('position', 'relative');
 
@@ -748,7 +750,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     mapKey = '';
     el.style.removeProperty('backdrop-filter');
     el.style.removeProperty('-webkit-backdrop-filter');
-    if (opts.body !== false) el.style.removeProperty('background-color');
+    if (opts.body !== false) restoreBackground();
     el.style.removeProperty('--vireglass-ink');
     el.style.removeProperty('--vireglass-tint');
     el.style.removeProperty('--vireglass-body-density');

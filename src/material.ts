@@ -71,8 +71,9 @@ export type VireGlassMaterial = {
    *
    *  The direction is always toward light, whatever the ink: the reference body is lighter than
    *  its surroundings from dark video to sky, under a white glyph as much as a dark one, and only
-   *  as far as the range allows. It never darkens the element on its own account; the ink's
-   *  legibility over texture can, and says so through `legibility`. */
+   *  as far as the range allows. It never darkens the element on its own account. What can send
+   *  the body to the ink's pole is the ink's legibility over texture, a system setting (reduced
+   *  transparency, increased contrast) or a density past `BODY.inkPoleTo`. */
   presence: number;
   /** Surface film thickness, nm. This is where interference comes from: the optical path
    *  difference in the film becomes comparable to the wavelength, and the reflection picks up
@@ -231,10 +232,8 @@ export const VIREGLASS_LYRICS_MATERIAL: VireGlassMaterial = {
  * a native lens that sets body density: there the element is denser by 2.4 percentage points. On
  * the web the surface has no body at all; the effect only shows on Android below 13.
  *
- * `presence` is left at none. It was 0.176, a floor on how far the body stands off a uniform
- * backdrop, and with the body lifting toward light on every backdrop that floor read 0.22 to 0.28
- * of OKLab lightness over dark video against the reference's 0.05 to 0.13. The medium's own lift
- * already separates the body by that much, and the rim carries the silhouette.
+ * `presence` is left at none: the medium's own lift already separates the body from a uniform
+ * backdrop as far as the reference does (docs/dom.md), and the rim carries the silhouette.
  *
  * IMPORTANT about size. The bevel is specified by the medium in dp and doesn't depend on the
  * element's size, but the geometry clamps it to half the smaller half-size (`MAX_BEVEL_FRACTION`).

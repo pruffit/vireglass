@@ -485,26 +485,13 @@ half4 main(float2 xy) {
   float density = max(max(u_bodyDensity, ground), needForInk);
 
   // PRESENCE (§3). Over a uniform backdrop there is nothing to refract, and an element that is
-  // only a rim honestly disappears — right for a piece of background, wrong for a control.
-  //
-  // This used to live on the rim line alone, as lit = max(rimKey, u_presence x 2), while the
-  // DOM path has always implemented it as a floor on the BODY. Two renderers, one field, two
-  // meanings. Measured on Apple's own control over a flat page (frames/verify/m-707), the body
-  // carries 16 levels of separation there and the rim 11.6 — so the body is where it belongs,
-  // and the rim's reading was the wrong one.
-  // The separation is toward light, and asked for only as far as the range allows: over a
-  // backdrop at 0.96 there is no room to go 0.05 lighter. What it is DIVIDED by is the distance to
-  // the tint's own end, not to the tint the body currently sits at — dividing by the latter
-  // explodes wherever the two are close, which is how the first version of this drove density to
-  // its ceiling and took the window down to 7%.
-  float room = max(VG_TINT_LIGHT - local, 0.0);
-  float separation = min(u_presence, room);
-  float tintLuma = mix(VG_TINT_LIGHT, inkPole, max(clamp(needForInk / max(density, 1e-4), 0.0, 1.0), smoothstep(${BODY.presenceDemand}, ${BODY.inkPoleTo}, density)));
-  float reached = max(tintLuma - local, 0.0) * density;
-  if (u_presence > 0.0 && reached < separation) {
-    density = max(density, min(separation / max(room, 1e-4), ${BODY.presenceDemand}));
-    tintLuma = mix(VG_TINT_LIGHT, inkPole, max(clamp(needForInk / max(density, 1e-4), 0.0, 1.0), smoothstep(${BODY.presenceDemand}, ${BODY.inkPoleTo}, density)));
+  // only a rim honestly disappears — right for a piece of background, wrong for a control. A floor
+  // on the density, toward light: the lift it gives is presence times the room left under the
+  // light pole, so it fades out as the room does and has no step anywhere on the scale.
+  if (u_presence > 0.0) {
+    density = max(density, min(u_presence / VG_TINT_LIGHT, ${BODY.presenceDemand}));
   }
+  float tintLuma = mix(VG_TINT_LIGHT, inkPole, max(clamp(needForInk / max(density, 1e-4), 0.0, 1.0), smoothstep(${BODY.presenceDemand}, ${BODY.inkPoleTo}, density)));
 
   // Glass has no color of its own — only the color of what's beneath it (HIG "Color").
   float3 tintHue = mix(float3(1.0), vgHue(wide * 0.5 + ambient * 0.5), u_colorPickup);
@@ -547,7 +534,7 @@ half4 main(float2 xy) {
   // brighter where the face faces the key light, weaker opposite it, and never absent: the line
   // runs the whole contour. It is a reflection of the surroundings, so it is faint over a dark
   // one and plain over a bright one (§2, §6).
-  float line = smoothstep(0.0, lineW * 0.3, e) * (1.0 - smoothstep(lineW * 0.3, lineW, e)) * lens;
+  float line = smoothstep(0.0, lineW * ${RIM.lineInset}, e) * (1.0 - smoothstep(lineW * ${RIM.lineInset}, lineW, e)) * lens;
   float outline = (1.0 - smoothstep(0.0, lineW * 0.6, e)) * lens;
   float reflectN = min(u_fresnel / ${RIM.reflectanceRef}, 1.0);
   float lit = clamp(rimStrength * reflectN * (${RIM.contour} + (1.0 - ${RIM.contour}) * rimKey / max(u_fresnel, 0.001)), 0.0, 1.0);

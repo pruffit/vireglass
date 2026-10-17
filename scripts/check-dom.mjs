@@ -129,11 +129,16 @@ const FIXTURE = `<!doctype html>
     document.getElementById('glass').style.display = 'none';
     const el = document.getElementById('orb');
     el.style.display = 'block';
-    orb = attachGlass(el, { material: VIREGLASS_CONTROL_MATERIAL, interactive: false, body: variant !== 'no-body' });
+    // The shipped control carries no presence floor; a dense body is what makes the tint direction visible.
+    const material = variant.startsWith('dense') ? { ...VIREGLASS_CONTROL_MATERIAL, presence: 0.176 } : VIREGLASS_CONTROL_MATERIAL;
+    orb = attachGlass(el, { material, interactive: false, body: variant !== 'no-body' });
     // The resize observer repaints once after attach, which would overwrite a canary set before it.
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
     if (variant === 'white-lobe') el.style.setProperty('--vireglass-rim', WHITE_LOBE);
-    if (variant === 'dark-body') el.style.backgroundColor = 'rgba(18, 18, 18, 0.4)';
+    if (variant === 'dense-old-direction') {
+      const alpha = el.style.backgroundColor.split(',').pop().replace(')', '').trim();
+      el.style.backgroundColor = 'rgba(18, 18, 18, ' + alpha + ')';
+    }
     if (variant === 'dark-strength') {
       const faint = rimGradientCss(resolveOptics(VIREGLASS_CONTROL_MATERIAL), [0.05, 0.05, 0.05], REST_LIGHT);
       el.style.setProperty('--vireglass-rim', faint);
@@ -430,17 +435,18 @@ try {
   const whiteLobe = await orbShot('dark', 'white-lobe');
   const faintOnBright = await orbShot('bright', 'dark-strength');
   const noBody = await orbShot('dark', 'no-body');
-  const darkBodyOnBright = await orbShot('bright', 'dark-body');
+  const denseBright = await orbShot('bright', 'dense');
+  const oldDirection = await orbShot('bright', 'dense-old-direction');
   const signed = (v) => (v >= 0 ? '+' : '') + v.toFixed(3);
   console.log(
     `check-dom: rim over the surround dark ${signed(darkOrb.rimPeak)} (dimmest bin ${signed(darkOrb.rimMin - darkOrb.body)} over the body), ` +
-      `bright ${signed(brightOrb.rimPeak)}; body over dark ${signed(darkOrb.body)}, over mid-light ${signed(brightOrb.body)}`,
+      `bright ${signed(brightOrb.rimPeak)}; body over dark ${signed(darkOrb.body)}, over mid-light ${signed(denseBright.body)}`,
   );
-  const RIM_DARK_MAX = 0.4;
-  const RIM_BRIGHT_MIN = 0.12;
-  const RIM_FLOOR_MIN = 0.008;
-  const BODY_DARK_MIN = 0.02;
-  const BODY_BRIGHT_MIN = 0.01;
+  const RIM_DARK_MAX = 0.32;
+  const RIM_BRIGHT_MIN = 0.15;
+  const RIM_FLOOR_MIN = 0.01;
+  const BODY_DARK_MIN = 0.04;
+  const BODY_BRIGHT_MIN = 0.03;
   // 8a. Faint over dark. The canary is the old full-white lobe.
   if (!(darkOrb.rimPeak <= RIM_DARK_MAX)) {
     fail(`the rim over a dark surround reads ${signed(darkOrb.rimPeak)}, past ${RIM_DARK_MAX} — it is drawn at full strength`);
@@ -472,11 +478,11 @@ try {
 
   // 8e. And over a mid-light surround (L about 0.55, where the glyph is still white) the body is
   //    still lighter than it, as in the reference; the canary is the dark body the old law drew there.
-  if (!(brightOrb.body >= BODY_BRIGHT_MIN)) {
+  if (!(denseBright.body >= BODY_BRIGHT_MIN)) {
     fail(`the body over a mid-light surround reads ${signed(brightOrb.body)}, not lighter than it`);
   }
-  if (!(darkBodyOnBright.body < BODY_BRIGHT_MIN)) {
-    fail(`canary: a dark body over mid-light read ${signed(darkBodyOnBright.body)} and passed the gate`);
+  if (!(oldDirection.body < BODY_BRIGHT_MIN)) {
+    fail(`canary: the old direction over mid-light read ${signed(oldDirection.body)} and passed the gate`);
   }
 
   // 9. A sample from the host is a live input: setSample repaints the same element, update() alone

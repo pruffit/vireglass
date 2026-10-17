@@ -257,7 +257,8 @@ real glass does with roughness: it stops being a window.
 disappears. Correct for a piece of background, wrong for a control. `presence` sets a minimum
 lightness separation from the backdrop, always toward light and only as far as the range allows:
 the reference body is lighter than its surroundings from dark video to sky, whatever the glyph on
-it. Only the ink's own legibility over texture can darken it.
+it. What sends it to the ink's own pole is the ink's legibility over texture, a system setting
+(reduced transparency, increased contrast), or a density past `BODY.inkPoleTo`.
 
 Ink polarity is decided by the **cost of holding it**, not by contrast: how much body density
 it would take to keep light ink legible. Above the threshold the element would stop being glass
@@ -351,7 +352,7 @@ timestamp so the claims can be checked. No Apple code, assets or footage is incl
 distributed with this package.
 
 Every calibrated number lives in `src/law.ts` with its provenance, and `check:law` names the ones
-that have none: **48 of 129** today. See [`docs/law.md`](docs/law.md).
+that have none: **51 of 130** today. See [`docs/law.md`](docs/law.md).
 
 ## License
 

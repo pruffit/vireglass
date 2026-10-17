@@ -94,28 +94,14 @@ export function resolveBody(optics: VireGlassOptics, sample: BodyBackdrop, ink: 
 
 /**
  * PRESENCE (§3): over a uniform backdrop there is nothing to refract and the glass honestly
- * disappears — right for a piece of background, wrong for a control. It is a MINIMUM, not an
- * addition, so a body that already stands apart is left alone.
- *
- * The direction is toward light, whatever the ink: the reference body is lighter than its
- * surroundings across the whole range, and only as far as the range allows — over a backdrop at
- * 0.96 there is no room to go lighter. The previous version took the body's own side, which put a
- * dark body under a light glyph over dark and over sky, where the reference is lighter.
- *
- * What the demand is DIVIDED by is deliberately the distance to the light pole rather than to the
- * body's own tint: dividing by the latter is arithmetically tighter and asks for far more density
- * wherever the two are close — enough to take the density to the ceiling and stop the glass being a
- * window at all, which check:optics says plainly. Presence is a floor on visibility, not a licence
- * to go opaque.
+ * disappears — right for a piece of background, wrong for a control. It is a MINIMUM on the
+ * density, toward light whatever the ink, and it does not read the backdrop: the lift it gives is
+ * `presence` times the room left under the light pole, so it fades out as the room does and has no
+ * step anywhere on the scale.
  */
-export function withPresence(body: GlassBody, optics: VireGlassOptics, sample: BodyBackdrop): GlassBody {
+export function withPresence(body: GlassBody, optics: VireGlassOptics, _sample?: BodyBackdrop): GlassBody {
   if (optics.presence <= 0) return body;
-  const mean = clamp(sample.luma, 0, 1);
-  const room = Math.max(TINT_LIGHT - mean, 0);
-  const separation = Math.min(optics.presence, room);
-  const reached = Math.max(body.tintLuma - mean, 0) * body.density;
-  if (reached >= separation) return body;
-  const density = Math.max(body.density, Math.min(separation / Math.max(room, 1e-4), PRESENCE_DEMAND));
+  const density = Math.max(body.density, Math.min(optics.presence / TINT_LIGHT, PRESENCE_DEMAND));
   return { ...body, density, tintLuma: tintFor(density, body.need, body.pole) };
 }
 
@@ -141,7 +127,8 @@ function hueOf(c: readonly [number, number, number]): [number, number, number] {
  * the backdrop: a mix toward the tint at `density`, the matte lift, the medium's pull toward its
  * own lightness, the ambient spill and the concentration of light (§3, `MEDIUM`). Composing it
  * gives `out = A * backdrop + B` per channel, and a layer of colour `B / (1 - A)` at opacity
- * `1 - A` over the backdrop is exactly that.
+ * `1 - A` over the backdrop is that, except where the colour clamps to 0..1: over a saturated dark
+ * backdrop (dark blue) a channel is off by up to 0.024.
  *
  * This is what lifts the body over a dark backdrop. The tint alone, under light ink, is darker
  * than the dark it sits on; the medium's pull, the matte lift and the concentration are what make

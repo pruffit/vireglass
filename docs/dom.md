@@ -98,7 +98,7 @@ ink polarity's switch, the ink stays light, and a body at the density that mode 
 pole, a dark plate where the reference is a light one.
 
 The WebGL2 lens and this path were measured on the same flat backdrops (the footprint means above)
-with the same material: body within 0.014 of each other everywhere, rim within 0.021 over dark,
+with the same material: body within 0.019 of each other everywhere, rim within 0.021 over dark,
 0.053 over sky and grass and 0.024 over near-white, the lens fainter over light. Both are inside the
 rim tolerance.
 

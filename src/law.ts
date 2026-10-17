@@ -47,14 +47,23 @@ export const RIM = {
    * MEASURED off the controls of A 2:17 (over dark video), M 2:52 (over sky) and A 2:18 (over
    * grass), as the brightest rim bin's OKLab lightness over the surround's: 0.24 to 0.27 over dark,
    * 0.25 over sky, 0.37 over grass. Through the DOM path onto the same backdrops these land within
-   * 0.05 of the dark and sky controls (docs/dom.md); the line used to be white at full strength,
-   * 0.70 to 0.80 over the dark frames.
+   * 0.08 of the smooth rows (docs/dom.md); a line white at full strength reads 0.70 to 0.80 over the
+   * dark frames.
    */
   strengthDark: 0.37,
   strengthLight: 0.95,
-  /** The surround lightness between which the strength moves from one to the other. */
+  /**
+   * The surround lightness between which the strength moves from one to the other. UNMEASURED: the
+   * two ends are, and the controls in between were not looked for.
+   */
   ambientFrom: 0.15,
   ambientTo: 0.45,
+  /**
+   * The share of the line's width, from the silhouette inward, that the light line leaves to the
+   * dark edge. UNMEASURED: without it the line covers the dark edge and an element over a bright
+   * flat backdrop loses the one mark that holds it there.
+   */
+  lineInset: 0.3,
   /**
    * The share of the peak that the line keeps along the whole contour, away from the key light.
    * MEASURED: the reference line goes all the way round. Its dimmest bin sits 0.06 to 0.12 of

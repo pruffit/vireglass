@@ -15,7 +15,7 @@ around the element (`RIM.strengthDark` to `RIM.strengthLight`), scaled by the me
 up to that of ordinary glass (`RIM.reflectanceRef`). Rim strength is therefore derived, not a new
 cause: a denser medium draws the line no brighter than glass at index 1.5 does, a thinner one
 fainter. The same law is in `lens-shader.ts`, so WebGL2 and AGSL draw it too; there the light line
-starts a third of the way into the band so the dark edge stays visible over bright canvases.
+starts a third of the way into the band (`RIM.lineInset`) so the dark edge stays visible over bright canvases.
 `rimGradientCss` now returns two gradients (the light line, then the dark edge) as one background
 list; `rimStrength`, `rimLineAlpha` and `ambientLuma` are exported from `vireglass/dom`.
 
@@ -29,8 +29,11 @@ pull, ambient spill, concentration), painted on both paths (`bodyLayer`).
 The law's direction changed with it, in the shader as much as here. The reference body is lighter
 than its surroundings from dark video to sky, under a white glyph as much as a dark one, and the
 old law darkened it wherever light ink met a backdrop above about 0.5, and under light ink over dark
-as well. Now the tint is toward light on every backdrop: `presence` lifts toward light only, as far
-as the range allows, and the ink's legibility requirement binds over texture only (`BODY.inkBusyFrom`,
+as well. Now the tint is toward light on every backdrop: `presence` is a floor on the density, toward
+light only, worth `presence` times the room left under the light pole, so it fades out as the room
+does and has no step anywhere on the scale (the old floor asked for the whole separation and divided
+by the room: a body that read 0.54 opaque at `#efefef` read 0.10 at `#f0f0f0`). The ink's legibility
+requirement binds over texture only (`BODY.inkBusyFrom`,
 `BODY.inkBusyTo`), going to the ink's own pole where it is what holds the density (or a system
 setting has raised it: `BODY.inkPoleTo`). `BODY.darkSideFrom` and `BODY.darkSideTo` are gone.
 `VIREGLASS_CONTROL_MATERIAL.presence` is 0, from 0.176: with the body lifting toward light, that floor
@@ -59,14 +62,28 @@ has to add it.
   and the tint they return is toward light unless the ink asked for its pole; a host that builds its
   body from them directly gets the new direction.
 - `VIREGLASS_CONTROL_MATERIAL.presence` is 0.
+- `BODY.darkSideFrom` and `BODY.darkSideTo` are removed from `vireglass/law`; `BODY.inkBusyFrom`,
+  `BODY.inkBusyTo`, `BODY.inkPoleTo` and `RIM.strengthDark`, `strengthLight`, `ambientFrom`,
+  `ambientTo`, `lineInset`, `contour`, `whiteShare`, `reflectanceRef` are added.
+- `GlassBody` requires `need` and `pole`: a caller that constructs a body to pass to
+  `withPresence` no longer type-checks. `withPresence`'s third argument is ignored and optional.
+- `--vireglass-body-color` now carries the composed layer, with a different alpha (it includes the
+  medium's lift, so it is never fully transparent at full appearance).
+- The WebGL2 and AGSL output changed: the body direction, the presence floor (capped at
+  `BODY.presenceDemand` 0.5 where it was 0.92, and no longer dependent on the backdrop's lightness),
+  the rim (no `u_presence * 2` floor on the line, an ambient-scaled glint) and the transparency
+  scale's object gain.
 
 ### Gates
 
 `check:dom` measures a control-sized circle against the reference's numbers: rim faint over dark and
 plain over bright, the line unbroken round the contour, the body lighter than the surround over dark
-and over a mid-light backdrop where the glyph is still white, and `setSample`. Each has a canary that
-must fail: a full-white lobe, a rim drawn for dark over bright, a lobe with no contour, no body
-drawn, a dark body over mid-light.
+and over a mid-light backdrop where the glyph is still white (on a body that carries a presence
+floor, so the direction shows), and `setSample`. Each has a canary that must fail: a full-white lobe,
+a rim drawn for dark over bright, a lobe with no contour, no body drawn, the old direction over
+mid-light. A unit gate holds the body's alpha continuous from 0.80 to 1.00 in lightness for the
+default material and every preset, with the old floor as its canary, and the `check:optics` sweep
+now runs to 1.00 instead of stopping at 0.94.
 
 ## 2.3.1
 

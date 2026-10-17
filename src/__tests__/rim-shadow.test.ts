@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { roundedRectGeometry } from '../geometry';
-import { MATERIAL_PRESETS, VIREGLASS_CONTROL_MATERIAL, resolveOptics } from '../material';
+import { MATERIAL_PRESETS, VIREGLASS_CONTROL_MATERIAL, VIREGLASS_MATERIAL, resolveOptics } from '../material';
 import { lightConicAngle, rimGradientCss, rimLobe, rimStrength } from '../dom/rim';
 import { boxShadowCss, shadowAlphaFrom } from '../dom/shadow';
 import { bodyLayer, resolveBody, withPresence } from '../dom/body';
@@ -116,9 +116,10 @@ describe('rim light (docs/reference.md §2)', () => {
 
 describe('the lens draws the same rim', () => {
   it('reads its strength from the law and keeps no presence floor on the line', () => {
-    expect(LENS_SHADER).toContain(String(RIM.strengthDark));
-    expect(LENS_SHADER).toContain(String(RIM.strengthLight));
-    expect(LENS_SHADER).toContain(String(RIM.contour));
+    expect(LENS_SHADER).toContain(`mix(${RIM.strengthDark}, ${RIM.strengthLight},`);
+    expect(LENS_SHADER).toContain(`(${RIM.contour} + (1.0 - ${RIM.contour}) * rimKey`);
+    expect(LENS_SHADER).toContain(`smoothstep(${RIM.ambientFrom}, ${RIM.ambientTo},`);
+    expect(LENS_SHADER).toContain(`lineW * ${RIM.lineInset}`);
     expect(LENS_SHADER).not.toContain('u_presence * 2.0');
   });
 });
@@ -234,6 +235,37 @@ describe('how wide the key-light arc is (docs/reference.md §2)', () => {
 
 // Reported from an integration: over a flat dark backdrop the body came out matching the backdrop
 // exactly, so a panel over a dark reading page had no separation at all.
+// The floor used to ask for min(presence, room) and divide by the room: toward the light pole the
+// quotient went to its ceiling, and at 0.94 the room was gone and the floor switched off. A body
+// that read 0.54 opaque at #efefef read 0.10 at #f0f0f0.
+describe('the body is continuous across the lightness scale', () => {
+  const lumas = Array.from({ length: 101 }, (_, i) => 0.8 + i * 0.002);
+  const materials = [VIREGLASS_MATERIAL, VIREGLASS_CONTROL_MATERIAL, ...Object.values(MATERIAL_PRESETS)];
+  const alphaAt = (optics: ReturnType<typeof resolveOptics>, luma: number) => {
+    const sample = { luma, busy: 0, r: luma, g: luma, b: luma };
+    return bodyLayer(optics, sample, luma < 0.62 ? 1 : 0, [luma, luma, luma]).alpha;
+  };
+  const largestStep = (alpha: (luma: number) => number) =>
+    Math.max(...lumas.slice(1).map((luma, i) => Math.abs(alpha(luma) - alpha(lumas[i]!))));
+
+  it('has no step between neighbouring lightnesses from 0.80 to 1.00, for the default and every preset', () => {
+    for (const material of materials) {
+      const optics = { ...resolveOptics(material), presence: Math.max(material.presence, 0.05) };
+      expect(largestStep((luma) => alphaAt(optics, luma))).toBeLessThan(0.012);
+    }
+  });
+
+  it('canary: the old floor steps at the light pole', () => {
+    const optics = resolveOptics(VIREGLASS_MATERIAL);
+    const old = (luma: number) => {
+      const room = Math.max(BODY.tintLight - luma, 0);
+      const separation = Math.min(optics.presence, room);
+      return Math.min(separation / Math.max(room, 1e-4), BODY.presenceDemand);
+    };
+    expect(largestStep(old)).toBeGreaterThan(0.3);
+  });
+});
+
 describe('presence over a flat backdrop (docs/reference.md §3)', () => {
   const optics = { ...resolveOptics(MATERIAL_PRESETS.glass), presence: 0.08 };
   const flat = (luma: number) => ({ luma, busy: 0 });
@@ -250,9 +282,9 @@ describe('presence over a flat backdrop (docs/reference.md §3)', () => {
     }
   });
 
-  it('separates by what was asked wherever there is room for it', () => {
-    for (const luma of [0.35, 0.5]) {
-      expect(separation(luma).reached).toBeCloseTo(0.08, 3);
+  it('separates by what was asked, scaled by the room under the light pole', () => {
+    for (const luma of [0.2, 0.35, 0.5, 0.8]) {
+      expect(separation(luma).reached).toBeCloseTo(0.08 * (1 - luma / BODY.tintLight), 3);
     }
   });
 
