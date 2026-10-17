@@ -1,15 +1,20 @@
-// Rim light (docs/reference.md §2): a hairline along the silhouette — "not a band and not a
-// bevel" — carrying two opposing arcs, the rest of it outlined by a thin dark line, and its colour
-// taken from the environment.
+// Rim light (docs/reference.md §2): a hairline along the whole silhouette — "not a band and not a
+// bevel" — brighter toward the key light, with a second, weaker arc opposite it, outlined by a thin
+// dark line, its colour taken from the environment and its strength from how light that is.
 //
-// Every number here is the lens shader's own. The key-light lobe is `lens-shader.ts` line 375
-// verbatim (exponent 3, opposing arc at 0.45), and the dark edge is its line 528 (a 0.22
-// darkening at the silhouette). The only thing that differs is the primitive: a conic gradient
-// sampled at fixed angles instead of a per-pixel normal.
+// Every number here is the lens shader's own, read from the law. The only thing that differs is
+// the primitive: a conic gradient sampled at fixed angles instead of a per-pixel normal.
 import { RIM } from '../law';
 import type { VireGlassOptics } from '../material';
 
-const { lobeExponent: LOBE_EXPONENT, opposingArc: OPPOSING_ARC, darkEdge: DARK_EDGE } = RIM;
+const {
+  lobeExponent: LOBE_EXPONENT,
+  opposingArc: OPPOSING_ARC,
+  darkEdge: DARK_EDGE,
+  contour: CONTOUR,
+  whiteShare: WHITE_SHARE,
+  reflectanceRef: REFLECTANCE_REF,
+} = RIM;
 
 /** One stop every 7.5°. Fine enough that a cubic lobe reads as a smooth arc rather than a fan. */
 const STOPS = 48;
@@ -39,13 +44,45 @@ const to255 = (v: number) => Math.round(clamp01(v) * 255);
 
 export type RimAmbient = readonly [number, number, number];
 
+const mixTo = (a: number, b: number, t: number) => a + (b - a) * t;
+
+function smoothstep(edge0: number, edge1: number, x: number): number {
+  const t = clamp01((x - edge0) / (edge1 - edge0));
+  return t * t * (3 - 2 * t);
+}
+
+/** Lightness of an ambient colour, the weights the lens uses. */
+export function ambientLuma(ambient: RimAmbient): number {
+  return 0.2126 * ambient[0] + 0.7152 * ambient[1] + 0.0722 * ambient[2];
+}
+
+/** How strongly the line is drawn over a surround of this lightness (§2, §6). */
+export function rimStrength(luma: number): number {
+  return mixTo(RIM.strengthDark, RIM.strengthLight, smoothstep(RIM.ambientFrom, RIM.ambientTo, luma));
+}
+
 /**
- * The gradient for the hairline. Colour comes from the environment — "over a yellow flower the rim
- * is yellow, over sky it is blue" (§2) — lifted toward white where the key light lands. Away from
- * both arcs only the dark edge remains.
+ * The line's opacity where the rim's normal sits `deltaDeg` from the light: a floor all the way
+ * round and the key-light lobe on top of it, all of it scaled by the medium's reflectance up to
+ * the reference material's.
+ */
+export function rimLineAlpha(deltaDeg: number, optics: VireGlassOptics, luma: number): number {
+  const reflect = Math.min(optics.fresnel / REFLECTANCE_REF, 1);
+  const damping = optics.fresnel > 0 ? optics.specular / optics.fresnel : 0;
+  const lobe = rimLobe(deltaDeg, damping);
+  return clamp01(rimStrength(luma) * reflect * (CONTOUR + (1 - CONTOUR) * lobe));
+}
+
+/**
+ * The gradient for the hairline: a light line round the whole contour, brighter toward the key
+ * light, drawn over the dark edge. Its colour comes from the environment — "over a yellow flower
+ * the rim is yellow, over sky it is blue" (§2) — lifted toward white, and its strength follows how
+ * light the environment is.
  *
  * The opposing arc carries an iridescent fringe (§2), so `iridescence` pulls its channels apart
  * rather than lifting them together.
+ *
+ * Two layers, the line first: `--vireglass-rim` is a background list and paints as one.
  */
 export function rimGradientCss(
   optics: VireGlassOptics,
@@ -56,31 +93,29 @@ export function rimGradientCss(
   const present = clamp01(appear);
   const start = lightConicAngle(light);
   const [ar, ag, ab] = ambient;
-  const stops: string[] = [];
+  const luma = ambientLuma(ambient);
+  const line: string[] = [];
 
   for (let i = 0; i <= STOPS; i += 1) {
     const angle = (i / STOPS) * 360;
-    const key = rimLobe(angle, optics.specular);
     const facing = Math.cos((angle * Math.PI) / 180);
     // The far arc is where dispersion shows as a fringe; the near one is a clean specular.
     const fringe = facing < 0 ? optics.iridescence * OPPOSING_ARC : 0;
-    const lift = clamp01(key * optics.fresnel);
 
-    const r = ar + (1 - ar) * clamp01(lift + fringe);
-    const g = ag + (1 - ag) * lift;
-    const b = ab + (1 - ab) * clamp01(lift - fringe);
-
-    // Scaled, not floored: the dark edge is the one part of the rim that survives facing away from
-    // the light, so leaving it unscaled leaves a hairline drawn around an element that is not there.
-    const alpha = clamp01(DARK_EDGE + lift * (1 - DARK_EDGE)) * present;
-    // Below the arcs the line is the dark edge itself, not a dim copy of the environment.
-    const colour = lift > 0.001
-      ? `rgba(${to255(r)},${to255(g)},${to255(b)},${alpha.toFixed(3)})`
-      : `rgba(0,0,0,${alpha.toFixed(3)})`;
-    stops.push(`${colour} ${angle.toFixed(1)}deg`);
+    const r = ar + (1 - ar) * clamp01(WHITE_SHARE + fringe);
+    const g = ag + (1 - ag) * WHITE_SHARE;
+    const b = ab + (1 - ab) * clamp01(WHITE_SHARE - fringe);
+    const alpha = rimLineAlpha(angle, optics, luma) * present;
+    line.push(`rgba(${to255(r)},${to255(g)},${to255(b)},${alpha.toFixed(3)}) ${angle.toFixed(1)}deg`);
   }
 
-  return `conic-gradient(from ${start.toFixed(1)}deg, ${stops.join(', ')})`;
+  // Scaled by presence, not floored: the dark edge would otherwise outline an element that is not
+  // there yet.
+  const dark = `rgba(0,0,0,${(DARK_EDGE * present).toFixed(3)})`;
+  return (
+    `conic-gradient(from ${start.toFixed(1)}deg, ${line.join(', ')}), ` +
+    `conic-gradient(${dark} 0deg, ${dark} 360deg)`
+  );
 }
 
 export const RIM_WIDTH_PX = RIM.widthPx;

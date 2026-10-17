@@ -165,6 +165,35 @@ your choreography; the material only knows how two silhouettes join.
 | `--vireglass-radius`, `--vireglass-radius-min` | for concentric children (§11) |
 | `--vireglass-ink`, `--vireglass-tint`, `--vireglass-body-density` | the model's raw numbers |
 
+### Telling the glass what is behind it
+
+A host that knows its backdrop — an image, a gradient, a video's average colour — supplies it as a
+`BackdropSample` and changes it whenever the backdrop changes, without re-attaching:
+
+```ts
+import { attachGlass, statsFromSamples } from 'vireglass/dom';
+
+const cover = statsFromSamples([{ r: 198, g: 92, b: 40 }, { r: 210, g: 120, b: 60 }]); // 0..255
+const glass = attachGlass(el, { material, sample: cover });
+glass.setSample(statsFromSamples([{ r: 20, g: 30, b: 60 }])); // next track
+glass.setSample(null); // back to probing declared backgrounds
+```
+
+The sample drives the body, the rim's colour and strength, the ink polarity and the shadow.
+`statsFromSamples` turns a handful of colours into one; a hand-written object with `luma`,
+`busy`, `lo`, `hi`, `r`, `g`, `b` (0..1) works as well.
+
+### Body and rim
+
+The body is drawn as the element's `background-color` on the refracting path too, composed from the
+same law the shaders apply (tint, matte lift, the medium's pull, concentration of light), so over a
+dark surround it reads lighter than the surround. `--vireglass-body-color` carries the same colour.
+Pass `body: false` if the host paints the background itself.
+
+The rim is a thin light line round the whole contour, brighter toward the key light, over a dark
+edge. Its strength follows the lightness around the element (faint over dark, plain over bright)
+and the medium's reflectance; it is no longer white at full strength everywhere.
+
 The three system accessibility settings are read from the browser's own media queries and
 followed while the page is open — reduced transparency frosts the glass, increased contrast takes
 the element by its silhouette, reduced motion holds it still. A system setting outranks the
@@ -185,8 +214,8 @@ Three things to know before you reach for it:
   same optics — detected by measurement, never by user-agent string.
 - **There is no pixel probe, so adaptation reads declared styles.** The grid under the element is
   sampled through `elementsFromPoint` and the background stack is composited. That is exact for
-  colour-defined surfaces and blind to images, video and canvas — pass your own `sample` there,
-  since your app already knows its cover-art accent.
+  colour-defined surfaces and blind to images, video and canvas — tell it what is there instead,
+  since your app already knows its cover-art accent (below).
 
 ## Android / React Native
 
@@ -225,9 +254,11 @@ described by a plane, so density rises as a whole, driven by the lightness range
 real glass does with roughness: it stops being a window.
 
 **Presence.** Over a uniform backdrop there is nothing to refract, and the glass honestly
-disappears. Correct for a piece of background, wrong for a control. `presence` sets a minimum
-lightness separation from the backdrop, and the sign is taken from the *backdrop*: lighter over
-dark, darker over light.
+disappears. Correct for a piece of background, wrong for a control. `presence` is a floor on the
+body's density, tinted toward light and fading as the backdrop nears the light pole, so there is no
+veil or seam near white: the reference body is lighter than its surroundings from dark video to sky, whatever the glyph on
+it. What sends it to the ink's own pole is the ink's legibility over texture, a system setting
+(reduced transparency, increased contrast), or a density past `BODY.inkPoleTo`.
 
 Ink polarity is decided by the **cost of holding it**, not by contrast: how much body density
 it would take to keep light ink legible. Above the threshold the element would stop being glass
@@ -321,7 +352,7 @@ timestamp so the claims can be checked. No Apple code, assets or footage is incl
 distributed with this package.
 
 Every calibrated number lives in `src/law.ts` with its provenance, and `check:law` names the ones
-that have none: **43 of 121** today. See [`docs/law.md`](docs/law.md).
+that have none: **51 of 130** today. See [`docs/law.md`](docs/law.md).
 
 ## License
 

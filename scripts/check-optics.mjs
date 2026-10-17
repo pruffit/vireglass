@@ -60,7 +60,7 @@ const MIN_PRESENCE = 5;
 /** Steps across canvas lightness. Denser than it looks like it needs to be: the singularity sits
  *  wherever the canvas's lightness passes near the tint's lightness, and a coarse step steps right
  *  over it. */
-const STEPS = 41;
+const STEPS = 49;
 /** Steps across the user-facing transparency scale, and the canvas it's measured on. */
 const SCALE_STEPS = 7;
 const SCALE_LEVEL = 0.5;
@@ -517,7 +517,7 @@ async function main() {
   for (const { control, name } of inkOnly ? [] : [{ control: false, name: "background piece" }, { control: true, name: "control" }]) {
   console.log(`--- ${name} ---`);
   for (let i = 0; i < STEPS; i += 1) {
-    const level = 0.04 + (0.9 * i) / (STEPS - 1);
+    const level = 0.04 + (0.96 * i) / (STEPS - 1);
     const striped = await page.evaluate((a) => globalThis.vgProbe(a), { level, striped: true, control });
     const flat = await page.evaluate((a) => globalThis.vgProbe(a), { level, striped: false, control });
 

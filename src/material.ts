@@ -63,14 +63,17 @@ export type VireGlassMaterial = {
   /** Lightness of what the app draws OVER the glass: 1 is light icons and text, 0 is dark. A
    *  cause, not a knob: the calling screen knows it. */
   ink: number;
-  /** Minimum PRESENCE of the element itself: how far its body must stand off in lightness from
-   *  the backdrop behind it. Not the same as `legibility` — that's about the ink OVER the glass,
+  /** Minimum PRESENCE of the element itself: a floor on its body density, tinted toward light and
+   *  fading as the backdrop nears the light pole. Not the same as `legibility` — that's about the ink OVER the glass,
    *  this is about the element itself. Over a uniform backdrop the glass has nothing to refract,
    *  and the element disappears; for a control that's unacceptable. 0 means no presence is
    *  required.
    *
-   *  The sign is taken FROM THE BACKDROP, not from ink polarity: over dark the body lightens,
-   *  over light it darkens. So the requirement works the same way on any backdrop. */
+   *  The direction is always toward light, whatever the ink: the reference body is lighter than
+   *  its surroundings from dark video to sky, under a white glyph as much as a dark one, and only
+   *  as far as the range allows. It never darkens the element on its own account. What can send
+   *  the body to the ink's pole is the ink's legibility over texture, a system setting (reduced
+   *  transparency, increased contrast) or a density past `BODY.inkPoleTo`. */
   presence: number;
   /** Surface film thickness, nm. This is where interference comes from: the optical path
    *  difference in the film becomes comparable to the wavelength, and the reflection picks up
@@ -229,8 +232,8 @@ export const VIREGLASS_LYRICS_MATERIAL: VireGlassMaterial = {
  * a native lens that sets body density: there the element is denser by 2.4 percentage points. On
  * the web the surface has no body at all; the effect only shows on Android below 13.
  *
- * `presence` is raised for the same reason: a piece of background is allowed to disappear over a
- * uniform canvas, a control isn't — it has to be visible before it's been tapped.
+ * `presence` is left at none: the medium's own lift already separates the body from a uniform
+ * backdrop as far as the reference does (docs/dom.md), and the rim carries the silhouette.
  *
  * IMPORTANT about size. The bevel is specified by the medium in dp and doesn't depend on the
  * element's size, but the geometry clamps it to half the smaller half-size (`MAX_BEVEL_FRACTION`).
@@ -244,7 +247,7 @@ export const VIREGLASS_CONTROL_MATERIAL: VireGlassMaterial = {
   thickness: 44,
   bevel: 8,
   roughness: 0.035,
-  presence: 0.176,
+  presence: 0,
 };
 
 export const VIREGLASS_MATERIAL = VIREGLASS_MATERIAL_V5;

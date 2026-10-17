@@ -41,8 +41,8 @@ checks the centre is neutral.
 | §1 refraction, magnification | `feDisplacementMap` along a baked displacement map |
 | §1 dispersion | three displacement passes, one per channel, at the shader's own index shifts |
 | §1 diffraction, §3 interference | one baked hue map, multiplied in by an arithmetic composite |
-| §2 rim light, two arcs, dark edge | a masked conic gradient on `::after`, angles and weights from the lens's key-light lobe |
-| §3 body, legibility, presence | `resolveBody` — the lens's own law, one value per element |
+| §2 rim light, two arcs, dark edge | a masked conic gradient on `::after`: a light line round the whole contour with the lens's key-light lobe on it, over a dark edge; strength from the ambient lightness |
+| §3 body, legibility, presence | `resolveBody` and `bodyLayer` — the lens's own law, composed into one translucent layer per element, painted as `background-color` |
 | §3 ink polarity | `shouldInkBeLight`, the same function every platform uses |
 | §4 adaptive shadow | `box-shadow`, density from `shadowOpacityFrom` |
 | §5 touch, press, drag, wave, rise | `createDeform` driving the same `touchWarp` the shader uses |
@@ -57,6 +57,51 @@ lobe, its exponent, the 0.45 opposing arc and the 0.22 dark edge are the lens's 
 spectral hue is baked rather than evaluated, because a filter graph has no way to run a function
 per pixel but can multiply by an image.
 
+## Measured against the reference
+
+The controls of A 2:17 (over dark video), M 2:52 (over sky), A 2:18 (grass), M 18:26 (a flower),
+M 18:30 (the same under reduced transparency) and M 11:58 (text) were cut from the reference frames,
+the control's own footprint filled smoothly from its surround, and a 44 dp circle or capsule of
+`VIREGLASS_CONTROL_MATERIAL` laid over each at device pixel ratio 3, with the footprint's mean colour
+as `sample`. Body and surround are OKLab medians of the rings 0.15 to 0.45 R inside the rim and 0.15
+to 0.55 R outside it; the rim is the brightest of 24 angular bins (90th percentile) over the surround.
+The frames are local and are not in the repository.
+
+Body lightness over the surround (ΔL) and rim over the surround, reference, then 2.3.1, then this
+release:
+
+| control | ref ΔL | 2.3.1 | now | ref rim | 2.3.1 | now |
+|---|---|---|---|---|---|---|
+| A 2:17 skip back | +0.086 | +0.023 | +0.090 | 0.240 | 0.707 | 0.253 |
+| A 2:17 pause | +0.071 | +0.038 | +0.117 | 0.257 | 0.762 | 0.310 |
+| A 2:17 skip forward | +0.045 | +0.027 | +0.114 | 0.268 | 0.796 | 0.320 |
+| A 2:17 Continue | +0.080 | +0.076 | +0.143 | 0.256 | 0.759 | 0.317 |
+| A 2:17 Info | +0.126 | +0.018 | +0.088 | 0.268 | 0.704 | 0.236 |
+| M 2:52 next, over sky | +0.076 | +0.002 | +0.025 | 0.246 | 0.329 | 0.240 |
+| A 2:18 more, over grass (a) | +0.232 | +0.016 | +0.061 | 0.372 | 0.523 | 0.352 |
+| M 18:26 flower (a) | +0.040 | -0.019 | +0.004 | 0.291 | 0.293 | 0.203 |
+| M 18:30 reduced transparency (a) | +0.169 | -0.127 | -0.367 | 0.187 | 0.301 | 0.192 |
+| M 11:58 bar over text (a) | +0.049 | -0.044 | -0.040 | 0.114 | 0.114 | 0.063 |
+
+(a) the backdrop under the control is not in the frame, so the surround is only a guess for it.
+
+The body is lighter than the surround on every smooth row, as in the reference, and within 0.05 of
+it on skip back, pause and Info; skip forward and Continue are 0.07 and 0.06 above, and sky is 0.051
+below. Chroma is within 0.04 of the reference on every row. The rim is within 0.08 on every smooth
+row. The medium's own lift (matte, pull, concentration of light) sets the body now; the control
+material no longer asks for a presence floor on top of it. A presence that brings the sky inside 0.05
+puts two dark rows further out, and the reference's own spread (+0.045 to +0.126 over similar
+backdrops) is wider than the tolerance, so one constant cannot sit inside all of them.
+
+Reduced transparency (M 18:30) is not held to the reference: the backdrop's lightness sits at the
+ink polarity's switch, the ink stays light, and a body at the density that mode asks for goes to its
+pole, a dark plate where the reference is a light one.
+
+The WebGL2 lens and this path were measured on the same flat backdrops (the footprint means above)
+with the same material: body within 0.019 of each other everywhere, rim within 0.021 over dark,
+0.053 over sky and grass and 0.024 over near-white, the lens fainter over light. Both are inside the
+rim tolerance.
+
 ## The probe reads styles, not pixels
 
 Adaptation needs to know what is behind the element, and the same door that stops the lens reading
@@ -68,7 +113,8 @@ Compositing is not optional. Taking the first layer with any alpha at all reads 
 exist — over a dark page the ink goes dark and the label disappears.
 
 It is exact for colour-defined surfaces and blind to images, video and iframes. Hosts pass their
-own sample there; an app already knows its cover art's accent.
+own sample there; an app already knows its cover art's accent, and `setSample` changes it later
+without re-attaching.
 
 ## What it costs
 

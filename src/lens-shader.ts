@@ -378,7 +378,11 @@ half4 main(float2 xy) {
   float rimKey = u_specular * (pow(max(rimFacing, 0.0), ${RIM.lobeExponent}.0) + ${RIM.opposingArc} * pow(max(-rimFacing, 0.0), ${RIM.lobeExponent}.0));
   // Wherever the key light doesn't fall, the face reflects its shaded surroundings — hence the
   // dark outline.
-  float3 env = refl * (0.55 + 0.45 * min(key, 1.0)) + float3(1.2 * key);
+  // The key light's glint is a reflection of the surroundings too: it is scaled by the same
+  // ambient strength as the rim line, so it is not white at full strength over a dark backdrop.
+  float rimStrength = mix(${RIM.strengthDark}, ${RIM.strengthLight},
+    smoothstep(${RIM.ambientFrom}, ${RIM.ambientTo}, vgLuma(ambient)));
+  float3 env = refl * (0.55 + 0.45 * min(key, 1.0)) + float3(1.2 * key * rimStrength / ${RIM.strengthLight});
 
   // Interference and diffraction live in the reflected ray at a grazing angle — a single hue
   // multiplier applied to the reflection, no extra samples.
@@ -454,12 +458,10 @@ half4 main(float2 xy) {
   // transparent glass by the model.
   float demand = clamp(u_legibility * 4.0, 0.0, 1.0);
 
-  // Where there's no ink, the glass tints away from the backdrop. The direction is chosen by the
-  // average lightness under the element, not the local spot's lightness: otherwise on a gradient
-  // the threshold cuts across the body as a diagonal step.
-  float darkSide = smoothstep(${BODY.darkSideFrom}, ${BODY.darkSideTo}, mean);
-  float away = mix(VG_TINT_LIGHT, VG_TINT_DARK, darkSide);
-  float tintLuma = mix(away, mix(VG_TINT_LIGHT, VG_TINT_DARK, pol), demand);
+  // The body is lighter than its surroundings whatever the glyph on it is: glass concentrates
+  // light (M 2:29), and the reference keeps a lighter body under a white glyph over sky as much as
+  // over dark. Only a requirement of the ink pulls it to the ink's own pole, below.
+  float inkPole = mix(VG_TINT_LIGHT, VG_TINT_DARK, pol);
 
   // How much medium it takes to push lightness under the ink past the threshold — locally.
   // Computed from whichever edge of the backdrop's spread is closer to the ink: a light ink
@@ -474,32 +476,22 @@ half4 main(float2 xy) {
   float needForDark = inkLo < floorDark
     ? clamp((floorDark - inkLo) / max(VG_TINT_LIGHT - inkLo, 1e-4), 0.0, ${BODY.maxDemand})
     : 0.0;
-  float needForInk = mix(needForDark, needForLight, pol) * demand;
+  // Over a flat backdrop the ink asks for nothing: polarity flips before it drowns. It is spread
+  // under the ink that the body has to answer.
+  float structured = smoothstep(${BODY.inkBusyFrom}, ${BODY.inkBusyTo}, busy);
+  float needForInk = mix(needForDark, needForLight, pol) * demand * structured;
 
   float ground = structure * u_legibility * VG_GROUND_SPAN;
   float density = max(max(u_bodyDensity, ground), needForInk);
 
   // PRESENCE (§3). Over a uniform backdrop there is nothing to refract, and an element that is
-  // only a rim honestly disappears — right for a piece of background, wrong for a control.
-  //
-  // This used to live on the rim line alone, as lit = max(rimKey, u_presence x 2), while the
-  // DOM path has always implemented it as a floor on the BODY. Two renderers, one field, two
-  // meanings. Measured on Apple's own control over a flat page (frames/verify/m-707), the body
-  // carries 16 levels of separation there and the rim 11.6 — so the body is where it belongs,
-  // and the rim's reading was the wrong one.
-  // The separation asked for is capped by the range that is left: over a backdrop at 0.96 there
-  // is no room to go 0.05 lighter. And what it is DIVIDED by is the distance to the tint's own
-  // end, not to the tint the body currently sits at — dividing by the latter explodes wherever
-  // the two are close, which is how the first version of this drove density to its ceiling at
-  // both extremes and took the window down to 7%.
-  bool lighter = local < 0.5;
-  float target = lighter ? min(local + u_presence, 1.0) : max(local - u_presence, 0.0);
-  float separation = abs(target - local);
-  float reached = abs(tintLuma - local) * density;
-  if (u_presence > 0.0 && reached < separation) {
-    float toEnd = abs((lighter ? VG_TINT_LIGHT : VG_TINT_DARK) - local);
-    density = max(density, min(separation / max(toEnd, 1e-4), ${BODY.maxDemand}));
+  // only a rim honestly disappears — right for a piece of background, wrong for a control. A floor
+  // on the density, toward light: the lift it gives is presence times the room left under the
+  // light pole, so it fades out as the room does and has no step anywhere on the scale.
+  if (u_presence > 0.0) {
+    density = max(density, min(u_presence / VG_TINT_LIGHT, ${BODY.presenceDemand}));
   }
+  float tintLuma = mix(VG_TINT_LIGHT, inkPole, max(clamp(needForInk / max(density, 1e-4), 0.0, 1.0), smoothstep(${BODY.presenceDemand}, ${BODY.inkPoleTo}, density)));
 
   // Glass has no color of its own — only the color of what's beneath it (HIG "Color").
   float3 tintHue = mix(float3(1.0), vgHue(wide * 0.5 + ambient * 0.5), u_colorPickup);
@@ -539,17 +531,18 @@ half4 main(float2 xy) {
   }
 
   // RIM LIGHT — a separate layer, a line about 1 pt wide along the silhouette (M 2:36, 11:04):
-  // brighter where the face faces the key light, weaker opposite it; where no light falls, a
-  // dark outline. This line is what holds the element's presence, not a fill on the body: over a
-  // flat backdrop a control is visible along its whole silhouette because of it.
-  float line = (1.0 - smoothstep(0.0, lineW, e)) * lens;
+  // brighter where the face faces the key light, weaker opposite it, and never absent: the line
+  // runs the whole contour. It is a reflection of the surroundings, so it is faint over a dark
+  // one and plain over a bright one (§2, §6).
+  float line = smoothstep(0.0, lineW * ${RIM.lineInset}, e) * (1.0 - smoothstep(lineW * ${RIM.lineInset}, lineW, e)) * lens;
   float outline = (1.0 - smoothstep(0.0, lineW * 0.6, e)) * lens;
-  float lit = clamp(max(rimKey * 1.4, u_presence * 2.0), 0.0, 1.0);
+  float reflectN = min(u_fresnel / ${RIM.reflectanceRef}, 1.0);
+  float lit = clamp(rimStrength * reflectN * (${RIM.contour} + (1.0 - ${RIM.contour}) * rimKey / max(u_fresnel, 0.001)), 0.0, 1.0);
   // The dark rim is its own layer around the whole silhouette, and the highlight sits ON TOP of
   // it (iOS 27). While the outline used to fade via a (1 − lit) multiplier, the silhouette read
   // as a single arc: highlight OR shadow.
   rgb *= 1.0 - ${RIM.darkEdge} * outline;
-  rgb = mix(rgb, mix(refl, float3(1.0), 0.75), line * lit);
+  rgb = mix(rgb, mix(refl, float3(1.0), ${RIM.whiteShare}), line * lit);
 
   if (u_debug > 9.5 && u_debug < 10.5) { rgb = spectral * 0.5; }
   if (u_debug > 10.5 && u_debug < 11.5) { rgb = float3(density, needForInk, structure); }

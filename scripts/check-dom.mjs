@@ -41,6 +41,9 @@ const FIXTURE = `<!doctype html>
     background-image: repeating-linear-gradient(90deg, #f4f7ff 0 1px, #0b0d12 1px 8px); }
   #glass { position: absolute; left: ${BOX.x}px; top: ${BOX.y}px;
            width: ${BOX.w}px; height: ${BOX.h}px; border-radius: ${BOX.r}px; }
+  /* The reference measurements: one flat colour, so the surround is a single number. */
+  body.flat #page { background-image: none; background-color: #201a15; }
+  body.flat.bright #page { background-color: #5f93c8; }
   /* A saturated page, for the promise that glass does not invent colour. The hairlines cannot
      test it: they are nearly grey, so a material that saturates everything looks fine on them. */
   body.colour #page { background-image:
@@ -51,9 +54,11 @@ const FIXTURE = `<!doctype html>
 <div id="page"></div>
 <div id="glass"></div>
 <div id="host"></div>
+<div id="orb" style="position:absolute;left:400px;top:30px;width:88px;height:88px;border-radius:44px;display:none"></div>
 <script type="module">
   import { attachGlass } from '/dist/dom.js';
-  import { MATERIAL_PRESETS } from '/dist/index.js';
+  import { MATERIAL_PRESETS, VIREGLASS_CONTROL_MATERIAL, resolveOptics, REST_LIGHT } from '/dist/index.js';
+  import { rimGradientCss } from '/dist/dom.js';
 
   // The probe would read the striped page as busy and thicken the body — correct, but it hides the
   // displacement behind a tint. This measurement is about geometry, so the backdrop is stated.
@@ -109,6 +114,46 @@ const FIXTURE = `<!doctype html>
     const filter = document.querySelector('svg[data-vireglass-filters] filter');
     return filter ? [...filter.querySelectorAll('feDisplacementMap')].map((n) => Number(n.getAttribute('scale'))) : [];
   };
+
+  // The orb is a control of the reference frames in miniature: a circle of the control material on
+  // a flat page, which the probe reads from the page's declared colour.
+  let orb = null;
+  const WHITE_LOBE = 'conic-gradient(from 325deg, #fff 0deg, rgba(0,0,0,.22) 60deg, rgba(0,0,0,.22) 300deg, #fff 360deg)';
+  globalThis.__orb = async (pageKind, variant) => {
+    orb?.destroy();
+    live?.destroy();
+    live = null;
+    document.body.classList.remove('colour');
+    document.body.classList.add('flat');
+    document.body.classList.toggle('bright', pageKind === 'bright');
+    document.getElementById('glass').style.display = 'none';
+    const el = document.getElementById('orb');
+    el.style.display = 'block';
+    // The shipped control carries no presence floor; a dense body is what makes the tint direction visible.
+    const material = variant.startsWith('dense') ? { ...VIREGLASS_CONTROL_MATERIAL, presence: 0.176 } : VIREGLASS_CONTROL_MATERIAL;
+    orb = attachGlass(el, { material, interactive: false, body: variant !== 'no-body' });
+    // The resize observer repaints once after attach, which would overwrite a canary set before it.
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    if (variant === 'white-lobe') el.style.setProperty('--vireglass-rim', WHITE_LOBE);
+    if (variant === 'dense-old-direction') {
+      const alpha = el.style.backgroundColor.split(',').pop().replace(')', '').trim();
+      el.style.backgroundColor = 'rgba(18, 18, 18, ' + alpha + ')';
+    }
+    if (variant === 'dark-strength') {
+      const faint = rimGradientCss(resolveOptics(VIREGLASS_CONTROL_MATERIAL), [0.05, 0.05, 0.05], REST_LIGHT);
+      el.style.setProperty('--vireglass-rim', faint);
+    }
+  };
+  globalThis.__orbVars = () => {
+    const style = document.getElementById('orb').style;
+    return ['--vireglass-ink-color', '--vireglass-body-color', '--vireglass-rim'].map((k) => style.getPropertyValue(k)).join('|');
+  };
+  globalThis.__orbSample = (kind) => {
+    const dark = { luma: 0.1, lo: 0.1, hi: 0.1, busy: 0, r: 0.1, g: 0.09, b: 0.08 };
+    const bright = { luma: 0.85, lo: 0.85, hi: 0.85, busy: 0, r: 0.8, g: 0.86, b: 0.9 };
+    orb.setSample(kind === 'dark' ? dark : kind === 'bright' ? bright : null);
+  };
+  globalThis.__orbUpdate = () => orb.update();
 
   globalThis.__mount('full');
   globalThis.__ready = true;
@@ -194,6 +239,43 @@ const SATURATION = `(src, rect) => {
     return { hi: v[Math.floor(v.length * 0.98)], mean: sum / v.length };
   });
 }`;
+
+/** OKLab lightness of a circle's rim, body and surround, measured as the kit's lab measures a control. */
+const ORB = `(src, c) => new Promise((resolve, reject) => {
+  const img = new Image();
+  img.onerror = reject;
+  img.onload = () => {
+    const cv = document.createElement('canvas');
+    cv.width = img.naturalWidth; cv.height = img.naturalHeight;
+    const g = cv.getContext('2d', { willReadFrequently: true });
+    g.drawImage(img, 0, 0);
+    const data = g.getImageData(0, 0, cv.width, cv.height).data;
+    const lin = (u) => { const v = u / 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+    const lightness = (i) => {
+      const r = lin(data[i]), gg = lin(data[i + 1]), b = lin(data[i + 2]);
+      return 0.2104542553 * Math.cbrt(0.4122214708 * r + 0.5363325363 * gg + 0.0514459929 * b)
+        + 0.793617785 * Math.cbrt(0.2119034982 * r + 0.6806995451 * gg + 0.1073969566 * b)
+        - 0.0040720468 * Math.cbrt(0.0883024619 * r + 0.2817188376 * gg + 0.6299787005 * b);
+    };
+    const R = c.r, BINS = 24, body = [], surround = [], rim = Array.from({ length: BINS }, () => []);
+    for (let y = 0; y < cv.height; y++) for (let x = 0; x < cv.width; x++) {
+      const px = x + 0.5 - c.x, py = y + 0.5 - c.y, d = Math.hypot(px, py) - R;
+      if (Math.abs(d) > R) continue;
+      const i = (y * cv.width + x) * 4;
+      if (d >= -0.45 * R && d <= -0.15 * R) body.push(lightness(i));
+      else if (d >= 0.15 * R && d <= 0.55 * R) surround.push(lightness(i));
+      else if (d >= Math.min(-0.07 * R, -1.5) && d <= Math.max(0.03 * R, 1)) {
+        rim[Math.floor(((Math.atan2(py, px) + Math.PI) / (2 * Math.PI)) * BINS) % BINS].push(lightness(i));
+      }
+    }
+    const median = (a) => [...a].sort((p, q) => p - q)[Math.floor(a.length / 2)];
+    const q90 = (a) => [...a].sort((p, q) => p - q)[Math.min(a.length - 1, Math.floor(a.length * 0.9))];
+    const bins = rim.filter((a) => a.length).map(q90);
+    const S = median(surround);
+    resolve({ body: median(body) - S, rimPeak: Math.max(...bins) - S, rimMin: Math.min(...bins) - S });
+  };
+  img.src = src;
+})`;
 
 const server = await serve();
 const { port } = server.address();
@@ -336,6 +418,87 @@ try {
         `${(bare.hi * 100).toFixed(0)}%) — it is inventing colour, not moving it`,
     );
   }
+
+  // 8. The rim and the body, measured as the reference controls were: a circle of the control
+  //    material on a flat page, in OKLab lightness against the surround. The reference, over dark
+  //    video (A 2:17): rim 0.24 to 0.27 over the surround, body +0.05 to +0.13. Over sky (M 2:52):
+  //    rim 0.25. The glass used to draw a full-white lobe, which reads 0.70 to 0.80 over dark.
+  const orbRect = { x: 444, y: 74, r: 44 };
+  const orbShot = async (pageKind, variant) => {
+    await page.evaluate(([p, v]) => globalThis.__orb(p, v), [pageKind, variant]);
+    await page.evaluate(() => new Promise((r) => setTimeout(r, 120)));
+    const img = `data:image/png;base64,${(await page.screenshot()).toString('base64')}`;
+    return page.evaluate(([src, c, fn]) => new Function(`return ${fn}`)()(src, c), [img, orbRect, ORB]);
+  };
+  const darkOrb = await orbShot('dark', 'attached');
+  const brightOrb = await orbShot('bright', 'attached');
+  const whiteLobe = await orbShot('dark', 'white-lobe');
+  const faintOnBright = await orbShot('bright', 'dark-strength');
+  const noBody = await orbShot('dark', 'no-body');
+  const denseBright = await orbShot('bright', 'dense');
+  const oldDirection = await orbShot('bright', 'dense-old-direction');
+  const signed = (v) => (v >= 0 ? '+' : '') + v.toFixed(3);
+  console.log(
+    `check-dom: rim over the surround dark ${signed(darkOrb.rimPeak)} (dimmest bin ${signed(darkOrb.rimMin - darkOrb.body)} over the body), ` +
+      `bright ${signed(brightOrb.rimPeak)}; body over dark ${signed(darkOrb.body)}, over mid-light ${signed(denseBright.body)}`,
+  );
+  const RIM_DARK_MAX = 0.32;
+  const RIM_BRIGHT_MIN = 0.15;
+  const RIM_FLOOR_MIN = 0.01;
+  const BODY_DARK_MIN = 0.04;
+  const BODY_BRIGHT_MIN = 0.03;
+  // 8a. Faint over dark. The canary is the old full-white lobe.
+  if (!(darkOrb.rimPeak <= RIM_DARK_MAX)) {
+    fail(`the rim over a dark surround reads ${signed(darkOrb.rimPeak)}, past ${RIM_DARK_MAX} — it is drawn at full strength`);
+  }
+  if (!(whiteLobe.rimPeak > RIM_DARK_MAX)) {
+    fail(`canary: a full-white lobe over dark read ${signed(whiteLobe.rimPeak)} and passed the faintness gate`);
+  }
+  // 8b. Strength follows the surroundings: plain over bright, which a rim drawn for dark is not.
+  if (!(brightOrb.rimPeak >= RIM_BRIGHT_MIN)) {
+    fail(`the rim over a bright surround reads only ${signed(brightOrb.rimPeak)} — its strength does not follow the surroundings`);
+  }
+  if (!(faintOnBright.rimPeak < RIM_BRIGHT_MIN)) {
+    fail(`canary: a rim drawn for dark, over bright, read ${signed(faintOnBright.rimPeak)} and passed the gate`);
+  }
+  // 8c. The line goes the whole way round: its dimmest bin is still lighter than the body beside it.
+  if (!(darkOrb.rimMin - darkOrb.body >= RIM_FLOOR_MIN)) {
+    fail(`the rim has a gap: its dimmest bin reads ${signed(darkOrb.rimMin - darkOrb.body)} over the body beside it`);
+  }
+  if (!(whiteLobe.rimMin - whiteLobe.body < RIM_FLOOR_MIN)) {
+    fail(`canary: a lobe with no contour had a floor of ${signed(whiteLobe.rimMin - whiteLobe.body)} over the body and passed the full-contour gate`);
+  }
+  // 8d. The body is drawn on the SVG path, and over a dark surround it reads lighter than it.
+  if (!(darkOrb.body >= BODY_DARK_MIN)) {
+    fail(`the body over a dark surround reads ${signed(darkOrb.body)}, not lighter than it`);
+  }
+  if (!(noBody.body < BODY_DARK_MIN)) {
+    fail(`canary: with no body drawn the element still read ${signed(noBody.body)} over dark`);
+  }
+
+  // 8e. Over a mid-light surround (L about 0.55, glyph still white) a presence-carrying body is
+  //    lighter than it, as in the reference; the canary is the old direction on the same material.
+  if (!(denseBright.body >= BODY_BRIGHT_MIN)) {
+    fail(`the body over a mid-light surround reads ${signed(denseBright.body)}, not lighter than it`);
+  }
+  if (!(oldDirection.body < BODY_BRIGHT_MIN)) {
+    fail(`canary: the old direction over mid-light read ${signed(oldDirection.body)} and passed the gate`);
+  }
+
+  // 9. A sample from the host is a live input: setSample repaints the same element, update() alone
+  //    does not change it, and null goes back to the probe.
+  await page.evaluate(() => globalThis.__orb('dark', 'attached'));
+  const probed = await page.evaluate(() => globalThis.__orbVars());
+  await page.evaluate(() => globalThis.__orbUpdate());
+  const updated = await page.evaluate(() => globalThis.__orbVars());
+  await page.evaluate(() => globalThis.__orbSample('bright'));
+  const supplied = await page.evaluate(() => globalThis.__orbVars());
+  await page.evaluate(() => globalThis.__orbSample(null));
+  const released = await page.evaluate(() => globalThis.__orbVars());
+  console.log('check-dom: setSample repaints the element, update() alone does not, null goes back to the probe');
+  if (probed !== updated) fail('update() changed an element whose backdrop did not change — the sample check would prove nothing');
+  if (supplied === probed) fail('setSample did not change the element: the supplied backdrop is not an input');
+  if (released !== probed) fail('setSample(null) did not return to probing the page');
 
   // 7. §7: the way to put glass on a content control is for there to be no glass until a finger
   //    arrives. An element that shows anything at rest is permanent glass in the content layer.
