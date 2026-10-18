@@ -76,6 +76,13 @@ describe('the contrasting border (docs/reference.md §9)', () => {
     expect(colours.size).toBe(1);
     expect(css).not.toContain('rgba');
   });
+
+  it('goes with the element: absent at appear 0, partial on the way in', () => {
+    const luma = contrastRimLuma(BODY.tintDark);
+    expect(contrastRimCss(BODY.tintDark, luma, 0)).toMatch(/rgba\(\d+,\d+,\d+,0\.000\) 0deg/);
+    expect(contrastRimCss(BODY.tintDark, luma, 0.4)).toMatch(/rgba\(\d+,\d+,\d+,0\.400\) 0deg/);
+    expect(contrastRimCss(BODY.tintDark, luma, 1)).toBe(contrastRimCss(BODY.tintDark, luma));
+  });
 });
 
 // 219 @18:35: "Reduced Motion decreases the intensity of some effects and disables any elastic

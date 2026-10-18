@@ -129,10 +129,12 @@ export const RIM_WIDTH_PX = RIM.widthPx;
  * everything around it. It has to hold at every angle, including the one facing away from the key
  * light where the ordinary rim falls back to a dim dark line.
  */
-export function contrastRimCss(bodyLuma: number, rimLuma: number): string {
+export function contrastRimCss(bodyLuma: number, rimLuma: number, appear = 1): string {
   const v = to255(rimLuma);
-  // Opaque on purpose. A border that lets the backdrop through is the thing this setting exists
-  // to replace, and the body behind it is already at its own pole.
+  // Opaque on purpose once the element is there. A border that lets the backdrop through is the
+  // thing this setting exists to replace, and the body behind it is already at its own pole.
   void bodyLuma;
-  return `conic-gradient(rgb(${v},${v},${v}) 0deg, rgb(${v},${v},${v}) 360deg)`;
+  const present = clamp01(appear);
+  const colour = present >= 1 ? `rgb(${v},${v},${v})` : `rgba(${v},${v},${v},${present.toFixed(3)})`;
+  return `conic-gradient(${colour} 0deg, ${colour} 360deg)`;
 }

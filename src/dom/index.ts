@@ -548,7 +548,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     el.style.setProperty(
       '--vireglass-rim',
       (opts.accessibility ?? a11y).increaseContrast
-        ? contrastRimCss(pole, contrastRimLuma(pole))
+        ? contrastRimCss(pole, contrastRimLuma(pole), appear)
         : rimGradientCss(opticsNow, [tr, tg, tb], opts.light ?? REST_LIGHT, appear),
     );
     el.style.setProperty('--vireglass-rim-width', `${RIM_WIDTH_PX}px`);
