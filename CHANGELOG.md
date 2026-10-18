@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.1
+
+Under increased contrast the live DOM target drew its contrast rim whatever the element's appear: a glass meant
+to be absent (`setAppear(0)`, such as a trigger whose body a grown menu has taken over) left an outline behind.
+The contrast rim now follows appear like every other layer: absent at 0, partial on the way in, opaque once the
+element is there (#18).
+
 ## 3.0.0
 
 What a resting control looked like against the reference, measured and corrected in the live DOM
