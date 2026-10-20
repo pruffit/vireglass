@@ -152,6 +152,20 @@ describe('interim without its end', () => {
     expect(renderStats().probes).toBe(1);
   });
 
+  it('is kept alive by setInterim(true) again, so a gesture held still does not bake mid-way', () => {
+    vi.useFakeTimers();
+    const g = attach();
+    g.setInterim(true);
+    for (let held = 0; held < 4; held += 1) {
+      vi.advanceTimersByTime(1500);
+      g.setInterim(true);
+    }
+    expect(renderStats()).toMatchObject({ probes: 0, fullBakes: 0 });
+    clearMapCache();
+    vi.advanceTimersByTime(2001);
+    expect(renderStats()).toMatchObject({ probes: 1, fullBakes: 1 });
+  });
+
   it('does not fire after an explicit end or a destroy', () => {
     vi.useFakeTimers();
     const g = attach();

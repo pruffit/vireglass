@@ -171,12 +171,13 @@ box. The body, rim, shadow and custom properties still update every frame. A cha
 shapes passed to `setMorph`, of `setAppear` or of the system accessibility settings rebuilds the map
 at reduced resolution and shows it in place, where the browser decodes lazily only once it has been
 decoded. `setInterim(false)` does one full-resolution rebuild and one probe (with a supplied
-`sample` it does not probe). Repeating a call is a no-op.
+`sample` it does not probe). Repeating `setInterim(false)` is a no-op.
 
 Always pair `setInterim(true)` with `setInterim(false)`. As a safety net an element that gets no call
 at all for 2 seconds (no resize, morph, appear or update) leaves interim by itself, exactly as
 `setInterim(false)` would, so a morph that never reported landing cannot leave the glass on a
-stretched map. A pause longer than that in the middle of a morph ends interim early.
+stretched map. A pause longer than that in the middle of a morph ends interim early. A gesture held
+still sends no geometry, so a host that keeps a drag or a press open longer than that calls `setInterim(true)` again while it lasts: each call restarts the 2 seconds.
 
 `renderStats()` returns `{ probes, fullBakes, reducedBakes, filterSwaps }`, counted since the last
 `resetRenderStats()`. Every map counts: a rebuild with a spectral edge is two full bakes, one for
