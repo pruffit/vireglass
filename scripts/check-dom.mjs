@@ -55,8 +55,12 @@ const FIXTURE = `<!doctype html>
 <div id="glass"></div>
 <div id="host"></div>
 <div id="orb" style="position:absolute;left:400px;top:30px;width:88px;height:88px;border-radius:44px;display:none"></div>
+<div id="scroller" style="position:absolute;left:380px;top:20px;width:130px;height:300px;overflow:auto;display:none">
+  <div style="height:900px;background-image:repeating-linear-gradient(90deg,#f4f7ff 0 1px,#0b0d12 1px 8px)"></div>
+</div>
+<div id="edge" style="position:absolute;left:380px;top:20px;width:130px;height:90px;pointer-events:none;display:none"></div>
 <script type="module">
-  import { attachGlass, renderStats, resetRenderStats } from '/dist/dom.js';
+  import { attachGlass, attachScrollEdge, renderStats, resetRenderStats } from '/dist/dom.js';
   import { MATERIAL_PRESETS, VIREGLASS_CONTROL_MATERIAL, resolveOptics, REST_LIGHT } from '/dist/index.js';
   import { rimGradientCss } from '/dist/dom.js';
 
@@ -196,6 +200,28 @@ const FIXTURE = `<!doctype html>
     morphing?.destroy();
     morphing = null;
     document.getElementById('glass').style.width = '${BOX.w}px';
+  };
+  let edge = null;
+  globalThis.__edge = async (mode) => {
+    edge?.destroy();
+    edge = null;
+    const scroller = document.getElementById('scroller');
+    const el = document.getElementById('edge');
+    scroller.style.display = mode === 'hidden' ? 'none' : 'block';
+    el.style.display = mode === 'hidden' ? 'none' : 'block';
+    scroller.scrollTop = 200;
+    if (mode === 'on' || mode === 'reversed') {
+      edge = attachScrollEdge(scroller, el, { side: 'top', ink: () => 0 });
+      if (mode === 'reversed') {
+        const written = el.style.getPropertyValue('mask-image');
+        // CSSOM drops the default 'to bottom' when it serialises, so the direction is read rather than replaced.
+        const stops = written.slice(written.indexOf('(') + 1).replace('to top, ', '').replace('to bottom, ', '');
+        const turned = 'linear-gradient(' + (written.includes('to top') ? 'to bottom' : 'to top') + ', ' + stops;
+        el.style.setProperty('mask-image', turned);
+        el.style.setProperty('-webkit-mask-image', turned);
+      }
+    }
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
   };
   globalThis.__appear = async (t) => {
     morphing.setAppear(t);
@@ -668,6 +694,31 @@ try {
   if (!(half > absent && half < present)) fail(`appear 0.5 reads ${half.toFixed(2)}, not between absent and present`);
   if (drift > alive * 0.05) fail(`back at appear 1 the rim differs from where it started by ${drift.toFixed(2)}`);
   if (keyed.after.fullBakes < 30) fail(`canary: 30 morph steps baked ${keyed.after.fullBakes} times — the appear gate cannot fail`);
+
+  // 11. §10: the scroll edge dissolves the content most at the edge the panel sits at, and less away from it. Read as how
+  //    much the edge changes the hairlines under it, at the top of the band and at its far end. The canary is the ramp
+  //    turned round, which the first version of this effect shipped while its unit test checked only the CSS it wrote.
+  const edgeShot = async (mode) => {
+    await page.evaluate((m) => globalThis.__edge(m), mode);
+    return `data:image/png;base64,${(await page.screenshot()).toString('base64')}`;
+  };
+  const unedged = await edgeShot('plain');
+  const soft = await edgeShot('on');
+  const turned = await edgeShot('reversed');
+  await page.evaluate(() => globalThis.__edge('hidden'));
+  const atEdge = { x: 384, y: 22, w: 112, h: 12 };
+  const farEnd = { x: 384, y: 94, w: 112, h: 12 };
+  const edgeNear = await diff(soft, unedged, atEdge);
+  const edgeFar = await diff(soft, unedged, farEnd);
+  const turnedNear = await diff(turned, unedged, atEdge);
+  const turnedFar = await diff(turned, unedged, farEnd);
+  console.log(
+    `check-dom: the scroll edge changes the content by ${edgeNear.toFixed(2)} at the panel's edge and ${edgeFar.toFixed(2)} at the far end of its band; ` +
+      `turned round, ${turnedNear.toFixed(2)} and ${turnedFar.toFixed(2)}`,
+  );
+  if (!(edgeNear > 2 * edgeFar)) fail(`the scroll edge is not strongest at the panel's edge (${edgeNear.toFixed(2)} there, ${edgeFar.toFixed(2)} at the far end)`);
+  if (edgeNear < 5) fail(`the scroll edge hardly changes the content at the panel's edge (${edgeNear.toFixed(2)})`);
+  if (turnedNear > 2 * turnedFar) fail('canary: a ramp turned round still read as strongest at the edge — the scroll edge gate cannot fail');
 
   if (!failed) {
     console.log('check-dom: the glass bends live DOM at its rim, leaves its middle alone, touches nothing outside itself, and the interactive variant is absent until touched');
