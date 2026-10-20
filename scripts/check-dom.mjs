@@ -56,7 +56,7 @@ const FIXTURE = `<!doctype html>
 <div id="host"></div>
 <div id="orb" style="position:absolute;left:400px;top:30px;width:88px;height:88px;border-radius:44px;display:none"></div>
 <script type="module">
-  import { attachGlass } from '/dist/dom.js';
+  import { attachGlass, renderStats, resetRenderStats } from '/dist/dom.js';
   import { MATERIAL_PRESETS, VIREGLASS_CONTROL_MATERIAL, resolveOptics, REST_LIGHT } from '/dist/index.js';
   import { rimGradientCss } from '/dist/dom.js';
 
@@ -154,6 +154,44 @@ const FIXTURE = `<!doctype html>
     orb.setSample(kind === 'dark' ? dark : kind === 'bright' ? bright : null);
   };
   globalThis.__orbUpdate = () => orb.update();
+
+  // A morph is a new geometry every frame. The element probes the page itself (no sample), so
+  // the probe counter has something to count.
+  let morphing = null;
+  globalThis.__morphBegin = (interim) => {
+    morphing?.destroy();
+    live?.destroy();
+    live = null;
+    orb?.destroy();
+    orb = null;
+    document.body.classList.remove('flat', 'bright', 'colour');
+    document.getElementById('orb').style.display = 'none';
+    document.getElementById('glass').style.display = 'block';
+    morphing = attachGlass(document.getElementById('glass'), {
+      material: MATERIAL_PRESETS.glass, interactive: false, shadow: false,
+    });
+    if (interim) morphing.setInterim(true);
+    resetRenderStats();
+  };
+  globalThis.__morphStep = async (i) => {
+    document.getElementById('glass').style.width = (${BOX.w} + 2 * i) + 'px';
+    await new Promise((r) => requestAnimationFrame(r));
+  };
+  globalThis.__morphShape = async (i) => {
+    morphing.setMorph({ smoothing: 24, shape: { offsetX: 150 + 3 * i, offsetY: -60, width: 90, height: 50, cornerRadius: 20 } });
+    await new Promise((r) => requestAnimationFrame(r));
+  };
+  globalThis.__morphEnd = async (interim) => {
+    const during = renderStats();
+    if (interim) morphing.setInterim(false);
+    await new Promise((r) => setTimeout(r, 300));
+    return { during, after: renderStats() };
+  };
+  globalThis.__morphDone = () => {
+    morphing?.destroy();
+    morphing = null;
+    document.getElementById('glass').style.width = '${BOX.w}px';
+  };
 
   globalThis.__mount('full');
   globalThis.__ready = true;
@@ -503,6 +541,69 @@ try {
   // 7. §7: the way to put glass on a content control is for there to be no glass until a finger
   //    arrives. An element that shows anything at rest is permanent glass in the content layer.
   if (atRest > 0.5) fail(`the interactive variant is visible untouched (${atRest.toFixed(2)}) — that is glass in the content layer`);
+
+  // 10. A morph is a new geometry every frame, and it used to cost a probe, a full-resolution bake and
+  //    a new filter element each time. Counted, not timed: a timer says nothing on a slow runner, a
+  //    counter does. The canary is the same sixty frames without the interim mode.
+  const FRAMES = 60;
+  const run = async (interim, withShots) => {
+    await page.evaluate((i) => globalThis.__morphBegin(i), interim);
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    await page.evaluate(() => globalThis.__morphStep(0));
+    const shots = [];
+    for (let i = 1; i <= FRAMES; i += 1) {
+      await page.evaluate((n) => globalThis.__morphStep(n), i);
+      if (withShots && i % 4 === 0) shots.push([i, `data:image/png;base64,${(await page.screenshot()).toString('base64')}`]);
+    }
+    return { stats: await page.evaluate((i) => globalThis.__morphEnd(i), interim), shots };
+  };
+
+  const interimRun = await run(true, true);
+  const { during: iDuring, after: iAfter } = interimRun.stats;
+  const canaryRun = await run(false, false);
+  const cAfter = canaryRun.stats.after;
+  console.log(
+    `check-dom: ${FRAMES} frames of changing geometry — interim: ${iDuring.probes} probes, ${iDuring.fullBakes} full bakes, ` +
+      `${iDuring.filterSwaps} filter swaps, then ${iAfter.probes} / ${iAfter.fullBakes} / ${iAfter.filterSwaps} after it ends; ` +
+      `without interim: ${cAfter.probes} probes, ${cAfter.fullBakes} full bakes, ${cAfter.filterSwaps} filter swaps`,
+  );
+  if (iDuring.probes !== 0) fail(`interim probed the backdrop ${iDuring.probes} times`);
+  if (iDuring.fullBakes !== 0) fail(`interim rebuilt the map at full resolution ${iDuring.fullBakes} times`);
+  if (iDuring.filterSwaps !== 0) fail(`interim swapped the filter element ${iDuring.filterSwaps} times`);
+  if (iAfter.probes !== 1) fail(`ending interim should probe once, probed ${iAfter.probes}`);
+  if (iAfter.fullBakes !== 1) fail(`ending interim should bake once at full resolution, baked ${iAfter.fullBakes}`);
+  if (iAfter.filterSwaps !== 0) fail(`ending interim replaced the filter element (${iAfter.filterSwaps}); it should update in place`);
+  if (!(cAfter.fullBakes >= FRAMES - 5 && cAfter.probes >= FRAMES - 5 && cAfter.filterSwaps >= FRAMES - 5)) {
+    fail(`canary: sixty frames without interim counted ${cAfter.probes} probes, ${cAfter.fullBakes} bakes, ${cAfter.filterSwaps} swaps — the gate cannot fail`);
+  }
+
+  // 10b. The stretched map still refracts at the new box, and no frame lacks the refraction it had.
+  //    Pixels are sampled across the growth: a frame drawn with a missing map shows a rim that is the page.
+  const leftRim = { x: BOX.x + 2, y: BOX.y + 2, w: 18, h: BOX.h - 4 };
+  const lows = [];
+  let weakest = Infinity;
+  for (const [n, shot] of interimRun.shots) {
+    const left = await diff(shot, none, leftRim);
+    const right = await diff(shot, none, { x: BOX.x + BOX.w + 2 * n - 20, y: BOX.y + 2, w: 18, h: BOX.h - 4 });
+    weakest = Math.min(weakest, left, right);
+    if (left < alive * 0.5 || right < alive * 0.5) lows.push(n);
+  }
+  console.log(`check-dom: through the interim growth the weakest rim band reads ${weakest.toFixed(2)} (at rest: ${alive.toFixed(2)}), ${lows.length} frames below half of it`);
+  if (lows.length > 0) fail(`frames ${lows.join(', ')} of the interim growth have a rim with no refraction — drawn without a decoded map, or a map that does not follow the box`);
+
+  // 10c. Changing the morph shapes during interim rebuilds the map small and updates the filter in place.
+  await page.evaluate(() => globalThis.__morphBegin(true));
+  for (let i = 0; i < 20; i += 1) await page.evaluate((n) => globalThis.__morphShape(n), i);
+  await page.evaluate(() => new Promise((r) => setTimeout(r, 200)));
+  const morphed = await page.evaluate(() => globalThis.__morphEnd(true));
+  await page.evaluate(() => globalThis.__morphDone());
+  console.log(
+    `check-dom: 20 morph changes inside interim — ${morphed.during.reducedBakes} reduced bakes, ${morphed.during.fullBakes} full bakes, ${morphed.during.filterSwaps} filter swaps`,
+  );
+  if (morphed.during.reducedBakes < 1) fail('a morph change during interim did not rebuild the map');
+  if (morphed.during.fullBakes !== 0 || morphed.during.filterSwaps !== 0 || morphed.during.probes !== 0) {
+    fail('a morph change during interim did full-resolution work, swapped the filter or probed');
+  }
 
   if (!failed) {
     console.log('check-dom: the glass bends live DOM at its rim, leaves its middle alone, touches nothing outside itself, and the interactive variant is absent until touched');
