@@ -239,6 +239,20 @@ describe('interim without its end', () => {
   });
 });
 
+describe('the map cache', () => {
+  it('does not hand one material the spectral map of another that differs only in its film', () => {
+    spectral.on = true;
+    attach();
+    const other = document.createElement('div');
+    other.getBoundingClientRect = el.getBoundingClientRect;
+    document.body.append(other);
+    resetRenderStats();
+    const second = attachGlass(other, { material: { ...MATERIAL_PRESETS.glass, film: 900 }, shadow: false });
+    expect(renderStats().fullBakes).toBe(1);
+    second.destroy();
+  });
+});
+
 describe('what the counters count', () => {
   it('counts the spectral map with the displacement map', () => {
     spectral.on = true;

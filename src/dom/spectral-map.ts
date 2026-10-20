@@ -32,6 +32,25 @@ function mapDensity(bevel: number, dpr: number): number {
   return Math.min(dpr, BEVEL_SAMPLES / bevel);
 }
 
+/** Table entries per map sample across the bevel, read with linear interpolation. */
+const DEPTH_STEPS_PER_SAMPLE = 32;
+
+/**
+ * The hue at evenly spaced depths into the bevel. `spectralHue` is a function of the depth alone for
+ * one element, so a few hundred evaluations stand in for one per pixel, which was most of a landing.
+ */
+function hueAlongDepth(bevel: number, rim: number, thick: number, optics: VireGlassOptics, density: number) {
+  const steps = Math.max(1, Math.ceil(bevel * density * DEPTH_STEPS_PER_SAMPLE));
+  const table = new Float64Array((steps + 1) * 3);
+  for (let k = 0; k <= steps; k += 1) {
+    const [r, g, b] = spectralHue((k / steps) * bevel, bevel, rim, thick, optics);
+    table[k * 3] = r;
+    table[k * 3 + 1] = g;
+    table[k * 3 + 2] = b;
+  }
+  return { table, steps };
+}
+
 export function renderSpectralPixels(
   optics: VireGlassOptics,
   geometry: VireGlassGeometry,
@@ -48,6 +67,8 @@ export function renderSpectralPixels(
   const halfW = geometry.width / 2;
   const halfH = geometry.height / 2;
   const neutral = Math.round((1 / HEADROOM) * 255);
+  const { table, steps } = hueAlongDepth(bevel, rim, thick, optics, density);
+  const toByte = 255 / HEADROOM;
 
   for (let py = 0; py < height; py += 1) {
     const y = (py + 0.5) / density - halfH;
@@ -64,10 +85,13 @@ export function renderSpectralPixels(
         data[i + 3] = 255;
         continue;
       }
-      const [r, g, b] = spectralHue(e, bevel, rim, thick, optics);
-      data[i] = Math.round((r / HEADROOM) * 255);
-      data[i + 1] = Math.round((g / HEADROOM) * 255);
-      data[i + 2] = Math.round((b / HEADROOM) * 255);
+      const u = (e / bevel) * steps;
+      const k = Math.min(Math.floor(u), steps - 1);
+      const f = u - k;
+      const at = k * 3;
+      data[i] = Math.round((table[at] + (table[at + 3] - table[at]) * f) * toByte);
+      data[i + 1] = Math.round((table[at + 1] + (table[at + 4] - table[at + 1]) * f) * toByte);
+      data[i + 2] = Math.round((table[at + 2] + (table[at + 5] - table[at + 2]) * f) * toByte);
       data[i + 3] = 255;
     }
   }

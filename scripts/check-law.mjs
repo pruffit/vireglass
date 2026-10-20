@@ -125,6 +125,7 @@ const NOT_CALIBRATION = new Map([
   ['MAX_STEP_PX', "the 8-bit displacement map's own resolution limit"],
   ['SCALE_GAIN', "the 8-bit displacement map's own headroom"],
   ['BEVEL_SAMPLES', 'how finely a map is sampled, traded against build cost'],
+  ['DEPTH_STEPS_PER_SAMPLE', 'how finely the hue is tabled along the depth, held to one 8-bit step of the exact hue'],
   ['HEADROOM', 'fixed-point headroom in the spectral map'],
   ['STOPS', 'how many stops a conic gradient is emitted with'],
   ['LIMIT', 'cache size'],

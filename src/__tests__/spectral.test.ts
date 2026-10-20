@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { diffraction, interference, spectralHue, surfaceCosine, surfaceSlope } from '../spectral';
-import { renderSpectralPixels } from '../dom/spectral-map';
-import { roundedRectGeometry, bevelDp } from '../geometry';
+import { hasSpectralEdge, renderSpectralPixels } from '../dom/spectral-map';
+import { roundedRectGeometry, bevelDp, rimDp, thicknessDp } from '../geometry';
+import { sdfRoundedRect } from '../sdf';
 import { MATERIAL_PRESETS, resolveOptics } from '../material';
 
 const mean = (v: readonly number[]) => (v[0]! + v[1]! + v[2]!) / 3;
@@ -74,5 +75,33 @@ describe('the baked map', () => {
     const largest = Math.max(data[i]!, data[i + 1]!, data[i + 2]!);
     expect(largest).toBeLessThan(255);
     expect(headroom).toBeGreaterThan(1);
+  });
+
+  it('reads the hue from a table along the depth within one step of evaluating it at every pixel', () => {
+    const spectral = Object.values(MATERIAL_PRESETS).map((m) => resolveOptics(m)).filter(hasSpectralEdge);
+    expect(spectral.length).toBeGreaterThan(0);
+    let worst = 0;
+    for (const o of spectral) {
+      for (const [w, h, r] of [[200, 120, 30], [88, 640, 28], [390, 52, 26], [40, 40, 20]] as const) {
+        for (const dpr of [1, 2]) {
+          const g = roundedRectGeometry(w, h, r);
+          const { data, width, height, headroom } = renderSpectralPixels(o, g, dpr);
+          const bevel = bevelDp(g, o);
+          // Mirrors the map's own sampling; the width check fails loudly if that changes.
+          const density = Math.min(dpr, 24 / bevel);
+          expect(width).toBe(Math.max(1, Math.round(w * density)));
+          for (let py = 0; py < height; py += 1) {
+            for (let px = 0; px < width; px += 1) {
+              const e = Math.max(-sdfRoundedRect((px + 0.5) / density - w / 2, (py + 0.5) / density - h / 2, w, h, r), 0);
+              if (e >= bevel) continue;
+              const exact = spectralHue(e, bevel, rimDp(g, o), thicknessDp(g, o), o);
+              const i = (py * width + px) * 4;
+              for (const c of [0, 1, 2]) worst = Math.max(worst, Math.abs(data[i + c]! - Math.round((exact[c]! / headroom) * 255)));
+            }
+          }
+        }
+      }
+    }
+    expect(worst).toBeLessThanOrEqual(1);
   });
 });

@@ -654,7 +654,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
           return buildDisplacementMap(full, geometry, devicePixelRatio(), morphState());
         });
         const hue = hasSpectralEdge(full)
-          ? cached(`h|${key}`, () => {
+          ? cached(`h|${key}:${full.thicknessDp}:${full.film}:${full.iridescence}:${full.diffraction}`, () => {
               bump('fullBakes');
               return buildSpectralMap(full, geometry, devicePixelRatio());
             })

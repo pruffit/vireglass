@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.2.1
+
+A spectral bake costs a fraction of what it did, and ending interim with it (#26). DOM target only.
+
+The kit's perf gate, once its window covered the landing, showed 33 to 100 ms stalls when interim ended. The
+spectral map was most of it: 5 to 8 times the displacement map, because `renderSpectralPixels` evaluated
+`spectralHue` (a `pow`, a `sqrt`, six `cos`) at every pixel of the bevel, although for one element the hue
+is a function of the depth into the bevel alone. It is now evaluated at 32 depths per map sample and read with
+linear interpolation, within one 8-bit step of the exact hue for every preset with a spectral edge.
+
+- Measured in Chromium on one machine: a spectral bake 5.7 → 2.3 ms for a 390×64 bar, 20.2 → 9.0 ms for a
+  390×520 sheet at dpr 2; `setInterim(false)` 13 to 26 → 5 to 14 ms across the kit's surfaces.
+- Counted in a unit test: a bake evaluates the hue at most 769 times whatever the element's size; it used to
+  be once per pixel of the bevel.
+- The cache key of a spectral map now carries what the hue depends on beyond the displacement map's key
+  (thickness, film, iridescence, diffraction). Two materials that differed only there shared one map.
+
 ## 3.2.0
 
 `setAppear` changes the lens in place instead of rebuilding its maps, so glass can materialise every frame (#24).
