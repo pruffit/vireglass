@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { diffraction, interference, spectralHue, surfaceCosine, surfaceSlope } from '../spectral';
-import { renderSpectralPixels } from '../dom/spectral-map';
-import { roundedRectGeometry, bevelDp } from '../geometry';
-import { MATERIAL_PRESETS, resolveOptics } from '../material';
+import { hasSpectralEdge, renderSpectralPixels } from '../dom/spectral-map';
+import { roundedRectGeometry, bevelDp, rimDp, thicknessDp } from '../geometry';
+import { sdfRoundedRect } from '../sdf';
+import { MATERIAL_PRESETS, resolveOptics, type VireGlassOptics } from '../material';
 
 const mean = (v: readonly number[]) => (v[0]! + v[1]! + v[2]!) / 3;
 
@@ -75,4 +76,51 @@ describe('the baked map', () => {
     expect(largest).toBeLessThan(255);
     expect(headroom).toBeGreaterThan(1);
   });
+
+  /** The largest byte difference from the hue evaluated at the pixel, clipped by the headroom as the map is. */
+  function worstAgainstExact(materials: VireGlassOptics[]): number {
+    let worst = 0;
+    for (const o of materials) {
+      for (const [w, h, r] of [[200, 120, 30], [88, 640, 28], [390, 52, 26], [40, 40, 20], [900, 700, 40]] as const) {
+        for (const dpr of [1, 2, 3]) {
+          const g = roundedRectGeometry(w, h, r);
+          const { data, width, height, headroom } = renderSpectralPixels(o, g, dpr);
+          const bevel = bevelDp(g, o);
+          // Mirrors the map's own sampling; the width check fails loudly if that changes.
+          const density = Math.min(dpr, 24 / bevel);
+          expect(width).toBe(Math.max(1, Math.round(w * density)));
+          for (let py = 0; py < height; py += 1) {
+            for (let px = 0; px < width; px += 1) {
+              const e = Math.max(-sdfRoundedRect((px + 0.5) / density - w / 2, (py + 0.5) / density - h / 2, w, h, r), 0);
+              if (e >= bevel) continue;
+              const exact = spectralHue(e, bevel, rimDp(g, o), thicknessDp(g, o), o);
+              const i = (py * width + px) * 4;
+              for (const c of [0, 1, 2]) {
+                const want = Math.min(255, Math.max(0, Math.round((exact[c]! / headroom) * 255)));
+                worst = Math.max(worst, Math.abs(data[i + c]! - want));
+              }
+            }
+          }
+        }
+      }
+    }
+    return worst;
+  }
+
+  it('reads the hue from a table along the depth within one step of evaluating it at every pixel, for the presets', () => {
+    const presets = Object.values(MATERIAL_PRESETS).map((m) => resolveOptics(m)).filter(hasSpectralEdge);
+    expect(presets.length).toBeGreaterThan(0);
+    expect(worstAgainstExact(presets)).toBeLessThanOrEqual(1);
+  }, 60_000);
+
+  it('and for the extremes of film, iridescence and diffraction', () => {
+    const extremes = [MATERIAL_PRESETS.thin, MATERIAL_PRESETS.thick, MATERIAL_PRESETS.glass].flatMap((m) =>
+      [
+        { film: 900, iridescence: 1, diffraction: 0 },
+        { film: 340, iridescence: 0, diffraction: 1 },
+        { film: 620, iridescence: 0.3, diffraction: 0.3 },
+      ].map((s) => ({ ...resolveOptics(m), ...s })),
+    );
+    expect(worstAgainstExact(extremes)).toBeLessThanOrEqual(1);
+  }, 60_000);
 });
