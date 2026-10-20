@@ -436,7 +436,8 @@ export type GlassHandle = {
    * probing the backdrop, stops rebuilding its maps and keeps its filter: the existing map is
    * stretched over the live box. A change of `setMorph` shapes still updates the map, at reduced
    * resolution and only once the new image has decoded. Turning it off does one full-resolution
-   * rebuild and one probe. Repeated calls with the same value do nothing.
+   * rebuild and one probe. With no call for 2 s it turns itself off; calling it on again restarts
+   * the 2 s, which is how a host keeps a gesture held still interim. Turning it off twice does nothing.
    */
   setInterim(on: boolean): void;
   /**
@@ -955,7 +956,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     setInterim(on) {
       if (destroyed) return;
       if (on) {
-        // Again while interim is the host saying it is still moving: a gesture held still sends no geometry.
+        // A gesture held still sends no geometry, so a repeat is the host saying it is still moving.
         interim = true;
         keepInterim();
         return;

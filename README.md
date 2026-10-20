@@ -176,8 +176,8 @@ decoded. `setInterim(false)` does one full-resolution rebuild and one probe (wit
 Always pair `setInterim(true)` with `setInterim(false)`. As a safety net an element that gets no call
 at all for 2 seconds (no resize, morph, appear or update) leaves interim by itself, exactly as
 `setInterim(false)` would, so a morph that never reported landing cannot leave the glass on a
-stretched map. A gesture held still sends no geometry, so a host that keeps a drag or a press open
-longer than that calls `setInterim(true)` again while it lasts: each call restarts the 2 seconds.
+stretched map. A pause longer than that in the middle of a morph ends interim early. A gesture held
+still sends no geometry, so a host that keeps a drag or a press open longer than that calls `setInterim(true)` again while it lasts: each call restarts the 2 seconds.
 
 `renderStats()` returns `{ probes, fullBakes, reducedBakes, filterSwaps }`, counted since the last
 `resetRenderStats()`. Every map counts: a rebuild with a spectral edge is two full bakes, one for
