@@ -1,5 +1,24 @@
 # Changelog
 
+## 3.1.0
+
+An interim mode for glass that changes shape every frame, and counters for the work the live DOM target
+does. DOM target only; the WebGL2 and Android renderers are unchanged.
+
+Every morph, drag or growth of a glass element ran at 10 to 20 fps with glass on and 60 without, because each
+new geometry re-ran the whole pipeline: an `elementsFromPoint` backdrop probe, a full-resolution displacement
+and spectral map, and a new filter element swapped in with `replaceChild`.
+
+- `GlassHandle.setInterim(on)`. While on, `apply()` reuses the last sample (a supplied `sample` still wins),
+  keeps the filter and its maps (`feImage` stretches them over the live box) and updates only the cheap parts.
+  `setMorph` changes during interim rebuild the map at reduced resolution, keyed by geometry quantised to 2 px,
+  and update the filter in place once the new image has decoded. `setInterim(false)` does one full rebuild
+  and one probe, decoded before it is shown and applied in place.
+- `renderStats()` and `resetRenderStats()` from `vireglass/dom`: `probes`, `fullBakes`, `reducedBakes`,
+  `filterSwaps`, counted in the module. `check:dom` uses them to assert that sixty frames of changing
+  geometry inside interim cost no probe, no full bake and no filter swap, with the same frames outside
+  interim as the canary.
+
 ## 3.0.1
 
 Under increased contrast the live DOM target drew its contrast rim whatever the element's appear: a glass meant

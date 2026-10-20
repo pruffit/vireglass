@@ -153,6 +153,28 @@ glass.setMorph({ smoothing: 34, shape: { offsetX: 150, offsetY: -78, width: 170,
 Two shapes joined through the smooth union — §5's merging and splitting. What the shapes mean is
 your choreography; the material only knows how two silhouettes join.
 
+### Morphing elements
+
+```ts
+import { attachGlass, renderStats, resetRenderStats } from 'vireglass/dom';
+
+glass.setInterim(true);   // before a morph, a drag or a growth
+// ...animate the element's box, and `setMorph` shapes if it flows into others...
+glass.setInterim(false);  // when it lands
+```
+
+A glass element that changes shape every frame used to re-run the whole pipeline every frame: a
+backdrop probe, a full-resolution displacement map and a new filter element. That is the difference
+between 60 fps and 10 to 20. While interim, the element does none of it: it reuses its last sample,
+keeps its filter, and the browser stretches the existing map over the live box. The body, rim,
+shadow, custom properties and `setAppear` still update every frame. Morph shapes passed to
+`setMorph` during interim rebuild the map at reduced resolution and are shown only once decoded.
+`setInterim(false)` does one full-resolution rebuild and one probe. Repeating a call is a no-op.
+
+`renderStats()` returns `{ probes, fullBakes, reducedBakes, filterSwaps }`, counted since the last
+`resetRenderStats()`; a cache hit is not a bake. It is the hook for a performance gate that counts
+work instead of timing it: drive a morph, then assert the counters stayed at zero.
+
 `attachGlass` writes CSS custom properties you can use directly:
 
 | | |
