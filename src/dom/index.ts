@@ -12,7 +12,7 @@
 // See `docs/superpowers/specs/2026-09-19-vireglass-over-live-dom.md` for the technique and the
 // three findings that make it work (objectBoundingBox, prefiltering the source, the 8-bit step).
 import { ambientFrom, INK_DARK, INK_LIGHT, shouldInkBeLight, type BackdropSample } from '../adaptation';
-import { buildDisplacementMap, type DisplacementMap } from './displacement';
+import { buildDisplacementMap, displacementScale, type DisplacementMap } from './displacement';
 import { buildSpectralMap, hasSpectralEdge, type SpectralMap } from './spectral-map';
 import { cached } from './map-cache';
 import { roundedRectGeometry, type VireGlassGeometry } from '../geometry';
@@ -130,6 +130,11 @@ function getFilterHost(host: Document | ShadowRoot): SVGSVGElement {
   // A shadow root takes the svg directly; a document takes it on the body.
   (host instanceof ShadowRoot ? host : host.body).appendChild(svg);
   return svg;
+}
+
+/** Every apply writes the presence, and most applies do not change it. */
+function writeAttr(node: Element, name: string, value: string): void {
+  if (node.getAttribute(name) !== value) node.setAttribute(name, value);
 }
 
 /**
@@ -254,6 +259,7 @@ function withSpectral(filter: SVGFilterElement, spectral: SpectralMap | null): S
   product.setAttribute('in2', 'hue');
   product.setAttribute('operator', 'arithmetic');
   product.setAttribute('k1', String(spectral.headroom));
+  product.setAttribute('data-vireglass-headroom', String(spectral.headroom));
   product.setAttribute('k2', '0');
   product.setAttribute('k3', '0');
   product.setAttribute('k4', '0');
@@ -299,7 +305,7 @@ function decoded(url: string): Promise<void> {
   return typeof img.decode === 'function' ? img.decode().catch(() => undefined) : Promise.resolve();
 }
 
-type InterimMap = { map: DisplacementMap; ready: boolean };
+type InterimMap = { map: DisplacementMap; ready: boolean; geometry: VireGlassGeometry };
 
 /** Interim with no call for this long ends itself: a morph that never reported landing must not
  *  leave the glass on a stretched map for good. */
@@ -464,6 +470,8 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   let filterEl: SVGFilterElement | null = null;
   let destroyed = false;
   let mapKey = '';
+  // The box the shown map was baked for: its strength belongs to that map, also while interim stretches it.
+  let shownGeometry: VireGlassGeometry | null = null;
   let interim = false;
   let settling = false;
   let lastSample: BackdropSample | null = null;
@@ -551,14 +559,34 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     apply();
   }
 
-  function retarget(f: SVGFilterElement, map: DisplacementMap, hue: SpectralMap | null): void {
+  function retarget(f: SVGFilterElement, map: DisplacementMap, hue: SpectralMap | null, geometry: VireGlassGeometry): void {
     const images = f.querySelectorAll('feImage');
     images[0]?.setAttribute('href', map.url);
     if (hue) images[1]?.setAttribute('href', hue.url);
+    shownGeometry = geometry;
+    present(f);
+  }
+
+  /**
+   * The maps are baked at full presence and appear is these attributes. The spectral hue is
+   * `1 + appear * (hue - 1)`, so mixing the full one in is the same picture.
+   */
+  function present(f: SVGFilterElement): void {
+    if (!shownGeometry) return;
+    const o = optics();
+    const scale = displacementScale(o, shownGeometry);
     // EVERY pass, with its own share of the scale: see paintInteraction.
     for (const pass of f.querySelectorAll('feDisplacementMap')) {
       const ratio = Number(pass.getAttribute('data-vireglass-ratio') ?? 1);
-      pass.setAttribute('scale', String(map.scale * (Number.isFinite(ratio) ? ratio : 1)));
+      writeAttr(pass, 'scale', String(scale * (Number.isFinite(ratio) ? ratio : 1)));
+    }
+    const frost = f.querySelector('feGaussianBlur');
+    if (frost) writeAttr(frost, 'stdDeviation', String(Math.max(o.blur, 0)));
+    const hue = f.querySelector('feComposite[in2="hue"]');
+    if (hue) {
+      const headroom = Number(hue.getAttribute('data-vireglass-headroom') ?? 1);
+      writeAttr(hue, 'k1', String(headroom * appear));
+      writeAttr(hue, 'k2', String(1 - appear));
     }
   }
 
@@ -566,18 +594,18 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     if (!svgSupported || !filterEl || destroyed) return;
     const geometry = opts.geometry ?? measureGeometry(el);
     if (isEmpty(geometry)) return;
-    const opticsNow = optics();
+    const full = settledOptics();
     const key = interimKey(
       geometry.width,
       geometry.height,
       geometry.cornerRadius,
       JSON.stringify([morph?.smoothing, morph?.shape, morph?.shape2, morph?.shapes]),
-      `a${appear.toFixed(3)}:${opticsNow.refraction}:${opticsNow.refractionScale}:${opticsNow.bevelDp}`,
+      `${full.refraction}:${full.refractionScale}:${full.bevelDp}`,
     );
     let rec = interimMaps.get(key);
     if (!rec) {
       bump('reducedBakes');
-      rec = { map: buildDisplacementMap(opticsNow, geometry, Math.min(1, devicePixelRatio()), morphState()), ready: false };
+      rec = { map: buildDisplacementMap(full, geometry, Math.min(1, devicePixelRatio()), morphState()), ready: false, geometry };
       interimMaps.set(key, rec);
     }
     const mine = (seq += 1);
@@ -586,7 +614,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     const show = () => {
       if (destroyed || filterEl !== forFilter || mine <= shownSeq) return;
       shownSeq = mine;
-      retarget(forFilter, record.map, null);
+      retarget(forFilter, record.map, null, record.geometry);
     };
     if (record.ready) {
       show();
@@ -613,7 +641,8 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       // The map depends only on geometry, optics and density — never on the backdrop. Rebuilding
       // it on every scroll would re-run a per-pixel loop and a PNG encode for a picture that did
       // not change; the refraction itself updates in the compositor with no JS at all.
-      const key = `a${appear.toFixed(3)}|m${morphKey()}|${geometry.width}x${geometry.height}r${geometry.cornerRadius}@${devicePixelRatio()}:${opticsNow.refraction}:${opticsNow.refractionScale}:${opticsNow.bevelDp}:${opticsNow.blur}`;
+      const full = settledOptics();
+      const key = `m${morphKey()}|${geometry.width}x${geometry.height}r${geometry.cornerRadius}@${devicePixelRatio()}:${full.refraction}:${full.refractionScale}:${full.bevelDp}:${full.blur}`;
       if (interim && filterEl) {
         // The filter keeps its map; feImage stretches it over the live box.
       } else if (isEmpty(geometry)) {
@@ -622,15 +651,15 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
         // Keyed by exactly what the maps are functions of, which is exactly the cache key above.
         const map = cached(`d|${key}`, () => {
           bump('fullBakes');
-          return buildDisplacementMap(opticsNow, geometry, devicePixelRatio(), morphState());
+          return buildDisplacementMap(full, geometry, devicePixelRatio(), morphState());
         });
-        const hue = hasSpectralEdge(opticsNow)
+        const hue = hasSpectralEdge(full)
           ? cached(`h|${key}`, () => {
               bump('fullBakes');
-              return buildSpectralMap(opticsNow, geometry, devicePixelRatio());
+              return buildSpectralMap(full, geometry, devicePixelRatio());
             })
           : null;
-        const signature = filterSignature(opticsNow.blur, opticsNow.ior, opticsNow.iorSpread, !!hue);
+        const signature = filterSignature(full.blur, full.ior, full.iorSpread, !!hue);
         if (settling && filterEl?.getAttribute('data-vireglass-signature') === signature) {
           settling = false;
           const mine = (seq += 1);
@@ -639,21 +668,23 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
           void Promise.all([decoded(map.url), hue ? decoded(hue.url) : undefined]).then(() => {
             if (destroyed || filterEl !== forFilter || mapKey !== forKey || mine <= shownSeq) return;
             shownSeq = mine;
-            retarget(forFilter, map, hue);
+            retarget(forFilter, map, hue, geometry);
           });
         } else {
           settling = false;
           invalidate();
           const defs = getFilterHost(host).querySelector('defs') as SVGDefsElement;
-          const next = buildFilterElement(id, map.url, opticsNow, map.scale, hue);
+          const next = buildFilterElement(id, map.url, full, map.scale, hue);
           next.setAttribute('data-vireglass-signature', signature);
           if (filterEl?.parentNode) defs.replaceChild(next, filterEl);
           else defs.appendChild(next);
           bump('filterSwaps');
           filterEl = next;
+          shownGeometry = geometry;
         }
         mapKey = key;
       }
+      if (filterEl) present(filterEl);
       el.style.setProperty('backdrop-filter', `url(#${id})`);
       el.style.setProperty('-webkit-backdrop-filter', `url(#${id})`);
     } else {
@@ -922,7 +953,6 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       if (next === appear) return;
       appear = next;
       apply();
-      if (interim) requestInterimMap();
     },
     setAccent(next) {
       accent = next ?? undefined;

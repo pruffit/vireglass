@@ -1,5 +1,27 @@
 # Changelog
 
+## 3.2.0
+
+`setAppear` changes the lens in place instead of rebuilding its maps, so glass can materialise every frame (#24).
+DOM target only.
+
+Appear was part of the map key, so every step rebuilt the maps: at rest a full bake and a new filter element,
+50 to 200 ms on an integrated GPU, and during interim a reduced bake. The kit fell back to fading its toolbar
+capsules by opacity, which the reference rules out. Yet the map's pixels are a fraction of the displacement
+scale and do not depend on it, and the spectral hue is `1 + appear * (hue - 1)`. So the maps are now baked at
+full presence, and appear is written as attributes: the scale of every displacement pass, the frost's
+`stdDeviation`, and `k1`/`k2` on the spectral product to mix the hue in. The strength belongs to the
+map that is shown, so interim still stretches one map at one strength. The picture is the same at every appear: a `check:dom` run
+of the previous code read the same rim at 0, 0.5 and 1 (0.00, 44.00, 54.23). `check:optics` and
+`check:backdrop` cover the other targets, which this does not change.
+
+- 30 `setAppear` steps in unit tests and 31 in `check:dom` in a real browser cost no bake and no filter swap,
+  at rest and in interim. Thirty morph steps, which the map is keyed by, are the canary.
+- `setAppear` during interim no longer bakes a reduced map.
+- An element of the interactive variant, at appear 0 until touched, now bakes its full maps on attach and keeps
+  its spectral passes as an identity mix. Under the finger its frost and spectral mix stay where they were at
+  rest, as before; only the displacement follows the touch.
+
 ## 3.1.1
 
 `setInterim(true)` called again while interim restarts the 2 s safety net. It was a no-op, so a drag or a
