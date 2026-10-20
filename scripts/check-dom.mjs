@@ -59,8 +59,12 @@ const FIXTURE = `<!doctype html>
   <div style="height:900px;background-image:repeating-linear-gradient(90deg,#f4f7ff 0 1px,#0b0d12 1px 8px)"></div>
 </div>
 <div id="edge" style="position:absolute;left:380px;top:20px;width:130px;height:90px;pointer-events:none;display:none"></div>
+<div id="prose" style="position:absolute;left:380px;top:20px;width:130px;height:300px;overflow:hidden;background:#fbfbf8;color:#1c1c1e;font:13px/18px Georgia,serif;display:none">
+  <p style="margin:0">It was a bright cold day in April, and the clocks were striking thirteen. Winston Smith, his chin nuzzled into his breast in an effort to escape the vile wind, slipped quickly through the glass doors of Victory Mansions, though not quickly enough to prevent a swirl of gritty dust from entering along with him. The hallway smelt of boiled cabbage and old rag mats.</p>
+</div>
+<div id="proseGlass" style="position:absolute;left:392px;top:70px;width:106px;height:56px;border-radius:28px;display:none"></div>
 <script type="module">
-  import { attachGlass, attachScrollEdge, renderStats, resetRenderStats } from '/dist/dom.js';
+  import { attachGlass, attachScrollEdge, probeBackdrop, renderStats, resetRenderStats } from '/dist/dom.js';
   import { MATERIAL_PRESETS, VIREGLASS_CONTROL_MATERIAL, resolveOptics, REST_LIGHT } from '/dist/index.js';
   import { rimGradientCss } from '/dist/dom.js';
 
@@ -200,6 +204,27 @@ const FIXTURE = `<!doctype html>
     morphing?.destroy();
     morphing = null;
     document.getElementById('glass').style.width = '${BOX.w}px';
+  };
+  globalThis.__prose = async (mode) => {
+    const prose = document.getElementById('prose');
+    const lens = document.getElementById('proseGlass');
+    prose.style.display = mode === 'hidden' ? 'none' : 'block';
+    lens.style.display = mode === 'hidden' ? 'none' : 'block';
+    prose.style.color = mode === 'blank' ? 'transparent' : '#1c1c1e';
+    if (mode === 'hidden') return null;
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const sample = probeBackdrop(lens);
+    const glass = attachGlass(lens, { material: MATERIAL_PRESETS.glass });
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const alphaOf = (css) => {
+      const at = css.indexOf('rgba(');
+      if (at < 0) return 0;
+      return Number(css.slice(at + 5, css.indexOf(')', at)).split(',')[3]);
+    };
+    const alpha = alphaOf(lens.style.backgroundColor);
+    const shadow = alphaOf(lens.style.boxShadow);
+    glass.destroy();
+    return { busy: sample.busy, luma: sample.luma, alpha, shadow };
   };
   let edge = null;
   globalThis.__edge = async (mode) => {
@@ -719,6 +744,21 @@ try {
   if (!(edgeNear > 2 * edgeFar)) fail(`the scroll edge is not strongest at the panel's edge (${edgeNear.toFixed(2)} there, ${edgeFar.toFixed(2)} at the far end)`);
   if (edgeNear < 5) fail(`the scroll edge hardly changes the content at the panel's edge (${edgeNear.toFixed(2)})`);
   if (turnedNear > 2 * turnedFar) fail('canary: a ramp turned round still read as strongest at the edge — the scroll edge gate cannot fail');
+
+  // 12. Type under the glass is structure behind it, which declared styles do not show: the probe has to read a paragraph
+  //    as busy, and the shadow measured off the reference over text (law.ts SHADOW, frames 711–723) has to answer it. The
+  //    canary is the same paragraph with its text made transparent. The body's answer is still open (vireglass#31).
+  const prose = await page.evaluate(() => globalThis.__prose('text'));
+  const blank = await page.evaluate(() => globalThis.__prose('blank'));
+  await page.evaluate(() => globalThis.__prose('hidden'));
+  console.log(
+    `check-dom: over a paragraph the probe reads busy ${prose.busy.toFixed(3)}, shadow ${prose.shadow.toFixed(3)}, body alpha ${prose.alpha.toFixed(3)}; ` +
+      `with the text transparent, busy ${blank.busy.toFixed(3)}, shadow ${blank.shadow.toFixed(3)}, body alpha ${blank.alpha.toFixed(3)}`,
+  );
+  if (prose.busy < 0.2) fail(`the probe reads a paragraph under the glass as calm (busy ${prose.busy.toFixed(3)})`);
+  if (blank.busy > 0.05) fail(`canary: the same page without its text reads busy ${blank.busy.toFixed(3)}, so the text gate cannot tell them apart`);
+  if (Math.abs(prose.luma - blank.luma) > 0.02) fail(`the text moved the probe's lightness (${prose.luma.toFixed(3)} against ${blank.luma.toFixed(3)}); it must only add spread`);
+  if (!(prose.shadow > blank.shadow * 1.5)) fail(`the shadow does not answer the text: ${prose.shadow.toFixed(3)} over it, ${blank.shadow.toFixed(3)} without it`);
 
   if (!failed) {
     console.log('check-dom: the glass bends live DOM at its rim, leaves its middle alone, touches nothing outside itself, and the interactive variant is absent until touched');

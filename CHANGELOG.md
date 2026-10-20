@@ -1,5 +1,23 @@
 # Changelog
 
+## 3.3.0
+
+The DOM probe reads text under the glass. DOM target only.
+
+`probeBackdrop` reads declared styles, and type is not a declared background: a page of body text read as
+flat (`busy` 0), so everything that answers structure behind the glass did nothing over text. The shadow
+measured off the reference (frames 711–723: 4.0% over a flat light backdrop, 19.9% over text) stayed at its flat
+value over a paragraph. Why it shipped: no gate put type under the glass; `check:optics` sweeps luminance
+backdrops, none of them a line of text.
+
+- A sample point on a line box of a text node, with nothing opaque above it, counts the text's colour as a
+  share of the point (`PROBE.inkOfLine`, 0.2, unmeasured: typographic). It feeds `busy`; `luma`, `lo` and
+  `hi` stay the background's, so type never moves the ink's polarity on its own.
+- `check:dom` puts a paragraph under the glass in a real browser: `busy` 0.41 and the shadow 0.200 over it,
+  `busy` 0 and the shadow 0.040 with the text transparent (the canary), the reference's two numbers.
+- The body does not answer text yet: its legibility law reads a spread this size as enough under dark ink.
+  That calibration is #31.
+
 ## 3.2.2
 
 The scroll edge is strongest at the panel's edge and fades away from it. It was the other way round.

@@ -95,3 +95,26 @@ describe('the page floor (docs/reference.md §3)', () => {
     expect(compositeLayers([])).toBeNull();
   });
 });
+
+describe('type under the glass', () => {
+  const white = { r: 255, g: 255, b: 255 };
+  const ink = { r: 20, g: 20, b: 20 };
+
+  it('reads a page of body text as busy, which its declared colours alone read as flat', () => {
+    const plain = statsFromSamples(Array.from({ length: 25 }, () => white));
+    const prose = statsFromSamples(Array.from({ length: 25 }, (_, i) => ({ ...white, text: i % 4 === 3 ? null : ink })));
+    expect(plain.busy).toBe(0);
+    expect(prose.busy).toBeGreaterThan(0.3);
+  });
+
+  it('leaves the lightness and its percentiles to the background, so type alone never moves the ink', () => {
+    const plain = statsFromSamples(Array.from({ length: 25 }, () => white));
+    const prose = statsFromSamples(Array.from({ length: 25 }, () => ({ ...white, text: ink })));
+    expect([prose.luma, prose.lo, prose.hi]).toEqual([plain.luma, plain.lo, plain.hi]);
+  });
+
+  it('counts type by its contrast with the background', () => {
+    const on = (text: typeof ink) => statsFromSamples(Array.from({ length: 25 }, () => ({ ...white, text }))).busy;
+    expect(on({ r: 245, g: 245, b: 245 })).toBeLessThan(on(ink) / 10);
+  });
+});

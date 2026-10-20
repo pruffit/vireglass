@@ -5,6 +5,7 @@
 // this probes DECLARED STYLES instead: walk the stacking order under a grid of sample points and
 // read `background-color` (falling back to `color`) rather than any real pixel.
 import type { BackdropSample } from '../adaptation';
+import { PROBE } from '../law';
 
 /** A modest grid: this runs on scroll, not per frame. `elementsFromPoint` walks the whole
  *  stacking context at every sample point — a fine grid shows up in a profiler, a coarse one is
@@ -40,11 +41,16 @@ function luma(r: number, g: number, b: number): number {
  * formula here would mean the ink-polarity decision quietly drifts between renderers on the same
  * page. `samples` are 0..255 per channel, matching what `parseColor` returns.
  */
-export function statsFromSamples(samples: readonly (Omit<RgbColor, 'a'> & { a?: number })[]): BackdropSample {
+export function statsFromSamples(
+  samples: readonly (Omit<RgbColor, 'a'> & { a?: number; text?: Omit<RgbColor, 'a'> | null })[],
+): BackdropSample {
   const n = samples.length;
   if (n === 0) return { luma: 0.5, busy: 0, lo: 0.5, hi: 0.5, r: 0.5, g: 0.5, b: 0.5 };
 
   const lumas: number[] = [];
+  // The spread counts the type on a line as its share of the point; the lightness and its percentiles stay the
+  // background's, so text never moves the ink's polarity on its own.
+  const spread: { v: number; w: number }[] = [];
   let sr = 0;
   let sg = 0;
   let sb = 0;
@@ -52,7 +58,14 @@ export function statsFromSamples(samples: readonly (Omit<RgbColor, 'a'> & { a?: 
     const r = s.r / 255;
     const g = s.g / 255;
     const b = s.b / 255;
-    lumas.push(luma(r, g, b));
+    const v = luma(r, g, b);
+    lumas.push(v);
+    if (s.text) {
+      spread.push({ v, w: 1 - PROBE.inkOfLine });
+      spread.push({ v: luma(s.text.r / 255, s.text.g / 255, s.text.b / 255), w: PROBE.inkOfLine });
+    } else {
+      spread.push({ v, w: 1 });
+    }
     sr += r;
     sg += g;
     sb += b;
@@ -62,8 +75,11 @@ export function statsFromSamples(samples: readonly (Omit<RgbColor, 'a'> & { a?: 
   for (const v of lumas) mean += v;
   mean /= n;
 
+  let spreadMean = 0;
+  for (const s of spread) spreadMean += s.v * s.w;
+  spreadMean /= n;
   let busy = 0;
-  for (const v of lumas) busy += Math.abs(v - mean);
+  for (const s of spread) busy += Math.abs(s.v - spreadMean) * s.w;
   busy = Math.min((busy / n) * 2, 1);
 
   const sorted = [...lumas].sort((a, b) => a - b);
@@ -114,19 +130,38 @@ export function compositeLayers(layers: readonly RgbColor[]): RgbColor | null {
 
 /** Walks the stack at one point, skipping the glass element itself (it would otherwise probe its
  *  own background) and its descendants. */
-function sampleColorAt(el: HTMLElement, x: number, y: number): RgbColor | null {
+function sampleColorAt(el: HTMLElement, x: number, y: number): (RgbColor & { text: RgbColor | null }) | null {
   const stack = document.elementsFromPoint(x, y);
   const behind = stack.filter((node) => node !== el && !el.contains(node));
   const layers: RgbColor[] = [];
+  let ink: RgbColor | null = null;
+  let covered = false;
   for (const node of behind) {
-    const bg = parseColor(getComputedStyle(node).backgroundColor);
+    const style = getComputedStyle(node);
+    if (!ink && !covered && onTextLine(node, x, y)) ink = parseColor(style.color);
+    const bg = parseColor(style.backgroundColor);
     // `rgba(0, 0, 0, 0)` is what "transparent" resolves to almost everywhere: it contributes
     // nothing and must not shadow a real colour further down.
     if (bg && bg.a > 0.001) layers.push(bg);
+    if (bg && bg.a >= 0.999) covered = true;
   }
-  const composited = compositeLayers(layers);
-  if (composited) return composited;
-  return canvasColor(el);
+  const ground = compositeLayers(layers) ?? canvasColor(el);
+  if (!ground) return null;
+  const text = ink && ink.a > 0.001 ? compositeLayers([ink, { ...ground, a: 1 }]) : null;
+  return { ...ground, text };
+}
+
+/** Whether a point falls inside a line box of one of the element's own text nodes. */
+function onTextLine(node: Element, x: number, y: number): boolean {
+  for (const child of node.childNodes) {
+    if (child.nodeType !== Node.TEXT_NODE || !child.textContent?.trim()) continue;
+    const range = node.ownerDocument.createRange();
+    range.selectNodeContents(child);
+    for (const r of range.getClientRects()) {
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -174,7 +209,7 @@ export function probeBackdrop(el: HTMLElement, opts: ProbeOptions = {}): Backdro
   // the whole grid onto one corner point and reports whatever unrelated thing sits there as a
   // confident, perfectly flat reading.
   if (rect.width <= 0 || rect.height <= 0) return statsFromSamples([]);
-  const samples: RgbColor[] = [];
+  const samples: (RgbColor & { text: RgbColor | null })[] = [];
   for (let j = 0; j < rows; j += 1) {
     const y = rect.top + ((j + 0.5) / rows) * rect.height;
     for (let i = 0; i < cols; i += 1) {
