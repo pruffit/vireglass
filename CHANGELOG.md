@@ -1,5 +1,28 @@
 # Changelog
 
+## 3.1.0
+
+An interim mode for glass that changes shape every frame, and counters for the work the live DOM target
+does. DOM target only; the WebGL2 and Android renderers are unchanged.
+
+Every morph, drag or growth of a glass element ran at 10 to 20 fps with glass on and 60 without, because each
+new geometry re-ran the whole pipeline: an `elementsFromPoint` backdrop probe, a full-resolution displacement
+and spectral map, and a new filter element swapped in with `replaceChild`.
+
+- `GlassHandle.setInterim(on)`. While on, `apply()` reuses the last sample (a supplied `sample` still wins, and
+  then ending interim does not probe), keeps the filter and its maps (`feImage` stretches them over the live
+  box) and updates only the cheap parts. A change of `setMorph` shapes, of `setAppear` or of the accessibility
+  settings during interim rebuilds the map at reduced resolution, keyed by geometry quantised to 2 px, and
+  updates the filter in place; a new map is shown only after `Image.decode()`, which matters where the
+  browser decodes lazily. `setInterim(false)` does one full rebuild and one probe, decoded and applied in
+  place. Interim with no call for 2 s ends itself the same way. An element of no size is not baked.
+  `GlassHandle` gains this member, so a hand-written mock of the type needs it.
+- `renderStats()` and `resetRenderStats()` from `vireglass/dom`: `probes`, `fullBakes`, `reducedBakes`,
+  `filterSwaps`, counted in the module. The spectral map counts as a bake of its own. `check:dom` uses them to
+  assert that sixty frames of changing geometry inside interim cost no probe, no full bake and no filter
+  swap, with the same frames outside interim as the canary.
+- When a finger settles, the full-resolution map is decoded and set in place instead of swapping the filter.
+
 ## 3.0.1
 
 Under increased contrast the live DOM target drew its contrast rim whatever the element's appear: a glass meant
