@@ -1,5 +1,30 @@
 # Changelog
 
+## 3.3.0
+
+The DOM probe reads text under the glass. DOM target only.
+
+`probeBackdrop` reads declared styles, and type is not a declared background: a page of body text read as
+flat (`busy` 0), so everything that answers structure behind the glass did nothing over text. The shadow
+measured off the reference (frames 711–723: 4.0% over a flat light backdrop, 19.9% over text) stayed at its flat
+value over a paragraph. Why it shipped: no gate put type under the glass; `check:optics` sweeps luminance
+backdrops, none of them a line of text.
+
+- A sample point on a line box of a text node, with nothing opaque above it, counts the text's colour as a
+  share of the point (`PROBE.inkOfLine`, 0.2, unmeasured: typographic). It feeds `busy`; `luma`, `lo` and
+  `hi` stay the background's, so type never moves the ink's polarity on its own.
+- `check:dom` puts a paragraph under the glass in a real browser: `busy` 0.41 and the shadow 0.200 over it,
+  `busy` 0 and the shadow 0.040 with the text transparent (the canary), the reference's two numbers.
+- Text above an image, a video, a canvas, an iframe or a background image is covered by it; a text fill
+  (`-webkit-text-fill-color`) wins over `color`, and the element's own opacity thins it. The line boxes of each
+  text node are measured once per probe.
+- What else follows `busy` changes over text. The ink requirement in `resolveBody` now binds there in full, and
+  the fine-texture ground rises a little. Under light ink over a page of light text that raises the body; under
+  dark ink over dark text on a light page the law still reads the spread as enough, so the body stays where it
+  was. Calibrating that against the reference is the rest of #31.
+- The share is an estimate, and a 5 by 5 grid meets lines as they scroll past it, so `busy` over text moves in
+  steps while it scrolls.
+
 ## 3.2.2
 
 The scroll edge is strongest at the panel's edge and fades away from it. It was the other way round.

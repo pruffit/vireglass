@@ -248,9 +248,11 @@ Three things to know before you reach for it:
   has patches in flight. Elsewhere `attachGlass` falls back to blur, saturation and tint from the
   same optics — detected by measurement, never by user-agent string.
 - **There is no pixel probe, so adaptation reads declared styles.** The grid under the element is
-  sampled through `elementsFromPoint` and the background stack is composited. That is exact for
-  colour-defined surfaces and blind to images, video and canvas — tell it what is there instead,
-  since your app already knows its cover-art accent (below).
+  sampled through `elementsFromPoint` and the background stack is composited, and a point on a line
+  of text counts the text as an estimated share of the point's spread (`busy`), not of its
+  lightness. That is exact for colour-defined surfaces, an estimate for type, and blind to images,
+  video and canvas — tell it what is there instead, since your app already knows its cover-art
+  accent (below).
 
 ## Android / React Native
 
@@ -387,7 +389,7 @@ timestamp so the claims can be checked. No Apple code, assets or footage is incl
 distributed with this package.
 
 Every calibrated number lives in `src/law.ts` with its provenance, and `check:law` names the ones
-that have none: **51 of 130** today. See [`docs/law.md`](docs/law.md).
+that have none: **52 of 131** today. See [`docs/law.md`](docs/law.md).
 
 ## License
 

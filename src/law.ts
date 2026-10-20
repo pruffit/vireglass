@@ -119,6 +119,16 @@ export const BODY = {
   inkPoleTo: 0.8,
 } as const;
 
+/** What the DOM probe reads of type under the glass, which declared styles do not show. */
+export const PROBE = {
+  /**
+   * Share of a line box that a line of body text inks. A sample point on a line is that share of the
+   * text's colour over the rest of the background. UNMEASURED: typographic, 15–25% for Latin text at
+   * a reading weight; the reference frames of a bar over text are what settles it.
+   */
+  inkOfLine: 0.2,
+} as const;
+
 /** Shadow (§4). The density law lives in `geometry.ts`; these are its measured ends. */
 export const SHADOW = {
   /**
