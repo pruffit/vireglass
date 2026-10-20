@@ -178,8 +178,13 @@ const FIXTURE = `<!doctype html>
     await new Promise((r) => requestAnimationFrame(r));
   };
   globalThis.__morphShape = async (i) => {
+    const href = () => document.querySelector('svg[data-vireglass-filters] filter feImage')?.getAttribute('href');
+    const before = href();
     morphing.setMorph({ smoothing: 24, shape: { offsetX: 150 + 3 * i, offsetY: -60, width: 90, height: 50, cornerRadius: 20 } });
-    await new Promise((r) => requestAnimationFrame(r));
+    // The new map is shown once it has decoded, so wait for the href to move rather than a fixed time.
+    const started = performance.now();
+    while (href() === before && performance.now() - started < 1000) await new Promise((r) => requestAnimationFrame(r));
+    return { before, after: href() };
   };
   globalThis.__morphEnd = async (interim) => {
     const during = renderStats();
@@ -546,6 +551,8 @@ try {
   //    a new filter element each time. Counted, not timed: a timer says nothing on a slow runner, a
   //    counter does. The canary is the same sixty frames without the interim mode.
   const FRAMES = 60;
+  // The glass preset has a spectral edge, so a rebuild bakes two maps: displacement and spectral.
+  const MAPS = 2;
   const run = async (interim, withShots) => {
     await page.evaluate((i) => globalThis.__morphBegin(i), interim);
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
@@ -571,9 +578,9 @@ try {
   if (iDuring.fullBakes !== 0) fail(`interim rebuilt the map at full resolution ${iDuring.fullBakes} times`);
   if (iDuring.filterSwaps !== 0) fail(`interim swapped the filter element ${iDuring.filterSwaps} times`);
   if (iAfter.probes !== 1) fail(`ending interim should probe once, probed ${iAfter.probes}`);
-  if (iAfter.fullBakes !== 1) fail(`ending interim should bake once at full resolution, baked ${iAfter.fullBakes}`);
+  if (iAfter.fullBakes !== MAPS) fail(`ending interim should bake once at full resolution (${MAPS} maps), baked ${iAfter.fullBakes}`);
   if (iAfter.filterSwaps !== 0) fail(`ending interim replaced the filter element (${iAfter.filterSwaps}); it should update in place`);
-  if (!(cAfter.fullBakes >= FRAMES - 5 && cAfter.probes >= FRAMES - 5 && cAfter.filterSwaps >= FRAMES - 5)) {
+  if (!(cAfter.fullBakes >= MAPS * (FRAMES - 5) && cAfter.probes >= FRAMES - 5 && cAfter.filterSwaps >= FRAMES - 5)) {
     fail(`canary: sixty frames without interim counted ${cAfter.probes} probes, ${cAfter.fullBakes} bakes, ${cAfter.filterSwaps} swaps — the gate cannot fail`);
   }
 
@@ -593,8 +600,22 @@ try {
 
   // 10c. Changing the morph shapes during interim rebuilds the map small and updates the filter in place.
   await page.evaluate(() => globalThis.__morphBegin(true));
-  for (let i = 0; i < 20; i += 1) await page.evaluate((n) => globalThis.__morphShape(n), i);
-  await page.evaluate(() => new Promise((r) => setTimeout(r, 200)));
+  let stuck = 0;
+  let last = null;
+  for (let i = 0; i < 20; i += 1) {
+    last = await page.evaluate((n) => globalThis.__morphShape(n), i);
+    if (last.after === last.before) stuck += 1;
+  }
+  // Right after the last change: the filter carries the latest key's map (asking for the same shape
+  // again is answered from the cache and must leave the href where it is), and the rim still refracts.
+  const settledHref = last.after;
+  const again = await page.evaluate(() => globalThis.__morphShape(19));
+  const shapeShot = `data:image/png;base64,${(await page.screenshot()).toString('base64')}`;
+  const shapeRim = await diff(shapeShot, none, { x: BOX.x + 2, y: BOX.y + 2, w: 18, h: BOX.h - 4 });
+  console.log(`check-dom: after the last shape change the rim reads ${shapeRim.toFixed(2)} (at rest: ${alive.toFixed(2)}); ${stuck} of 20 changes left the href where it was`);
+  if (stuck > 0) fail(`${stuck} shape changes inside interim never reached the filter`);
+  if (again.after !== settledHref) fail('asking for the latest shape again moved the href: the filter was not showing the latest map');
+  if (shapeRim < alive * 0.5) fail(`the rim has no refraction right after a shape change in interim (${shapeRim.toFixed(2)})`);
   const morphed = await page.evaluate(() => globalThis.__morphEnd(true));
   await page.evaluate(() => globalThis.__morphDone());
   console.log(

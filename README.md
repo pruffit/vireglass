@@ -164,16 +164,24 @@ glass.setInterim(false);  // when it lands
 ```
 
 A glass element that changes shape every frame used to re-run the whole pipeline every frame: a
-backdrop probe, a full-resolution displacement map and a new filter element. That is the difference
-between 60 fps and 10 to 20. While interim, the element does none of it: it reuses its last sample,
-keeps its filter, and the browser stretches the existing map over the live box. The body, rim,
-shadow, custom properties and `setAppear` still update every frame. Morph shapes passed to
-`setMorph` during interim rebuild the map at reduced resolution and are shown only once decoded.
-`setInterim(false)` does one full-resolution rebuild and one probe. Repeating a call is a no-op.
+backdrop probe, a full-resolution displacement map (and spectral map) and a new filter element.
+That is the difference between 60 fps and 10 to 20. While interim, the element does none of it: it
+reuses its last sample, keeps its filter, and the browser stretches the existing map over the live
+box. The body, rim, shadow and custom properties still update every frame. A change of the morph
+shapes passed to `setMorph`, of `setAppear` or of the system accessibility settings rebuilds the map
+at reduced resolution and shows it in place, where the browser decodes lazily only once it has been
+decoded. `setInterim(false)` does one full-resolution rebuild and one probe (with a supplied
+`sample` it does not probe). Repeating a call is a no-op.
+
+Always pair `setInterim(true)` with `setInterim(false)`. As a safety net an element that gets no call
+at all for 2 seconds (no resize, morph, appear or update) leaves interim by itself, exactly as
+`setInterim(false)` would, so a morph that never reported landing cannot leave the glass on a
+stretched map. A pause longer than that in the middle of a morph ends interim early.
 
 `renderStats()` returns `{ probes, fullBakes, reducedBakes, filterSwaps }`, counted since the last
-`resetRenderStats()`; a cache hit is not a bake. It is the hook for a performance gate that counts
-work instead of timing it: drive a morph, then assert the counters stayed at zero.
+`resetRenderStats()`. Every map counts: a rebuild with a spectral edge is two full bakes, one for
+each map; a cache hit is none. It is the hook for a performance gate that counts work instead of
+timing it: drive a morph, then assert the counters stayed at zero.
 
 `attachGlass` writes CSS custom properties you can use directly:
 

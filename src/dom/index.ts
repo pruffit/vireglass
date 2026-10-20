@@ -19,7 +19,7 @@ import { roundedRectGeometry, type VireGlassGeometry } from '../geometry';
 import { resolveOptics, VIREGLASS_MATERIAL, type VireGlassMaterial, type VireGlassOptics } from '../material';
 import { probeBackdrop } from './probe';
 import { bump } from './stats';
-import { createLru, filterSignature, interimKey } from './interim';
+import { createLru, filterSignature, interimKey, quantise } from './interim';
 import { supportsSvgBackdropFilter } from './support';
 import { boxShadowCss } from './shadow';
 import { bodyLayer, resolveBody, withPresence } from './body';
@@ -301,6 +301,12 @@ function decoded(url: string): Promise<void> {
 
 type InterimMap = { map: DisplacementMap; ready: boolean };
 
+/** Interim with no call for this long ends itself: a morph that never reported landing must not
+ *  leave the glass on a stretched map for good. */
+const INTERIM_IDLE_MS = 2000;
+
+const isEmpty = (g: VireGlassGeometry) => quantise(g.width) < 1 || quantise(g.height) < 1;
+
 const to255 = (v: number) => Math.round(Math.min(Math.max(v, 0), 1) * 255);
 
 function rgbCss(r: number, g: number, b: number): string {
@@ -462,6 +468,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   let lastSample: BackdropSample | null = null;
   let seq = 0;
   let shownSeq = 0;
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
   const interimMaps = createLru<InterimMap>(8);
   let morph: GlassMorph | null = null;
   const onlyWhenTouched = opts.variant === 'interactive';
@@ -476,6 +483,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     mapKey = '';
     deform.setElastic(elasticAllowed(opts.accessibility ?? a11y));
     apply();
+    if (interim) requestInterimMap();
   });
 
   warnIfNested(el);
@@ -520,6 +528,28 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     return `${morph.smoothing}/${part(morph.shape)}/${part(morph.shape2)}`;
   }
 
+  /** Drops every pending decode: whatever installs a map synchronously supersedes them. */
+  function invalidate(): void {
+    seq += 1;
+    shownSeq = seq;
+  }
+
+  function keepInterim(): void {
+    if (idleTimer !== null) clearTimeout(idleTimer);
+    idleTimer = setTimeout(leaveInterim, INTERIM_IDLE_MS);
+  }
+
+  function leaveInterim(): void {
+    if (idleTimer !== null) clearTimeout(idleTimer);
+    idleTimer = null;
+    if (destroyed || !interim) return;
+    interim = false;
+    invalidate();
+    mapKey = '';
+    settling = true;
+    apply();
+  }
+
   function retarget(f: SVGFilterElement, map: DisplacementMap, hue: SpectralMap | null): void {
     const images = f.querySelectorAll('feImage');
     images[0]?.setAttribute('href', map.url);
@@ -534,6 +564,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   function requestInterimMap(): void {
     if (!svgSupported || !filterEl || destroyed) return;
     const geometry = opts.geometry ?? measureGeometry(el);
+    if (isEmpty(geometry)) return;
     const opticsNow = optics();
     const key = interimKey(
       geometry.width,
@@ -550,10 +581,11 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     }
     const mine = (seq += 1);
     const record = rec;
+    const forFilter = filterEl;
     const show = () => {
-      if (destroyed || !filterEl || mine <= shownSeq) return;
+      if (destroyed || filterEl !== forFilter || mine <= shownSeq) return;
       shownSeq = mine;
-      retarget(filterEl, record.map, null);
+      retarget(forFilter, record.map, null);
     };
     if (record.ready) {
       show();
@@ -567,6 +599,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
 
   function apply(): void {
     if (destroyed) return;
+    if (interim) keepInterim();
     const geometry = opts.geometry ?? measureGeometry(el);
     const opticsNow = optics();
     const sample = supplied ?? (interim && lastSample ? lastSample : probe(el));
@@ -582,6 +615,8 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       const key = `a${appear.toFixed(3)}|m${morphKey()}|${geometry.width}x${geometry.height}r${geometry.cornerRadius}@${devicePixelRatio()}:${opticsNow.refraction}:${opticsNow.refractionScale}:${opticsNow.bevelDp}:${opticsNow.blur}`;
       if (interim && filterEl) {
         // The filter keeps its map; feImage stretches it over the live box.
+      } else if (isEmpty(geometry)) {
+        // Nothing to refract in a box of no size; the next resize bakes it.
       } else if (key !== mapKey || !filterEl) {
         // Keyed by exactly what the maps are functions of, which is exactly the cache key above.
         const map = cached(`d|${key}`, () => {
@@ -589,19 +624,25 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
           return buildDisplacementMap(opticsNow, geometry, devicePixelRatio(), morphState());
         });
         const hue = hasSpectralEdge(opticsNow)
-          ? cached(`h|${key}`, () => buildSpectralMap(opticsNow, geometry, devicePixelRatio()))
+          ? cached(`h|${key}`, () => {
+              bump('fullBakes');
+              return buildSpectralMap(opticsNow, geometry, devicePixelRatio());
+            })
           : null;
         const signature = filterSignature(opticsNow.blur, opticsNow.ior, opticsNow.iorSpread, !!hue);
         if (settling && filterEl?.getAttribute('data-vireglass-signature') === signature) {
           settling = false;
           const mine = (seq += 1);
+          const forFilter = filterEl;
+          const forKey = key;
           void Promise.all([decoded(map.url), hue ? decoded(hue.url) : undefined]).then(() => {
-            if (destroyed || !filterEl || mine <= shownSeq) return;
+            if (destroyed || filterEl !== forFilter || mapKey !== forKey || mine <= shownSeq) return;
             shownSeq = mine;
-            retarget(filterEl, map, hue);
+            retarget(forFilter, map, hue);
           });
         } else {
           settling = false;
+          invalidate();
           const defs = getFilterHost(host).querySelector('defs') as SVGDefsElement;
           const next = buildFilterElement(id, map.url, opticsNow, map.scale, hue);
           next.setAttribute('data-vireglass-signature', signature);
@@ -685,11 +726,12 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     // applying because a finger is down.
     const risen = optics({ ...opts.material, roughness: (opts.material?.roughness ?? VIREGLASS_MATERIAL.roughness) * rise.solid });
 
+    if (interim) keepInterim();
     // A reduced-resolution map while the finger is down: `feImage` stretches it over the element
     // regardless, the displacement is smooth, and a full device-pixel rebuild plus a PNG encode
     // every frame does not hold a frame budget.
-    bump(interacting ? 'reducedBakes' : 'fullBakes');
-    const map = buildDisplacementMap(risen, geometry, interacting ? 1 : devicePixelRatio(), {
+    bump('reducedBakes');
+    const map = buildDisplacementMap(risen, geometry, 1, {
       ...morphState(),
       touch: {
         x: sampleOut.touchX,
@@ -702,6 +744,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
         wavePhase: sampleOut.wavePhase,
       },
     });
+    invalidate();
     if (filterEl) {
       const feImage = filterEl.querySelector('feImage');
       feImage?.setAttribute('href', map.url);
@@ -769,7 +812,9 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       // Settled: put the full-resolution map back and drop the glow.
       el.style.setProperty('--vireglass-glow-opacity', '0');
       opts.onGlow?.(null);
+      settling = !interim;
       apply();
+      if (interim) requestInterimMap();
       return;
     }
     frame = requestAnimationFrame(tick);
@@ -831,6 +876,9 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
 
   function destroy(): void {
     destroyed = true;
+    invalidate();
+    if (idleTimer !== null) clearTimeout(idleTimer);
+    idleTimer = null;
     stopWatchingA11y();
     if (attached.get(el) === handle) attached.delete(el);
     if (frame !== null) cancelAnimationFrame(frame);
@@ -873,6 +921,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       if (next === appear) return;
       appear = next;
       apply();
+      if (interim) requestInterimMap();
     },
     setAccent(next) {
       accent = next ?? undefined;
@@ -905,12 +954,12 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     },
     setInterim(on) {
       if (destroyed || on === interim) return;
-      interim = on;
-      if (on) return;
-      shownSeq = seq;
-      mapKey = '';
-      settling = true;
-      apply();
+      if (on) {
+        interim = true;
+        keepInterim();
+        return;
+      }
+      leaveInterim();
     },
     setSample(next) {
       supplied = next ?? undefined;

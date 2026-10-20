@@ -9,15 +9,19 @@ Every morph, drag or growth of a glass element ran at 10 to 20 fps with glass on
 new geometry re-ran the whole pipeline: an `elementsFromPoint` backdrop probe, a full-resolution displacement
 and spectral map, and a new filter element swapped in with `replaceChild`.
 
-- `GlassHandle.setInterim(on)`. While on, `apply()` reuses the last sample (a supplied `sample` still wins),
-  keeps the filter and its maps (`feImage` stretches them over the live box) and updates only the cheap parts.
-  `setMorph` changes during interim rebuild the map at reduced resolution, keyed by geometry quantised to 2 px,
-  and update the filter in place once the new image has decoded. `setInterim(false)` does one full rebuild
-  and one probe, decoded before it is shown and applied in place.
+- `GlassHandle.setInterim(on)`. While on, `apply()` reuses the last sample (a supplied `sample` still wins, and
+  then ending interim does not probe), keeps the filter and its maps (`feImage` stretches them over the live
+  box) and updates only the cheap parts. A change of `setMorph` shapes, of `setAppear` or of the accessibility
+  settings during interim rebuilds the map at reduced resolution, keyed by geometry quantised to 2 px, and
+  updates the filter in place; a new map is shown only after `Image.decode()`, which matters where the
+  browser decodes lazily. `setInterim(false)` does one full rebuild and one probe, decoded and applied in
+  place. Interim with no call for 2 s ends itself the same way. An element of no size is not baked.
+  `GlassHandle` gains this member, so a hand-written mock of the type needs it.
 - `renderStats()` and `resetRenderStats()` from `vireglass/dom`: `probes`, `fullBakes`, `reducedBakes`,
-  `filterSwaps`, counted in the module. `check:dom` uses them to assert that sixty frames of changing
-  geometry inside interim cost no probe, no full bake and no filter swap, with the same frames outside
-  interim as the canary.
+  `filterSwaps`, counted in the module. The spectral map counts as a bake of its own. `check:dom` uses them to
+  assert that sixty frames of changing geometry inside interim cost no probe, no full bake and no filter
+  swap, with the same frames outside interim as the canary.
+- When a finger settles, the full-resolution map is decoded and set in place instead of swapping the filter.
 
 ## 3.0.1
 
