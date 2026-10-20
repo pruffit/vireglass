@@ -953,13 +953,14 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       apply();
     },
     setInterim(on) {
-      if (destroyed || on === interim) return;
+      if (destroyed) return;
       if (on) {
+        // Again while interim is the host saying it is still moving: a gesture held still sends no geometry.
         interim = true;
         keepInterim();
         return;
       }
-      leaveInterim();
+      if (interim) leaveInterim();
     },
     setSample(next) {
       supplied = next ?? undefined;

@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.1.1
+
+`setInterim(true)` called again while interim restarts the 2 s safety net. It was a no-op, so a drag or a
+press held still for longer than 2 s, which sends no geometry, left interim by itself and baked the full map
+and probed mid-gesture; the next frame of movement then ran on that map until the gesture ended. A host keeps
+a long gesture interim by repeating the call while it lasts.
+
 ## 3.1.0
 
 An interim mode for glass that changes shape every frame, and counters for the work the live DOM target
