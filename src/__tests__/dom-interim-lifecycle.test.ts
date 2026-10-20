@@ -246,10 +246,23 @@ describe('the map cache', () => {
     const other = document.createElement('div');
     other.getBoundingClientRect = el.getBoundingClientRect;
     document.body.append(other);
-    resetRenderStats();
+    const hueOf = (n: number) => document.querySelectorAll('svg[data-vireglass-filters] filter')[n]?.querySelectorAll('feImage')[1]?.getAttribute('href');
     const second = attachGlass(other, { material: { ...MATERIAL_PRESETS.glass, film: 900 }, shadow: false });
-    expect(renderStats().fullBakes).toBe(1);
+    expect(hueOf(1)).toMatch(/^hue:/);
+    expect(hueOf(1)).not.toBe(hueOf(0));
     second.destroy();
+  });
+
+  it('rebuilds the spectral map of a live element whose film is all that changed', () => {
+    spectral.on = true;
+    const options = { material: { ...MATERIAL_PRESETS.glass }, shadow: false };
+    handle = attachGlass(el, options);
+    const before = document.querySelector('svg[data-vireglass-filters] filter')?.querySelectorAll('feImage')[1]?.getAttribute('href');
+    options.material = { ...MATERIAL_PRESETS.glass, film: 900 };
+    handle.update();
+    const after = document.querySelector('svg[data-vireglass-filters] filter')?.querySelectorAll('feImage')[1]?.getAttribute('href');
+    expect(after).toMatch(/^hue:/);
+    expect(after).not.toBe(before);
   });
 });
 

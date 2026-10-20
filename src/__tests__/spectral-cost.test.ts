@@ -14,30 +14,30 @@ vi.mock('../spectral', async (original) => {
 });
 
 import { renderSpectralPixels } from '../dom/spectral-map';
-import { bevelDp, roundedRectGeometry } from '../geometry';
+import { roundedRectGeometry } from '../geometry';
 import { MATERIAL_PRESETS, resolveOptics } from '../material';
 
 // Counted, not timed: a timer says nothing on a slow runner. The hue is a function of the depth into the bevel,
 // so what a bake evaluates must not grow with the pixels.
 describe('what a spectral bake costs', () => {
   const optics = resolveOptics(MATERIAL_PRESETS.glass);
+  const bake = (w: number, h: number, dpr: number) => {
+    calls.n = 0;
+    const map = renderSpectralPixels(optics, roundedRectGeometry(w, h, 24), dpr);
+    return { n: calls.n, ...map };
+  };
 
-  it('evaluates the hue a few hundred times whatever the size of the element', () => {
-    const counts = [];
-    for (const [w, h, dpr] of [[40, 40, 1], [390, 520, 1], [390, 520, 2], [88, 640, 2]] as const) {
-      calls.n = 0;
-      const { width, height } = renderSpectralPixels(optics, roundedRectGeometry(w, h, 24), dpr);
-      counts.push({ n: calls.n, pixels: width * height });
-    }
-    for (const c of counts) expect(c.n).toBeLessThanOrEqual(24 * 32 + 1);
-    expect(Math.max(...counts.map((c) => c.pixels))).toBeGreaterThan(100 * Math.max(...counts.map((c) => c.n)));
+  it('evaluates the hue the same few thousand times whatever the size of the element', () => {
+    const counts = [bake(40, 40, 1), bake(390, 520, 1), bake(390, 520, 2), bake(88, 640, 3)].map((b) => b.n);
+    expect(new Set(counts).size).toBe(1);
+    expect(counts[0]).toBeLessThanOrEqual(2049);
   });
 
-  it('canary: the pixels inside the bevel, which a per-pixel bake evaluated, are far more', () => {
-    const g = roundedRectGeometry(390, 520, 24);
-    const { width, height } = renderSpectralPixels(optics, g, 2);
-    const bevel = bevelDp(g, optics);
-    const band = width * height - Math.max(0, width - 4 * bevel) * Math.max(0, height - 4 * bevel);
-    expect(band).toBeGreaterThan(20 * (24 * 32 + 1));
+  it('canary: a bake that evaluated it per pixel of the bevel would evaluate it far more', () => {
+    const { data, width, height } = bake(390, 520, 2);
+    const neutral = data[((height >> 1) * width + (width >> 1)) * 4];
+    let tinted = 0;
+    for (let i = 0; i < data.length; i += 4) if (data[i] !== neutral || data[i + 1] !== neutral || data[i + 2] !== neutral) tinted += 1;
+    expect(tinted).toBeGreaterThan(10 * 2049);
   });
 });

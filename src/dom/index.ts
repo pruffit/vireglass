@@ -642,7 +642,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       // it on every scroll would re-run a per-pixel loop and a PNG encode for a picture that did
       // not change; the refraction itself updates in the compositor with no JS at all.
       const full = settledOptics();
-      const key = `m${morphKey()}|${geometry.width}x${geometry.height}r${geometry.cornerRadius}@${devicePixelRatio()}:${full.refraction}:${full.refractionScale}:${full.bevelDp}:${full.blur}`;
+      const key = `m${morphKey()}|${geometry.width}x${geometry.height}r${geometry.cornerRadius}@${devicePixelRatio()}:${full.refraction}:${full.refractionScale}:${full.bevelDp}:${full.blur}:${full.thicknessDp}:${full.film}:${full.iridescence}:${full.diffraction}`;
       if (interim && filterEl) {
         // The filter keeps its map; feImage stretches it over the live box.
       } else if (isEmpty(geometry)) {
@@ -654,7 +654,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
           return buildDisplacementMap(full, geometry, devicePixelRatio(), morphState());
         });
         const hue = hasSpectralEdge(full)
-          ? cached(`h|${key}:${full.thicknessDp}:${full.film}:${full.iridescence}:${full.diffraction}`, () => {
+          ? cached(`h|${key}`, () => {
               bump('fullBakes');
               return buildSpectralMap(full, geometry, devicePixelRatio());
             })

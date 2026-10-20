@@ -32,23 +32,23 @@ function mapDensity(bevel: number, dpr: number): number {
   return Math.min(dpr, BEVEL_SAMPLES / bevel);
 }
 
-/** Table entries per map sample across the bevel, read with linear interpolation. */
-const DEPTH_STEPS_PER_SAMPLE = 32;
+/** Intervals of the hue table along the depth, read with linear interpolation. */
+const DEPTH_STEPS = 2048;
 
 /**
- * The hue at evenly spaced depths into the bevel. `spectralHue` is a function of the depth alone for
- * one element, so a few hundred evaluations stand in for one per pixel, which was most of a landing.
+ * `spectralHue` is a function of the depth alone for one element, so it is tabled along the depth.
+ * The nodes sit at `(k / DEPTH_STEPS)²` of the bevel: the rim's slope turns fastest at the silhouette.
  */
-function hueAlongDepth(bevel: number, rim: number, thick: number, optics: VireGlassOptics, density: number) {
-  const steps = Math.max(1, Math.ceil(bevel * density * DEPTH_STEPS_PER_SAMPLE));
-  const table = new Float64Array((steps + 1) * 3);
-  for (let k = 0; k <= steps; k += 1) {
-    const [r, g, b] = spectralHue((k / steps) * bevel, bevel, rim, thick, optics);
+function hueAlongDepth(bevel: number, rim: number, thick: number, optics: VireGlassOptics): Float64Array {
+  const table = new Float64Array((DEPTH_STEPS + 1) * 3);
+  for (let k = 0; k <= DEPTH_STEPS; k += 1) {
+    const s = k / DEPTH_STEPS;
+    const [r, g, b] = spectralHue(s * s * bevel, bevel, rim, thick, optics);
     table[k * 3] = r;
     table[k * 3 + 1] = g;
     table[k * 3 + 2] = b;
   }
-  return { table, steps };
+  return table;
 }
 
 export function renderSpectralPixels(
@@ -67,26 +67,26 @@ export function renderSpectralPixels(
   const halfW = geometry.width / 2;
   const halfH = geometry.height / 2;
   const neutral = Math.round((1 / HEADROOM) * 255);
-  const { table, steps } = hueAlongDepth(bevel, rim, thick, optics, density);
+  const table = hueAlongDepth(bevel, rim, thick, optics);
   const toByte = 255 / HEADROOM;
+  // Past the bevel the glass is plain: a neutral multiplier, not a missing one.
+  new Uint32Array(data.buffer).fill(new Uint32Array(new Uint8ClampedArray([neutral, neutral, neutral, 255]).buffer)[0]!);
+  const corner = Math.max(geometry.cornerRadius, bevel);
 
   for (let py = 0; py < height; py += 1) {
     const y = (py + 0.5) / density - halfH;
+    const ay = Math.abs(y);
+    // Where |x| is within this, the rounded rect's distance field puts the point at least a bevel deep.
+    const plain = Math.max(ay <= halfH - bevel ? halfW - corner : -1, ay <= halfH - corner ? halfW - bevel : -1);
     for (let px = 0; px < width; px += 1) {
       const x = (px + 0.5) / density - halfW;
+      if (Math.abs(x) <= plain) continue;
       const i = (py * width + px) * 4;
       const sd = sdfRoundedRect(x, y, geometry.width, geometry.height, geometry.cornerRadius);
       const e = Math.max(-sd, 0);
-      if (e >= bevel) {
-        // Past the bevel the glass is plain: a neutral multiplier, not a missing one.
-        data[i] = neutral;
-        data[i + 1] = neutral;
-        data[i + 2] = neutral;
-        data[i + 3] = 255;
-        continue;
-      }
-      const u = (e / bevel) * steps;
-      const k = Math.min(Math.floor(u), steps - 1);
+      if (e >= bevel) continue;
+      const u = Math.sqrt(e / bevel) * DEPTH_STEPS;
+      const k = Math.min(Math.floor(u), DEPTH_STEPS - 1);
       const f = u - k;
       const at = k * 3;
       data[i] = Math.round((table[at] + (table[at + 3] - table[at]) * f) * toByte);
