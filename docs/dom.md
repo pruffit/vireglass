@@ -112,9 +112,14 @@ Compositing is not optional. Taking the first layer with any alpha at all reads 
 `rgba(255,255,255,0.028)` as pure white, and the glass then adapts to a backdrop that does not
 exist — over a dark page the ink goes dark and the label disappears.
 
-It is exact for colour-defined surfaces and blind to images, video and iframes. Hosts pass their
-own sample there; an app already knows its cover art's accent, and `setSample` changes it later
-without re-attaching.
+Type is not a declared background, so a point that falls on a line box of a text node, with nothing
+opaque or pictured above it, also reads the text's fill: as `PROBE.inkOfLine` of the point, in the
+spread (`busy`) only, never in the lightness or its percentiles. That share is an estimate, not a
+measurement, and a 5 by 5 grid meets lines as they scroll past it.
+
+It is exact for colour-defined surfaces, estimates type, and is blind to images, video and iframes.
+Hosts pass their own sample there; an app already knows its cover art's accent, and `setSample`
+changes it later without re-attaching.
 
 ## What it costs
 

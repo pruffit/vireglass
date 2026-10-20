@@ -62,6 +62,7 @@ const FIXTURE = `<!doctype html>
 <div id="prose" style="position:absolute;left:380px;top:20px;width:130px;height:300px;overflow:hidden;background:#fbfbf8;color:#1c1c1e;font:13px/18px Georgia,serif;display:none">
   <p style="margin:0">It was a bright cold day in April, and the clocks were striking thirteen. Winston Smith, his chin nuzzled into his breast in an effort to escape the vile wind, slipped quickly through the glass doors of Victory Mansions, though not quickly enough to prevent a swirl of gritty dust from entering along with him. The hallway smelt of boiled cabbage and old rag mats.</p>
 </div>
+<div id="proseCover" style="position:absolute;left:386px;top:64px;width:118px;height:68px;background-image:linear-gradient(#7a8ca0,#7a8ca0);display:none"></div>
 <div id="proseGlass" style="position:absolute;left:392px;top:70px;width:106px;height:56px;border-radius:28px;display:none"></div>
 <script type="module">
   import { attachGlass, attachScrollEdge, probeBackdrop, renderStats, resetRenderStats } from '/dist/dom.js';
@@ -211,6 +212,8 @@ const FIXTURE = `<!doctype html>
     prose.style.display = mode === 'hidden' ? 'none' : 'block';
     lens.style.display = mode === 'hidden' ? 'none' : 'block';
     prose.style.color = mode === 'blank' ? 'transparent' : '#1c1c1e';
+    prose.firstElementChild.style.marginTop = mode === 'gap' ? '240px' : '0';
+    document.getElementById('proseCover').style.display = mode === 'covered' ? 'block' : 'none';
     if (mode === 'hidden') return null;
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
     const sample = probeBackdrop(lens);
@@ -750,7 +753,12 @@ try {
   //    canary is the same paragraph with its text made transparent. The body's answer is still open (vireglass#31).
   const prose = await page.evaluate(() => globalThis.__prose('text'));
   const blank = await page.evaluate(() => globalThis.__prose('blank'));
+  const gap = await page.evaluate(() => globalThis.__prose('gap'));
+  const coveredText = await page.evaluate(() => globalThis.__prose('covered'));
   await page.evaluate(() => globalThis.__prose('hidden'));
+  console.log(`check-dom: over the same block with the lines moved away, busy ${gap.busy.toFixed(3)}; under a picture over the text, busy ${coveredText.busy.toFixed(3)}`);
+  if (gap.busy > 0.05) fail(`canary: the probe reads the empty part of a text block as busy (${gap.busy.toFixed(3)}): it is not finding lines, only the element`);
+  if (coveredText.busy > 0.05) fail(`text under a picture reads busy ${coveredText.busy.toFixed(3)}: the picture hides it`);
   console.log(
     `check-dom: over a paragraph the probe reads busy ${prose.busy.toFixed(3)}, shadow ${prose.shadow.toFixed(3)}, body alpha ${prose.alpha.toFixed(3)}; ` +
       `with the text transparent, busy ${blank.busy.toFixed(3)}, shadow ${blank.shadow.toFixed(3)}, body alpha ${blank.alpha.toFixed(3)}`,

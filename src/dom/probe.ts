@@ -2,8 +2,8 @@
 // (`web/probe.ts`) and the native capture on Android. The web canvas can read the pixels it just
 // drew; a page CANNOT read what's actually rendered behind an arbitrary element — that boundary
 // is the whole reason `backdrop-filter` exists as a browser primitive rather than a pixel API. So
-// this probes DECLARED STYLES instead: walk the stacking order under a grid of sample points and
-// read `background-color` (falling back to `color`) rather than any real pixel.
+// this probes DECLARED STYLES instead: walk the stacking order under a grid of sample points,
+// composite the backgrounds, and on a line of text read its fill too, rather than any real pixel.
 import type { BackdropSample } from '../adaptation';
 import { PROBE } from '../law';
 
@@ -130,7 +130,10 @@ export function compositeLayers(layers: readonly RgbColor[]): RgbColor | null {
 
 /** Walks the stack at one point, skipping the glass element itself (it would otherwise probe its
  *  own background) and its descendants. */
-function sampleColorAt(el: HTMLElement, x: number, y: number): (RgbColor & { text: RgbColor | null }) | null {
+/** The line boxes of each text node, measured once per probe rather than once per sample point. */
+type LineCache = Map<Node, readonly DOMRect[]>;
+
+function sampleColorAt(el: HTMLElement, x: number, y: number, lines: LineCache): (RgbColor & { text: RgbColor | null }) | null {
   const stack = document.elementsFromPoint(x, y);
   const behind = stack.filter((node) => node !== el && !el.contains(node));
   const layers: RgbColor[] = [];
@@ -138,12 +141,12 @@ function sampleColorAt(el: HTMLElement, x: number, y: number): (RgbColor & { tex
   let covered = false;
   for (const node of behind) {
     const style = getComputedStyle(node);
-    if (!ink && !covered && onTextLine(node, x, y)) ink = parseColor(style.color);
+    if (!ink && !covered && onTextLine(node, x, y, lines)) ink = inkOf(style);
     const bg = parseColor(style.backgroundColor);
     // `rgba(0, 0, 0, 0)` is what "transparent" resolves to almost everywhere: it contributes
     // nothing and must not shadow a real colour further down.
     if (bg && bg.a > 0.001) layers.push(bg);
-    if (bg && bg.a >= 0.999) covered = true;
+    if ((bg && bg.a >= 0.999) || hidesWhatIsBelow(node, style)) covered = true;
   }
   const ground = compositeLayers(layers) ?? canvasColor(el);
   if (!ground) return null;
@@ -151,13 +154,41 @@ function sampleColorAt(el: HTMLElement, x: number, y: number): (RgbColor & { tex
   return { ...ground, text };
 }
 
+/** The colour the element's type is painted in: its fill wins over `color`, and its own opacity thins it. */
+function inkOf(style: CSSStyleDeclaration): RgbColor | null {
+  const fill = parseColor(style.webkitTextFillColor || style.color);
+  if (!fill) return null;
+  const opacity = Number(style.opacity);
+  return { ...fill, a: fill.a * (Number.isFinite(opacity) ? opacity : 1) };
+}
+
+/** A picture the probe cannot read still hides the type under it. */
+function hidesWhatIsBelow(node: Element, style: CSSStyleDeclaration): boolean {
+  return (
+    node instanceof HTMLImageElement ||
+    node instanceof HTMLVideoElement ||
+    node instanceof HTMLCanvasElement ||
+    node instanceof HTMLIFrameElement ||
+    style.backgroundImage !== 'none'
+  );
+}
+
 /** Whether a point falls inside a line box of one of the element's own text nodes. */
-function onTextLine(node: Element, x: number, y: number): boolean {
+function onTextLine(node: Element, x: number, y: number, lines: LineCache): boolean {
   for (const child of node.childNodes) {
-    if (child.nodeType !== Node.TEXT_NODE || !child.textContent?.trim()) continue;
-    const range = node.ownerDocument.createRange();
-    range.selectNodeContents(child);
-    for (const r of range.getClientRects()) {
+    if (child.nodeType !== Node.TEXT_NODE) continue;
+    let rects = lines.get(child);
+    if (!rects) {
+      if (child.textContent?.trim()) {
+        const range = node.ownerDocument.createRange();
+        range.selectNodeContents(child);
+        rects = Array.from(range.getClientRects());
+      } else {
+        rects = [];
+      }
+      lines.set(child, rects);
+    }
+    for (const r of rects) {
       if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return true;
     }
   }
@@ -210,11 +241,12 @@ export function probeBackdrop(el: HTMLElement, opts: ProbeOptions = {}): Backdro
   // confident, perfectly flat reading.
   if (rect.width <= 0 || rect.height <= 0) return statsFromSamples([]);
   const samples: (RgbColor & { text: RgbColor | null })[] = [];
+  const lines: LineCache = new Map();
   for (let j = 0; j < rows; j += 1) {
     const y = rect.top + ((j + 0.5) / rows) * rect.height;
     for (let i = 0; i < cols; i += 1) {
       const x = rect.left + ((i + 0.5) / cols) * rect.width;
-      const color = sampleColorAt(el, x, y);
+      const color = sampleColorAt(el, x, y, lines);
       if (color) samples.push(color);
     }
   }

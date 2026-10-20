@@ -249,9 +249,10 @@ Three things to know before you reach for it:
   same optics — detected by measurement, never by user-agent string.
 - **There is no pixel probe, so adaptation reads declared styles.** The grid under the element is
   sampled through `elementsFromPoint` and the background stack is composited, and a point on a line
-  of text counts the text as a share of the point's spread (`busy`), not of its lightness. That is
-  exact for colour-defined surfaces and type, and blind to images, video and canvas — tell it what is
-  there instead, since your app already knows its cover-art accent (below).
+  of text counts the text as an estimated share of the point's spread (`busy`), not of its
+  lightness. That is exact for colour-defined surfaces, an estimate for type, and blind to images,
+  video and canvas — tell it what is there instead, since your app already knows its cover-art
+  accent (below).
 
 ## Android / React Native
 

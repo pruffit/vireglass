@@ -15,8 +15,15 @@ backdrops, none of them a line of text.
   `hi` stay the background's, so type never moves the ink's polarity on its own.
 - `check:dom` puts a paragraph under the glass in a real browser: `busy` 0.41 and the shadow 0.200 over it,
   `busy` 0 and the shadow 0.040 with the text transparent (the canary), the reference's two numbers.
-- The body does not answer text yet: its legibility law reads a spread this size as enough under dark ink.
-  That calibration is #31.
+- Text above an image, a video, a canvas, an iframe or a background image is covered by it; a text fill
+  (`-webkit-text-fill-color`) wins over `color`, and the element's own opacity thins it. The line boxes of each
+  text node are measured once per probe.
+- What else follows `busy` changes over text. The ink requirement in `resolveBody` now binds there in full, and
+  the fine-texture ground rises a little. Under light ink over a page of light text that raises the body; under
+  dark ink over dark text on a light page the law still reads the spread as enough, so the body stays where it
+  was. Calibrating that against the reference is the rest of #31.
+- The share is an estimate, and a 5 by 5 grid meets lines as they scroll past it, so `busy` over text moves in
+  steps while it scrolls.
 
 ## 3.2.2
 
