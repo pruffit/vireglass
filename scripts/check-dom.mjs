@@ -197,6 +197,11 @@ const FIXTURE = `<!doctype html>
     morphing = null;
     document.getElementById('glass').style.width = '${BOX.w}px';
   };
+  globalThis.__appear = async (t) => {
+    morphing.setAppear(t);
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    return renderStats();
+  };
 
   globalThis.__mount('full');
   globalThis.__ready = true;
@@ -625,6 +630,44 @@ try {
   if (morphed.during.fullBakes !== 0 || morphed.during.filterSwaps !== 0 || morphed.during.probes !== 0) {
     fail('a morph change during interim did full-resolution work, swapped the filter or probed');
   }
+
+  // 10d. Appear is the lens's strength written in place (§1, materialise by bending light): thirty
+  //    steps cost no bake and no swap, absent reads as the page, half as less than present. The canary
+  //    is thirty steps of a morph, which the map is keyed by.
+  await page.evaluate(() => globalThis.__morphBegin(false));
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const appearShot = async () => `data:image/png;base64,${(await page.screenshot()).toString('base64')}`;
+  let appearStats = null;
+  const appearAt = { start: await appearShot() };
+  for (let i = 29; i >= 0; i -= 1) {
+    appearStats = await page.evaluate((t) => globalThis.__appear(t), i / 29);
+    if (i === 0) appearAt.absent = await appearShot();
+  }
+  appearStats = await page.evaluate(() => globalThis.__appear(0.5));
+  appearAt.half = await appearShot();
+  appearStats = await page.evaluate(() => globalThis.__appear(1));
+  appearAt.present = await appearShot();
+  const absent = await diff(appearAt.absent, none, rimBand);
+  const half = await diff(appearAt.half, none, rimBand);
+  const present = await diff(appearAt.present, none, rimBand);
+  const drift = await diff(appearAt.present, appearAt.start, rimBand);
+  await page.evaluate(() => globalThis.__morphDone());
+  await page.evaluate(() => globalThis.__morphBegin(false));
+  for (let i = 0; i < 30; i += 1) await page.evaluate((n) => globalThis.__morphShape(n), i);
+  const keyed = await page.evaluate(() => globalThis.__morphEnd(false));
+  await page.evaluate(() => globalThis.__morphDone());
+  console.log(
+    `check-dom: 31 appear steps — ${appearStats.fullBakes} full bakes, ${appearStats.reducedBakes} reduced, ${appearStats.filterSwaps} swaps; ` +
+      `the rim reads ${absent.toFixed(2)} absent, ${half.toFixed(2)} at half, ${present.toFixed(2)} present, ${drift.toFixed(2)} from where it started; ` +
+      `30 morph steps baked ${keyed.after.fullBakes}`,
+  );
+  if (appearStats.fullBakes !== 0 || appearStats.reducedBakes !== 0 || appearStats.filterSwaps !== 0) {
+    fail('a change of appear rebuilt the map or swapped the filter; it is an attribute');
+  }
+  if (absent > alive * 0.15) fail(`at appear 0 the rim still reads ${absent.toFixed(2)}: the element has not gone`);
+  if (!(half > absent && half < present)) fail(`appear 0.5 reads ${half.toFixed(2)}, not between absent and present`);
+  if (drift > alive * 0.05) fail(`back at appear 1 the rim differs from where it started by ${drift.toFixed(2)}`);
+  if (keyed.after.fullBakes < 30) fail(`canary: 30 morph steps baked ${keyed.after.fullBakes} times — the appear gate cannot fail`);
 
   if (!failed) {
     console.log('check-dom: the glass bends live DOM at its rim, leaves its middle alone, touches nothing outside itself, and the interactive variant is absent until touched');

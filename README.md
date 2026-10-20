@@ -153,6 +153,10 @@ glass.setMorph({ smoothing: 34, shape: { offsetX: 150, offsetY: -78, width: 170,
 Two shapes joined through the smooth union — §5's merging and splitting. What the shapes mean is
 your choreography; the material only knows how two silhouettes join.
 
+`glass.setAppear(t)` brings the element in and out by how much light it bends, not by opacity. The
+maps are baked once at full presence and appear is written in place on the filter, so driving it
+every frame costs no bake and no new filter, at rest or interim.
+
 ### Morphing elements
 
 ```ts
@@ -168,7 +172,7 @@ backdrop probe, a full-resolution displacement map (and spectral map) and a new 
 That is the difference between 60 fps and 10 to 20. While interim, the element does none of it: it
 reuses its last sample, keeps its filter, and the browser stretches the existing map over the live
 box. The body, rim, shadow and custom properties still update every frame. A change of the morph
-shapes passed to `setMorph`, of `setAppear` or of the system accessibility settings rebuilds the map
+shapes passed to `setMorph` or of the system accessibility settings rebuilds the map
 at reduced resolution and shows it in place, where the browser decodes lazily only once it has been
 decoded. `setInterim(false)` does one full-resolution rebuild and one probe (with a supplied
 `sample` it does not probe). Repeating `setInterim(false)` is a no-op.

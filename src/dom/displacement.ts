@@ -79,6 +79,14 @@ export type DisplacementState = {
 };
 
 /**
+ * The `feDisplacementMap` scale for these optics. The map's pixels are a fraction of it and do not
+ * depend on it, so a change of strength alone, such as appear, is this attribute and not a bake.
+ */
+export function displacementScale(optics: VireGlassOptics, geometry: VireGlassGeometry): number {
+  return Math.min(optics.refraction * thicknessDp(geometry, optics) * SCALE_GAIN, MAX_SCALE);
+}
+
+/**
  * The raw pixel buffer, with no canvas involved — the part actually worth unit-testing.
  * `buildDisplacementMap` below is a thin DOM wrapper around this.
  *
@@ -97,8 +105,7 @@ export function renderDisplacementPixels(
   const density = mapDensity(geometry, bevel, dpr);
   const width = Math.max(1, Math.round(geometry.width * density));
   const height = Math.max(1, Math.round(geometry.height * density));
-  const rawScale = optics.refraction * thicknessDp(geometry, optics) * SCALE_GAIN;
-  const scale = Math.min(rawScale, MAX_SCALE);
+  const scale = displacementScale(optics, geometry);
   const smoothing = state.smoothing ?? 0;
   // One list, whichever way the caller expressed it.
   const shapes: (MorphShape | undefined)[] = [state.morph, state.morph2, ...(state.morphs ?? [])];

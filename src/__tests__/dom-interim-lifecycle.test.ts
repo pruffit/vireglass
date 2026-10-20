@@ -23,7 +23,7 @@ vi.mock('../dom/spectral-map', async (original) => {
   return {
     ...real,
     hasSpectralEdge: () => spectral.on,
-    buildSpectralMap: () => ({ url: `hue:${(n += 1)}`, headroom: 1 }),
+    buildSpectralMap: () => ({ url: `hue:${(n += 1)}`, headroom: 2 }),
   };
 });
 
@@ -32,8 +32,14 @@ vi.mock('../dom/probe', () => ({
 }));
 
 import { attachGlass, clearMapCache, renderStats, resetRenderStats, type GlassHandle } from '../dom';
-import { MATERIAL_PRESETS } from '../index';
+import { MATERIAL_PRESETS, resolveOptics } from '../index';
 import { resetSupportCache } from '../dom/support';
+import { renderDisplacementPixels } from '../dom/displacement';
+import { systemAccessibility } from '../dom/preferences';
+import { applyAccessibility } from '../accessibility';
+import { applyGlassScale, GLASS_SCALE_DEFAULT } from '../glass-scale';
+import { applyAppear } from '../appear';
+import { roundedRectGeometry } from '../geometry';
 
 type Decode = { url: string; resolve: () => void };
 let decodes: Decode[] = [];
@@ -113,16 +119,68 @@ describe('a pending decode never lands on a filter it was not made for', () => {
   });
 });
 
-describe('appear and optics changes during interim', () => {
-  it('bake one reduced map and show it', async () => {
+describe('appear is written in place, never baked', () => {
+  const full = () =>
+    applyAccessibility(applyGlassScale(resolveOptics(MATERIAL_PRESETS.glass), GLASS_SCALE_DEFAULT), systemAccessibility());
+  const steps = Array.from({ length: 30 }, (_, i) => i / 29);
+  const expectStrength = (a: number, width: number) => {
+    const old = renderDisplacementPixels(applyAppear(full(), a), roundedRectGeometry(width, box.height, 0), 1).scale;
+    for (const p of document.querySelectorAll('svg[data-vireglass-filters] feDisplacementMap')) {
+      expect(Number(p.getAttribute('scale'))).toBeCloseTo(old * Number(p.getAttribute('data-vireglass-ratio')), 9);
+    }
+  };
+
+  it('costs no bake and no swap across 30 steps at rest, and each step is what the old bake gave', () => {
+    spectral.on = true;
+    const g = attach();
+    for (const a of [...steps].reverse()) {
+      g.setAppear(a);
+      expectStrength(a, box.width);
+      expect(Number(document.querySelector('feGaussianBlur')?.getAttribute('stdDeviation'))).toBeCloseTo(full().blur * a, 9);
+      const hue = document.querySelector('feComposite[in2="hue"]');
+      expect([Number(hue?.getAttribute('k1')), Number(hue?.getAttribute('k2'))]).toEqual([2 * a, 1 - a]);
+    }
+    expect(renderStats()).toMatchObject({ fullBakes: 0, reducedBakes: 0, filterSwaps: 0 });
+    expect(href()).toContain('map:');
+  });
+
+  it('keeps the strength at appear when the settled map lands after its decode', async () => {
+    const g = attach();
+    g.setAppear(0.4);
+    g.setInterim(true);
+    box = { width: 260, height: 100 };
+    g.update();
+    expectStrength(0.4, 200);
+    g.setInterim(false);
+    await settle();
+    expect(href()).toContain('w260');
+    expectStrength(0.4, 260);
+  });
+
+  it('keeps the strength at appear, and at the map\'s box, when a reduced map lands in interim', async () => {
     const g = attach();
     g.setInterim(true);
-    g.setAppear(0.5);
-    expect(renderStats()).toMatchObject({ reducedBakes: 1, fullBakes: 0, filterSwaps: 0, probes: 0 });
-    const before = href();
+    g.setAppear(0.4);
+    box = { width: 240, height: 100 };
+    g.update();
+    expectStrength(0.4, 200);
+    g.setMorph(shape(90));
     await settle();
-    expect(href()).not.toBe(before);
-    expect(href()).toContain('d1');
+    expect(href()).toContain('w240');
+    expectStrength(0.4, 240);
+  });
+
+  it('costs no bake, no swap and no probe across 30 steps in interim', () => {
+    const g = attach();
+    g.setInterim(true);
+    for (const a of steps) g.setAppear(a);
+    expect(renderStats()).toMatchObject({ fullBakes: 0, reducedBakes: 0, filterSwaps: 0, probes: 0 });
+  });
+
+  it('canary: the same 30 steps of a morph, which the map is keyed by, do bake', () => {
+    const g = attach();
+    steps.forEach((_, i) => g.setMorph(shape(40 + i * 3)));
+    expect(renderStats().fullBakes).toBeGreaterThanOrEqual(30);
   });
 });
 
