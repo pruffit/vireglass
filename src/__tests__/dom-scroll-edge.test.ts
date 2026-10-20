@@ -51,9 +51,24 @@ describe('what the scroll edge paints (docs/reference.md §10)', () => {
     expect(Math.min(...stops)).toBe(0);
   });
 
-  it('runs toward the edge the panel sits at, not away from it', () => {
-    expect(paintFor('dissolve', 'top').mask).toContain('to top');
-    expect(paintFor('dissolve', 'bottom').mask).toContain('to bottom');
+  // This used to assert the CSS it wrote ("to top" for a top panel), and so it held a ramp that was strongest at the far
+  // end of the band. What it has to hold is where the strength is.
+  /** The alpha of a two-stop `linear-gradient(to top|to bottom, …)` at the panel's edge and at the far end of the band. */
+  const ends = (css: string, side: 'top' | 'bottom') => {
+    const [first, last] = alphas(css);
+    const startsAtTop = css.includes('to bottom');
+    const atTop = startsAtTop ? first : last;
+    const atBottom = startsAtTop ? last : first;
+    return side === 'top' ? { panel: atTop, far: atBottom } : { panel: atBottom, far: atTop };
+  };
+
+  it('is strongest at the edge the panel sits at, and fades away from it', () => {
+    for (const side of ['top', 'bottom'] as const) {
+      expect(ends(paintFor('dissolve', side).mask, side)).toEqual({ panel: 1, far: 0 });
+      const dim = ends(paintFor('dim', side).tone, side);
+      expect(dim.panel).toBeGreaterThan(0);
+      expect(dim.far).toBe(0);
+    }
   });
 
   it('dims by darkening, which is what dimming is', () => {

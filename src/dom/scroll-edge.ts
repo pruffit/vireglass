@@ -32,7 +32,8 @@ export type ScrollEdgeOptions = {
 export type EdgePaint = { filter: string; mask: string; tone: string };
 
 export function paintFor(style: ScrollEdgeStyle, side: 'top' | 'bottom'): EdgePaint {
-  const direction = side === 'top' ? 'to top' : 'to bottom';
+  // From the panel's edge inward: a gradient's first stop is where it starts, and the effect is strongest at the panel.
+  const direction = side === 'top' ? 'to bottom' : 'to top';
   if (style === 'hard') {
     // A flat band rather than a gradual fade (219 @9:41), and a stronger boundary (356 @12:12).
     return {

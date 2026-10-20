@@ -1,5 +1,20 @@
 # Changelog
 
+## 3.2.2
+
+The scroll edge is strongest at the panel's edge and fades away from it. It was the other way round.
+
+`paintFor` wrote `linear-gradient(to top, …)` for a panel at the top. A gradient starts at the far side of its
+direction, so the mask was opaque at the bottom of the band and clear under the panel: the content right under a
+bar stayed sharp, and the dissolve and the dimming sat where nothing needed them. Why it shipped: no consumer used
+`attachScrollEdge` until vireuikit 0.11, and its unit test asserted the CSS string it wrote ("to top" for a top
+panel), not where the strength is.
+
+- The mask and the dimming tone now run from the panel's edge inward, for both sides.
+- The unit test reads where the strength is: alpha 1 at the panel's edge, 0 at the far end of the band.
+- `check:dom` measures it in a real browser: the edge changes the content under it by 47 at the panel's edge and
+  6 at the far end of its band (the previous code: 5 and 46). The canary is the written ramp turned round.
+
 ## 3.2.1
 
 A spectral bake costs a fraction of what it did, and so does ending interim (#26). DOM target only.
