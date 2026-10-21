@@ -85,6 +85,10 @@ release:
 
 (a) the backdrop under the control is not in the frame, so the surround is only a guess for it.
 
+The table was taken at the control's old roughness, 0.035. Since 3.4.0 it is 0.18: the body is unchanged, and the
+rim follows `specular`, which the roughness takes from 0.979 to 0.892, so the rim columns read about 9% lower than
+printed (toward the reference over A 2:17). Not re-measured: the cutting script is not in the repository.
+
 The body is lighter than the surround on every smooth row, as in the reference, and within 0.05 of
 it on skip back, pause and Info; skip forward and Continue are 0.07 and 0.06 above, and sky is 0.051
 below. Chroma is within 0.04 of the reference on every row. The rim is within 0.08 on every smooth

@@ -224,10 +224,8 @@ export const VIREGLASS_LYRICS_MATERIAL: VireGlassMaterial = {
  * that's not done by a fill but by volume: a wide bevel gives the rim something to catch, and
  * thickness gives it depth.
  *
- * Roughness is MEASURED off M 7:11 (frames/verify/m-711): the reference capsule over body text keeps
- * 0.41 of the strokes' depth, their darkest at 0.31–0.40 of a 0.72 page. A sharp block of the same
- * text blurred by σ ≈ 2.2 pt gives that (fit: 1.8–2.6 pt), and σ is 12 × roughness here. It was 0.035
- * (σ 0.42) by eye, "clear", and body text read through a control at 4:1 instead of the reference's 8:1.
+ * Roughness is measured against M 7:11, a control over body text: the whole material laid over the same
+ * scene reads it as the frame does (docs/material-lab.md, 21.10). It was 0.035 by eye, "clear".
  *
  * Thickness is set by BUILDUP AT THE RIM: on the reference control the stripe image under the
  * element bulges there by a factor of 1.85; ours came out at 1.36 at 30. Saturation sets in around

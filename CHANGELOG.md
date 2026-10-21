@@ -2,23 +2,24 @@
 
 ## 3.4.0
 
-`VIREGLASS_CONTROL_MATERIAL` is frosted as the reference control over text: roughness 0.035 → 0.18, blur
-σ 0.42 → 2.16 pt. Every target; a visible change to anything built of the control material.
+`VIREGLASS_CONTROL_MATERIAL` is frosted as the reference control over text: roughness 0.035 → 0.18, blur 0.42 →
+2.16 pt. Every target; a visible change to anything built of the control material.
 
-M 7:11 (frames/verify/m-711) puts a control capsule over body text: the strokes under it keep 0.41 of their depth
-and their darkest rises to 0.31–0.40 of a 0.72 page, so the glyphs on it hold 8:1. A sharp block of the same text
-in the same frame, blurred until it matches, gives σ 1.8–2.6 pt. The control material had been made "clear" by eye
-(see docs/material-lab.md), and body text read through a control nearly sharp: vireuikit measured its rail and
-floating buttons at 4:1 over a page of text. Why it shipped: the roughness was never compared with a frame of a
-control over text, and a unit test asserted the choice ("clearer than the baseline").
+Body text read through a control almost untouched (vireuikit's legibility gate: its rail and floating buttons at
+4:1 over a page of text). At 0.035 Chromium renders no blur at all. Why it shipped: the roughness was chosen by eye
+("thick and clear"), a unit test asserted that choice, and no gate put text under a control.
 
-- `check:dom` puts 17 px body text under a control in a real browser: the strokes keep 0.57 of their depth, the
-  darkest 0.43 (the reference: 0.41 and 0.31–0.40). The canary is the old roughness: 1.01 and 0.01, the text
-  untouched.
-- The unit test now asserts the measured σ range instead of "clearer than the baseline".
-- `check:optics` measures the rim's gathering with the frost taken out: blur spreads the stripe's image, and a width
-  taken as mass over peak read that as less gathered (1.87x against 1.88) when the glass was no thinner. With the
-  lensing alone it reads 1.90x.
+- Measured against M 7:11 (frames/verify/m-711), a control capsule over body text, with frost, magnification and the
+  body on both sides: the whole material over a scene at the frame's proportions, read as the frame is. The frame
+  gives darkest 0.31–0.41, depth kept 0.48–0.58, detail kept 0.14–0.15; 0.18 gives 0.30, 0.58, 0.17, the least
+  frost inside all three. One frame, one size, one typeface (docs/material-lab.md).
+- `check:dom` holds that scene to the frame's ranges; the canary is 0.035 (0.01, 0.99, 0.98).
+- The rim follows `specular`, which roughness lowers from 0.979 to 0.892: about 9% weaker. Under the finger the
+  control still rises into a clear lens (`raiseIntoGlass` scales the roughness down), now from frosted, which is
+  the reference's matte-at-rest, lens-under-the-finger (M 4:10).
+- `check:optics` reads the rim's gathering on the lensing alone (1.90x, threshold unchanged) and the control as
+  shipped against thin glass (1.87x, guard 1.8; thin glass reads 1.73 without frost).
+- The unit test asserts the measured blur range instead of "clearer than the baseline".
 
 ## 3.3.0
 

@@ -432,6 +432,10 @@ export const DERIVE = {
    *
    * A clean measurement needs a frame where the glass does not magnify, or a feature of known size
    * behind it to normalise the magnification out.
+   *
+   * For the control material the comparison was made instead with all three causes on both sides
+   * (21.10, docs/material-lab.md): the whole material over a scene at that frame's proportions, read
+   * the same way as the frame. That calibrates the control's roughness; it does not measure this ceiling.
    */
   blurMaxDp: 12,
   /** Highlight width from a smooth surface and from a fully rough one, as a specular exponent.
