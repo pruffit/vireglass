@@ -121,6 +121,8 @@ const MIN_CONTENT_ON_BUSY = 28;
  * glass, not a check against Apple.
  */
 const MIN_EDGE_GAIN = 1.88;
+/** The control as shipped, frost on: it reads 1.87, and the thin glass above 1.73 without any frost. */
+const THIN_GLASS_GUARD = 1.8;
 
 const ENTRY = `
 import { createVireGlassRenderer } from '${WEB}';
@@ -297,7 +299,7 @@ let rimStage = null;
 // Sixth promise: THE RIM GATHERS CONTENT. A stripe lies under the element; its image is measured
 // by columns of width "mass divided by peak" — no threshold, because right at the rim the stripe
 // breaks into pieces and any boundary-based threshold jumps over the gaps.
-globalThis.vgRimProbe = async () => {
+globalThis.vgRimProbe = async (frost) => {
   // Device density, not one: medium thickness is set in dp, and at density 1 the element comes
   // out half the real size — the buildup stripe at the rim would then also be half as wide.
   const D = 2;
@@ -317,7 +319,9 @@ globalThis.vgRimProbe = async () => {
   // different thickness gives a different number.
   const scene = canvasScene('bar', undefined, D);
 
-  const optics = resolveOptics(materialForInk(VIREGLASS_CONTROL_MATERIAL, false));
+  // Without the frost this reads the lensing the promise is about; the frost spreads the stripe across columns and the
+  // single best column reads lower with the glass no thinner. The shipped material is read too, against thin glass.
+  const optics = resolveOptics(materialForInk(frost ? VIREGLASS_CONTROL_MATERIAL : { ...VIREGLASS_CONTROL_MATERIAL, roughness: 0 }, false));
   const piece = {
     optics,
     // A capsule, not a rectangle: on the reference control the stripe crosses a rounded end, and
@@ -613,13 +617,17 @@ async function main() {
   }
 
   console.log('--- the rim gathers content ---');
-  const rim = await page.evaluate(() => globalThis.vgRimProbe());
+  const rim = await page.evaluate(() => globalThis.vgRimProbe(false));
+  const shipped = await page.evaluate(() => globalThis.vgRimProbe(true));
   console.log(
     `${rim.gain >= MIN_EDGE_GAIN ? ' ' : '!'} stripe under the element: outside ${rim.outside.toFixed(1)}, ` +
-      `at the rim ${rim.best.toFixed(1)} — magnified ${rim.gain.toFixed(2)}x`,
+      `at the rim ${rim.best.toFixed(1)} — magnified ${rim.gain.toFixed(2)}x; with the frost on ${shipped.gain.toFixed(2)}x`,
   );
   if (!(rim.gain >= MIN_EDGE_GAIN)) {
     failed.push(`the rim does not gather content (magnified ${rim.gain.toFixed(2)}x)`);
+  }
+  if (!(shipped.gain >= THIN_GLASS_GUARD)) {
+    failed.push(`the control as shipped gathers like thin glass (magnified ${shipped.gain.toFixed(2)}x)`);
   }
 
   console.log('--- busy canvas ---');

@@ -528,6 +528,25 @@ strength derives from Fresnel; band strength derives from dispersion.
 Fixes from a live run. Each one overturns a decision that looked reasonable right up until it
 didn't.
 
+**The control's frost, measured against M 7:11 (21.10).** The note below was judged by eye on a busy canvas, and the
+control material had been made "clear" (roughness 0.035, which Chromium renders with no blur at all). M 7:11
+(frames/verify/m-711) puts a control capsule over body text. Fitting a bare Gaussian to the text under it is the
+method `law.ts` records as unable to separate frost, magnification and the body's veil, so the comparison is made
+with all of them on both sides: the whole control material over a scene at that frame's proportions (the capsule
+about 6.5 x-heights tall, a 0.72 page, black sans text), and the same three readings taken off both at the same
+scale, in the middle of the glass.
+
+| | darkest under the glass | depth kept | detail kept |
+|---|---|---|---|
+| M 7:11 | 0.31–0.41 | 0.48–0.58 | 0.14–0.15 |
+| roughness 0.035 | 0.01 | 0.99 | 0.98 |
+| roughness 0.12 | 0.24 | 0.67 | 0.40 |
+| roughness 0.18 | 0.29–0.30 | 0.58–0.59 | 0.17–0.18 |
+| roughness 0.22 | 0.31 | 0.57 | 0.14 |
+
+0.18 is the least frost inside the frame's range on all three; one frame, one size, one typeface. `check:dom` holds
+the scene to those ranges.
+
 **Blur is an assist, not a legibility tool.** Adaptive scatter had been pushed up so far that on
 a busy background, letters under the glass stopped being letters — a sausage of pixels. No
 legibility is worth that; the element just looks cheap. Blur stays, but weak: it softens

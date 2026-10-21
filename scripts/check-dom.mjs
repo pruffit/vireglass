@@ -62,7 +62,11 @@ const FIXTURE = `<!doctype html>
 <div id="prose" style="position:absolute;left:380px;top:20px;width:130px;height:300px;overflow:hidden;background:#fbfbf8;color:#1c1c1e;font:13px/18px Georgia,serif;display:none">
   <p style="margin:0">It was a bright cold day in April, and the clocks were striking thirteen. Winston Smith, his chin nuzzled into his breast in an effort to escape the vile wind, slipped quickly through the glass doors of Victory Mansions, though not quickly enough to prevent a swirl of gritty dust from entering along with him. The hallway smelt of boiled cabbage and old rag mats.</p>
 </div>
-<div id="proseCover" style="position:absolute;left:386px;top:64px;width:118px;height:68px;background-image:linear-gradient(#7a8ca0,#7a8ca0);display:none"></div>
+<div id="frostPage" style="position:absolute;inset:0;background:#dbdbdb;display:none">
+  <div style="position:absolute;left:0;top:0;width:500px;padding:8px;font:21px/30px system-ui,sans-serif;color:#000">There are some things you cannot see until you look. Light helps define color, tone, texture and form, and glass depends on the world around us.</div>
+  <div id="frostLens" style="position:absolute;left:200px;top:62px;width:166px;height:72px;border-radius:36px;display:none"></div>
+</div>
+<div id="proseCover"style="position:absolute;left:386px;top:64px;width:118px;height:68px;background-image:linear-gradient(#7a8ca0,#7a8ca0);display:none"></div>
 <div id="proseGlass" style="position:absolute;left:392px;top:70px;width:106px;height:56px;border-radius:28px;display:none"></div>
 <script type="module">
   import { attachGlass, attachScrollEdge, probeBackdrop, renderStats, resetRenderStats } from '/dist/dom.js';
@@ -229,6 +233,20 @@ const FIXTURE = `<!doctype html>
     glass.destroy();
     return { busy: sample.busy, luma: sample.luma, alpha, shadow };
   };
+  let frosted = null;
+  globalThis.__frost = async (mode) => {
+    frosted?.destroy();
+    frosted = null;
+    const scene = document.getElementById('frostPage');
+    const lens = document.getElementById('frostLens');
+    scene.style.display = mode === 'hidden' ? 'none' : 'block';
+    lens.style.display = mode === 'glass' || mode === 'clear' ? 'block' : 'none';
+    if (mode === 'glass' || mode === 'clear') {
+      const material = mode === 'clear' ? { ...VIREGLASS_CONTROL_MATERIAL, roughness: 0.035 } : VIREGLASS_CONTROL_MATERIAL;
+      frosted = attachGlass(lens, { material, shadow: false });
+    }
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(r))));
+  };
   let edge = null;
   globalThis.__edge = async (mode) => {
     edge?.destroy();
@@ -312,6 +330,27 @@ const DIFF = `(a, b, rect) => {
     return sum / (pa.length / 4);
   });
 }`;
+
+/** The 2nd and 98th percentile of linear luminance over a rectangle of a screenshot. */
+const SPREAD = `(src, rect) => new Promise((res, rej) => {
+  const img = new Image();
+  img.onload = () => res(img);
+  img.onerror = rej;
+  img.src = src;
+}).then((img) => {
+  const c = document.createElement('canvas');
+  c.width = rect.w; c.height = rect.h;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(img, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.h);
+  const p = ctx.getImageData(0, 0, rect.w, rect.h).data;
+  const lin = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+  const y = [];
+  for (let i = 0; i < p.length; i += 4) y.push(0.2126 * lin(p[i]) + 0.7152 * lin(p[i + 1]) + 0.0722 * lin(p[i + 2]));
+  let detail = 0;
+  for (let j = 0; j < rect.h; j += 1) for (let i = 1; i < rect.w; i += 1) detail += Math.abs(y[j * rect.w + i] - y[j * rect.w + i - 1]);
+  y.sort((a, b) => a - b);
+  return { lo: y[Math.floor(0.02 * (y.length - 1))], hi: y[Math.floor(0.98 * (y.length - 1))], detail };
+})`;
 
 /**
  * The 98th percentile of pixel saturation over a rectangle, and the mean, both 0..1.
@@ -759,6 +798,34 @@ try {
   console.log(`check-dom: over the same block with the lines moved away, busy ${gap.busy.toFixed(3)}; under a picture over the text, busy ${coveredText.busy.toFixed(3)}`);
   if (gap.busy > 0.05) fail(`canary: the probe reads the empty part of a text block as busy (${gap.busy.toFixed(3)}): it is not finding lines, only the element`);
   if (coveredText.busy > 0.05) fail(`text under a picture reads busy ${coveredText.busy.toFixed(3)}: the picture hides it`);
+
+  // 13. A control over body text, at the reference's proportions (M 7:11, frames/verify/m-711: the capsule about 6.5
+  //    x-heights tall, a 0.72 page, black sans text), with the whole material on: frost, magnification and body. The
+  //    reference, read the same way at the same scale, gives darkest 0.31–0.41, depth kept 0.48–0.58, detail kept
+  //    0.14–0.15. The canary is the old roughness, 0.035, which Chromium renders with no blur at all.
+  const spread = (src, rect) => page.evaluate(([s, r, fn]) => new Function(`return ${fn}`)()(s, r), [src, rect, SPREAD]);
+  const frostShot = async (mode) => {
+    await page.evaluate((m) => globalThis.__frost(m), mode);
+    return `data:image/png;base64,${(await page.screenshot()).toString('base64')}`;
+  };
+  const middleOfLens = { x: 222, y: 80, w: 122, h: 36 };
+  const plainText = await spread(await frostShot('none'), middleOfLens);
+  const frostedText = await spread(await frostShot('glass'), middleOfLens);
+  const clearText = await spread(await frostShot('clear'), middleOfLens);
+  await page.evaluate(() => globalThis.__frost('hidden'));
+  const read = (s) => ({
+    darkest: s.lo,
+    kept: (s.hi - s.lo) / Math.max(plainText.hi - plainText.lo, 1e-6),
+    detail: s.detail / Math.max(plainText.detail, 1e-6),
+  });
+  const frost = read(frostedText);
+  const clear = read(clearText);
+  const show = (r) => `darkest ${r.darkest.toFixed(2)}, depth ${r.kept.toFixed(2)}, detail ${r.detail.toFixed(2)}`;
+  console.log(`check-dom: body text under a control: ${show(frost)} (reference 0.31–0.41, 0.48–0.58, 0.14–0.15); at the old roughness ${show(clear)}`);
+  if (!(frost.darkest >= 0.25 && frost.darkest <= 0.45)) fail(`the darkest under a control is ${frost.darkest.toFixed(2)}; the reference's is 0.31–0.41`);
+  if (!(frost.kept >= 0.42 && frost.kept <= 0.65)) fail(`a control keeps ${frost.kept.toFixed(2)} of the text's depth; the reference keeps 0.48–0.58`);
+  if (!(frost.detail >= 0.08 && frost.detail <= 0.25)) fail(`a control keeps ${frost.detail.toFixed(2)} of the text's detail; the reference keeps 0.14–0.15`);
+  if (clear.detail <= 0.5) fail(`canary: the clear control keeps only ${clear.detail.toFixed(2)} of the detail, so the frost gate cannot tell them apart`);
   console.log(
     `check-dom: over a paragraph the probe reads busy ${prose.busy.toFixed(3)}, shadow ${prose.shadow.toFixed(3)}, body alpha ${prose.alpha.toFixed(3)}; ` +
       `with the text transparent, busy ${blank.busy.toFixed(3)}, shadow ${blank.shadow.toFixed(3)}, body alpha ${blank.alpha.toFixed(3)}`,

@@ -219,10 +219,13 @@ export const VIREGLASS_LYRICS_MATERIAL: VireGlassMaterial = {
 /**
  * Glass for controls — buttons, tiles, anything that gets pressed.
  *
- * THICK AND CLEAR, not the baseline: wider bevel, thickness up by half, higher index of
- * refraction and almost no roughness. Baseline glass is a lens over a calm backdrop; a control has
- * to read as an object you can pick up, and that's not done by a fill but by volume: a wide bevel
- * gives the rim something to catch, and thickness gives it depth.
+ * THICK, not the baseline: wider bevel, thickness up by half, a higher index of refraction. Baseline
+ * glass is a lens over a calm backdrop; a control has to read as an object you can pick up, and
+ * that's not done by a fill but by volume: a wide bevel gives the rim something to catch, and
+ * thickness gives it depth.
+ *
+ * Roughness is measured against M 7:11, a control over body text: the whole material laid over the same
+ * scene reads it as the frame does (docs/material-lab.md, 21.10). It was 0.035 by eye, "clear".
  *
  * Thickness is set by BUILDUP AT THE RIM: on the reference control the stripe image under the
  * element bulges there by a factor of 1.85; ours came out at 1.36 at 30. Saturation sets in around
@@ -246,7 +249,7 @@ export const VIREGLASS_CONTROL_MATERIAL: VireGlassMaterial = {
   ior: 1.69,
   thickness: 44,
   bevel: 8,
-  roughness: 0.035,
+  roughness: 0.18,
   presence: 0,
 };
 

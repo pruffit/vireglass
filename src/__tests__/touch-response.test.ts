@@ -106,14 +106,19 @@ describe('finger response', () => {
 });
 
 describe('control material', () => {
-  it('thicker and clearer than the baseline: a control is an object, not a lens over a backdrop', () => {
+  it('thicker than the baseline: a control is an object, not a lens over a backdrop', () => {
     const c = VIREGLASS_CONTROL_MATERIAL;
     const b = VIREGLASS_MATERIAL;
     expect(c.bevel).toBeGreaterThan(b.bevel);
     expect(c.thickness).toBeGreaterThan(b.thickness);
     expect(c.ior).toBeGreaterThan(b.ior);
-    expect(c.roughness).toBeLessThan(b.roughness);
     expect(c.presence).toBeLessThanOrEqual(b.presence);
+  });
+
+  // Against M 7:11 the control is frosted (check:dom section 13 holds the scene); this used to assert "clearer than the
+  // baseline", a choice by eye that Chromium renders with no blur.
+  it('frosted, not clear', () => {
+    expect(resolveOptics(VIREGLASS_CONTROL_MATERIAL).blur).toBeGreaterThanOrEqual(1.5);
   });
 
   it('environment and film stay at baseline: their role does not depend on being a control', () => {
