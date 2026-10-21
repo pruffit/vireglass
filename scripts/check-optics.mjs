@@ -317,7 +317,9 @@ globalThis.vgRimProbe = async () => {
   // different thickness gives a different number.
   const scene = canvasScene('bar', undefined, D);
 
-  const optics = resolveOptics(materialForInk(VIREGLASS_CONTROL_MATERIAL, false));
+  // The lensing alone: the control's frost spreads the stripe's image, and a width taken as mass over peak reads
+  // that as less gathered when the glass is no thinner. The frost has its own gate (check:dom, text under a control).
+  const optics = resolveOptics(materialForInk({ ...VIREGLASS_CONTROL_MATERIAL, roughness: 0 }, false));
   const piece = {
     optics,
     // A capsule, not a rectangle: on the reference control the stripe crosses a rounded end, and

@@ -528,6 +528,12 @@ strength derives from Fresnel; band strength derives from dispersion.
 Fixes from a live run. Each one overturns a decision that looked reasonable right up until it
 didn't.
 
+**Overturned 21.10 for controls by the reference itself.** M 7:11 (frames/verify/m-711) puts a control capsule over
+body text, and the letters under it are no longer letters: σ ≈ 2.2 pt by a fit of the same text blurred. Without
+that, body text read through a control at 4:1, against the reference's 8:1. The note below was judged by eye on a
+busy canvas and never against a frame of glass over text; `VIREGLASS_CONTROL_MATERIAL` now carries the measured
+roughness, and `check:dom` holds text under a control to the reference.
+
 **Blur is an assist, not a legibility tool.** Adaptive scatter had been pushed up so far that on
 a busy background, letters under the glass stopped being letters — a sausage of pixels. No
 legibility is worth that; the element just looks cheap. Blur stays, but weak: it softens

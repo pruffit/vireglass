@@ -106,14 +106,20 @@ describe('finger response', () => {
 });
 
 describe('control material', () => {
-  it('thicker and clearer than the baseline: a control is an object, not a lens over a backdrop', () => {
+  it('thicker than the baseline: a control is an object, not a lens over a backdrop', () => {
     const c = VIREGLASS_CONTROL_MATERIAL;
     const b = VIREGLASS_MATERIAL;
     expect(c.bevel).toBeGreaterThan(b.bevel);
     expect(c.thickness).toBeGreaterThan(b.thickness);
     expect(c.ior).toBeGreaterThan(b.ior);
-    expect(c.roughness).toBeLessThan(b.roughness);
     expect(c.presence).toBeLessThanOrEqual(b.presence);
+  });
+
+  // M 7:11: the reference capsule over body text blurs it by σ 1.8–2.6 pt (fit off frames/verify/m-711). It used to
+  // be asserted "clearer than the baseline", a choice by eye that left body text readable through a control.
+  it('frosted as the reference control over text', () => {
+    expect(resolveOptics(VIREGLASS_CONTROL_MATERIAL).blur).toBeGreaterThanOrEqual(1.8);
+    expect(resolveOptics(VIREGLASS_CONTROL_MATERIAL).blur).toBeLessThanOrEqual(2.6);
   });
 
   it('environment and film stay at baseline: their role does not depend on being a control', () => {

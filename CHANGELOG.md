@@ -1,5 +1,25 @@
 # Changelog
 
+## 3.4.0
+
+`VIREGLASS_CONTROL_MATERIAL` is frosted as the reference control over text: roughness 0.035 → 0.18, blur
+σ 0.42 → 2.16 pt. Every target; a visible change to anything built of the control material.
+
+M 7:11 (frames/verify/m-711) puts a control capsule over body text: the strokes under it keep 0.41 of their depth
+and their darkest rises to 0.31–0.40 of a 0.72 page, so the glyphs on it hold 8:1. A sharp block of the same text
+in the same frame, blurred until it matches, gives σ 1.8–2.6 pt. The control material had been made "clear" by eye
+(see docs/material-lab.md), and body text read through a control nearly sharp: vireuikit measured its rail and
+floating buttons at 4:1 over a page of text. Why it shipped: the roughness was never compared with a frame of a
+control over text, and a unit test asserted the choice ("clearer than the baseline").
+
+- `check:dom` puts 17 px body text under a control in a real browser: the strokes keep 0.57 of their depth, the
+  darkest 0.43 (the reference: 0.41 and 0.31–0.40). The canary is the old roughness: 1.01 and 0.01, the text
+  untouched.
+- The unit test now asserts the measured σ range instead of "clearer than the baseline".
+- `check:optics` measures the rim's gathering with the frost taken out: blur spreads the stripe's image, and a width
+  taken as mass over peak read that as less gathered (1.87x against 1.88) when the glass was no thinner. With the
+  lensing alone it reads 1.90x.
+
 ## 3.3.0
 
 The DOM probe reads text under the glass. DOM target only.
