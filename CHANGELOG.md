@@ -1,6 +1,6 @@
 # Changelog
 
-## 3.4.1 (unreleased)
+## 3.4.1
 
 Maps are baked on a canvas kept in memory, and a landing bakes its maps after the next frame in slices of a few ms. DOM
 target only. The settled map lands at least a frame (up to 100 ms) later, plus the time of its slices, so the
