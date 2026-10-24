@@ -666,10 +666,11 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
         // Nothing to refract in a box of no size; the next resize bakes it.
       } else if (key !== mapKey || !filterEl) {
         // Keyed by exactly what the maps are functions of, which is exactly the cache key above.
-        const map = cached(`d|${key}`, () => {
-          bump('fullBakes');
-          return buildDisplacementMap(full, geometry, dpr, morphState());
-        });
+        const bakeMap = () =>
+          cached(`d|${key}`, () => {
+            bump('fullBakes');
+            return buildDisplacementMap(full, geometry, dpr, morphState());
+          });
         const spectral = hasSpectralEdge(full);
         const bakeHue = () =>
           spectral
@@ -683,27 +684,40 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
           settling = false;
           const forFilter = filterEl;
           const forKey = key;
-          const mapReady = decoded(map.url);
           const current = (mine: number) => !destroyed && !interim && el.isConnected && filterEl === forFilter && mapKey === forKey && mine > shownSeq;
-          const land = (mine: number, hue: SpectralMap | null) =>
+          const land = (mine: number, map: DisplacementMap, mapReady: Promise<void>, hue: SpectralMap | null) =>
             Promise.all([mapReady, hue ? decoded(hue.url) : undefined]).then(() => {
               if (!current(mine)) return;
               shownSeq = mine;
               retarget(forFilter, map, hue, geometry);
             });
-          if (!spectral || isCached(`h|${key}`)) {
-            void land((seq += 1), bakeHue());
+          const mapCached = isCached(`d|${key}`);
+          const hueCached = !spectral || isCached(`h|${key}`);
+          if (mapCached && hueCached) {
+            const map = bakeMap();
+            void land((seq += 1), map, decoded(map.url), bakeHue());
           } else if (deferred && deferred.key === key && deferred.filter === forFilter) {
             deferred.mine = seq += 1;
           } else {
-            // The hue map is baked in a task of its own: with the displacement map in the same task, a landing was a long task.
+            // Each map is baked in a task of its own after a frame: in the task that lands, they made it a long task.
             const entry = (deferred = { key, filter: forFilter, mine: (seq += 1) });
-            void afterNextFrame().then(() => {
+            void (async () => {
+              if (!mapCached) await afterNextFrame();
+              if (current(entry.mine)) {
+                const map = bakeMap();
+                const mapReady = decoded(map.url);
+                if (!hueCached) await afterNextFrame();
+                if (current(entry.mine)) {
+                  if (deferred === entry) deferred = null;
+                  await land(entry.mine, map, mapReady, bakeHue());
+                  return;
+                }
+              }
               if (deferred === entry) deferred = null;
-              return current(entry.mine) ? land(entry.mine, bakeHue()) : undefined;
-            });
+            })();
           }
         } else {
+          const map = bakeMap();
           const hue = bakeHue();
           settling = false;
           invalidate();
