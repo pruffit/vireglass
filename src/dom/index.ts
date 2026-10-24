@@ -491,6 +491,8 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   let lastSample: BackdropSample | null = null;
   let seq = 0;
   let shownSeq = 0;
+  // A landing whose hue map waits for the next frame; a second landing of the same maps joins it.
+  let deferred: { key: string; filter: SVGFilterElement; mine: number } | null = null;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   const interimMaps = createLru<InterimMap>(8);
   let morph: GlassMorph | null = null;
@@ -656,7 +658,8 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       // it on every scroll would re-run a per-pixel loop and a PNG encode for a picture that did
       // not change; the refraction itself updates in the compositor with no JS at all.
       const full = settledOptics();
-      const key = `m${morphKey()}|${geometry.width}x${geometry.height}r${geometry.cornerRadius}@${devicePixelRatio()}:${full.refraction}:${full.refractionScale}:${full.bevelDp}:${full.blur}:${full.thicknessDp}:${full.film}:${full.iridescence}:${full.diffraction}`;
+      const dpr = devicePixelRatio();
+      const key = `m${morphKey()}|${geometry.width}x${geometry.height}r${geometry.cornerRadius}@${dpr}:${full.refraction}:${full.refractionScale}:${full.bevelDp}:${full.blur}:${full.thicknessDp}:${full.film}:${full.iridescence}:${full.diffraction}`;
       if (interim && filterEl) {
         // The filter keeps its map; feImage stretches it over the live box.
       } else if (isEmpty(geometry)) {
@@ -665,32 +668,41 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
         // Keyed by exactly what the maps are functions of, which is exactly the cache key above.
         const map = cached(`d|${key}`, () => {
           bump('fullBakes');
-          return buildDisplacementMap(full, geometry, devicePixelRatio(), morphState());
+          return buildDisplacementMap(full, geometry, dpr, morphState());
         });
         const spectral = hasSpectralEdge(full);
         const bakeHue = () =>
           spectral
             ? cached(`h|${key}`, () => {
                 bump('fullBakes');
-                return buildSpectralMap(full, geometry, devicePixelRatio());
+                return buildSpectralMap(full, geometry, dpr);
               })
             : null;
         const signature = filterSignature(full.blur, full.ior, full.iorSpread, spectral);
         if (settling && filterEl?.getAttribute('data-vireglass-signature') === signature) {
           settling = false;
-          const mine = (seq += 1);
           const forFilter = filterEl;
           const forKey = key;
-          const current = () => !destroyed && filterEl === forFilter && mapKey === forKey && mine > shownSeq;
-          const land = (hue: SpectralMap | null) =>
-            Promise.all([decoded(map.url), hue ? decoded(hue.url) : undefined]).then(() => {
-              if (!current()) return;
+          const mapReady = decoded(map.url);
+          const current = (mine: number) => !destroyed && !interim && el.isConnected && filterEl === forFilter && mapKey === forKey && mine > shownSeq;
+          const land = (mine: number, hue: SpectralMap | null) =>
+            Promise.all([mapReady, hue ? decoded(hue.url) : undefined]).then(() => {
+              if (!current(mine)) return;
               shownSeq = mine;
               retarget(forFilter, map, hue, geometry);
             });
-          // The landing's two bakes a frame apart: in one task they were a long task of their own, 20 to 35 ms for a sheet.
-          if (!spectral || isCached(`h|${key}`)) void land(bakeHue());
-          else void afterNextFrame().then(() => (current() ? land(bakeHue()) : undefined));
+          if (!spectral || isCached(`h|${key}`)) {
+            void land((seq += 1), bakeHue());
+          } else if (deferred && deferred.key === key && deferred.filter === forFilter) {
+            deferred.mine = seq += 1;
+          } else {
+            // The hue map is baked in a task of its own: with the displacement map in the same task, a landing was a long task.
+            const entry = (deferred = { key, filter: forFilter, mine: (seq += 1) });
+            void afterNextFrame().then(() => {
+              if (deferred === entry) deferred = null;
+              return current(entry.mine) ? land(entry.mine, bakeHue()) : undefined;
+            });
+          }
         } else {
           const hue = bakeHue();
           settling = false;

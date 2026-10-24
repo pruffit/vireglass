@@ -23,7 +23,7 @@ vi.mock('../dom/spectral-map', async (original) => {
   return {
     ...real,
     hasSpectralEdge: () => spectral.on,
-    buildSpectralMap: () => ({ url: `hue:${(n += 1)}`, headroom: 2 }),
+    buildSpectralMap: (_o: unknown, _g: unknown, dpr: number) => ({ url: `hue:${(n += 1)}:d${dpr}`, headroom: 2 }),
   };
 });
 
@@ -104,27 +104,6 @@ describe('a pending decode never lands on a filter it was not made for', () => {
     expect(href()).toBe(newer);
   });
 
-  it('bakes a landing\'s hue map a frame after its displacement map, and lands the two together', async () => {
-    vi.useFakeTimers();
-    spectral.on = true;
-    const g = attach();
-    g.setInterim(true);
-    box = { width: 260, height: 100 };
-    g.update();
-    resetRenderStats();
-    g.setInterim(false);
-    expect(renderStats().fullBakes).toBe(1);
-    const hue = () => document.querySelectorAll('svg[data-vireglass-filters] filter feImage')[1]?.getAttribute('href');
-    const before = hue();
-    await vi.advanceTimersByTimeAsync(120);
-    expect(renderStats().fullBakes).toBe(2);
-    expect(href()).not.toContain('w260');
-    await settle();
-    expect(href()).toContain('w260');
-    expect(hue()).not.toBe(before);
-    expect(renderStats().filterSwaps).toBe(0);
-  });
-
   it('drops an interim decode after the finger path installed a map', async () => {
     vi.useFakeTimers();
     const g = attach({ interactive: true });
@@ -137,6 +116,120 @@ describe('a pending decode never lands on a filter it was not made for', () => {
     for (const d of decodes.splice(0)) d.resolve();
     await vi.advanceTimersByTimeAsync(0);
     expect(href()).toBe(touched);
+  });
+});
+
+describe('a landing with a spectral edge bakes its hue map a frame after its displacement map', () => {
+  const hueHref = () => document.querySelectorAll('svg[data-vireglass-filters] filter feImage')[1]?.getAttribute('href');
+  const resolve = async (prefix: string) => {
+    for (const d of decodes.filter((d) => d.url.startsWith(prefix))) d.resolve();
+    decodes = decodes.filter((d) => !d.url.startsWith(prefix));
+    for (let i = 0; i < 4; i += 1) await Promise.resolve();
+  };
+  const land = () => {
+    const g = attach();
+    g.setInterim(true);
+    box = { width: 260, height: 100 };
+    g.update();
+    resetRenderStats();
+    g.setInterim(false);
+    return g;
+  };
+
+  beforeEach(() => {
+    spectral.on = true;
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'requestAnimationFrame', 'cancelAnimationFrame'] });
+  });
+
+  afterEach(() => {
+    Reflect.deleteProperty(window, 'devicePixelRatio');
+  });
+
+  it('bakes the hue map after the next frame, well before the fallback, and starts the displacement decode at once', async () => {
+    land();
+    expect(renderStats().fullBakes).toBe(1);
+    expect(decodes.some((d) => d.url.includes('w260'))).toBe(true);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(renderStats().fullBakes).toBe(2);
+  });
+
+  it('sends the displacement map and the hue map out in the same retarget', async () => {
+    land();
+    const before = [href(), hueHref()];
+    await vi.advanceTimersByTimeAsync(20);
+    await resolve('map:');
+    expect([href(), hueHref()]).toEqual(before);
+    await resolve('hue:');
+    expect(href()).toContain('w260');
+    expect(hueHref()).not.toBe(before[1]);
+    expect(renderStats().filterSwaps).toBe(0);
+  });
+
+  it('bakes the hue map at the density the landing was keyed for', async () => {
+    Object.defineProperty(window, 'devicePixelRatio', { value: 1, configurable: true });
+    land();
+    Object.defineProperty(window, 'devicePixelRatio', { value: 2, configurable: true });
+    await vi.advanceTimersByTimeAsync(20);
+    expect(decodes.find((d) => d.url.startsWith('hue:'))?.url).toContain(':d1');
+  });
+
+  it('bakes nothing more when the lens is destroyed during the wait', async () => {
+    const g = land();
+    g.destroy();
+    handle = null;
+    await vi.advanceTimersByTimeAsync(120);
+    expect(renderStats().fullBakes).toBe(1);
+  });
+
+  it('drops the wait when the box takes a new size during it', async () => {
+    const g = land();
+    box = { width: 300, height: 100 };
+    g.update();
+    expect(renderStats().fullBakes).toBe(3);
+    await vi.advanceTimersByTimeAsync(120);
+    await settle();
+    expect(renderStats().fullBakes).toBe(3);
+    expect(href()).toContain('w300');
+  });
+
+  it('lands a second landing of the same maps before the frame once', async () => {
+    const g = land();
+    const waiting = vi.getTimerCount();
+    g.setInterim(true);
+    g.setInterim(false);
+    expect(vi.getTimerCount()).toBe(waiting);
+    await vi.advanceTimersByTimeAsync(120);
+    expect(renderStats().fullBakes).toBe(2);
+    expect(decodes.filter((d) => d.url.startsWith('hue:'))).toHaveLength(1);
+    await settle();
+    expect(href()).toContain('w260');
+  });
+
+  it('lands nothing when the lens goes back into interim during the wait', async () => {
+    const g = land();
+    g.setInterim(true);
+    await vi.advanceTimersByTimeAsync(120);
+    await settle();
+    expect(renderStats().fullBakes).toBe(1);
+    expect(href()).not.toContain('w260');
+  });
+
+  it('lands at once when the hue map is already baked', async () => {
+    const g = land();
+    await vi.advanceTimersByTimeAsync(20);
+    await settle();
+    g.setInterim(true);
+    resetRenderStats();
+    g.setInterim(false);
+    expect(renderStats().fullBakes).toBe(0);
+    expect(decodes.some((d) => d.url.startsWith('hue:'))).toBe(true);
+  });
+
+  it('lands at once without a spectral edge', async () => {
+    spectral.on = false;
+    land();
+    await settle();
+    expect(href()).toContain('w260');
   });
 });
 
