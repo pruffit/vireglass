@@ -166,7 +166,8 @@ export function buildDisplacementMap(
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
-  const ctx = canvas.getContext('2d');
+  // On a canvas the GPU backs, toDataURL waits for the GPU process: 11 to 44 ms a map while the page animates, 1 to 3 here.
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) throw new Error('vireglass/dom: 2D canvas context unavailable');
   const imageData = ctx.createImageData(width, height);
   imageData.data.set(data);

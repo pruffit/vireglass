@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { roundedRectGeometry } from '../geometry';
 import { MATERIAL_PRESETS, resolveOptics } from '../material';
 import { buildDisplacementMap, renderDisplacementPixels } from '../dom/displacement';
+import { buildSpectralMap } from '../dom/spectral-map';
 
 // Odd device-pixel counts so a pixel sample lands exactly on the geometric centre and on the
 // exact edge midpoint — an even count straddles both and every assertion becomes approximate.
@@ -100,6 +101,17 @@ describe('buildDisplacementMap (canvas wrapper)', () => {
     expect(map.height).toBe(41);
     expect(map.scale).toBeGreaterThan(0);
     expect(captured).not.toBeNull();
+  });
+
+  it('bakes both maps on a canvas kept in memory, which toDataURL reads without waiting for the GPU', () => {
+    const asked: unknown[] = [];
+    const fakeCtx = { createImageData: (w: number, h: number) => ({ data: new Uint8ClampedArray(w * h * 4) }), putImageData: () => undefined };
+    vi.stubGlobal('document', {
+      createElement: () => ({ width: 0, height: 0, getContext: (_kind: string, options: unknown) => (asked.push(options), fakeCtx), toDataURL: () => 'data:,' }),
+    });
+    buildDisplacementMap(OPTICS, GEOMETRY, DPR);
+    buildSpectralMap(OPTICS, GEOMETRY, DPR);
+    expect(asked).toEqual([{ willReadFrequently: true }, { willReadFrequently: true }]);
   });
 });
 

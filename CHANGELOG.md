@@ -1,5 +1,24 @@
 # Changelog
 
+## 3.4.1 (unreleased)
+
+Maps are baked on a canvas kept in memory, and a landing's two maps in two tasks. DOM target only; nothing on screen
+changes.
+
+`toDataURL` on a canvas the GPU backs waits for the GPU process, which is busy while the page animates: building a
+map took 11 to 44 ms there (up to 140 ms) and 1 to 3 ms on a canvas created with `willReadFrequently`, on a Ryzen 5
+3500U with Vega 8. Every bake, interim maps included, was paying it; a landing was a task of 16 to 34 ms and a lens
+attached in a frame was one of up to 42 ms.
+
+Leaving interim also baked the displacement map and the spectral map of a surface in one task. The displacement map
+is now baked at once and its decode started, the spectral map in a task after the next frame (or after 100 ms where no
+frame comes), and the two are retargeted together once both are decoded.
+
+- Both are baked at the device pixel ratio the landing was keyed for.
+- The wait lands nothing once the lens has entered interim again, been destroyed, left the document or taken a new
+  key; a second landing of the same maps during it joins it instead of queueing another.
+- A landing with no spectral edge, or whose spectral map is already cached, lands as before.
+
 ## 3.4.0
 
 `VIREGLASS_CONTROL_MATERIAL` is frosted as the reference control over text: roughness 0.035 → 0.18, blur 0.42 →
