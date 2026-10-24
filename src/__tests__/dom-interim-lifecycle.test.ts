@@ -2,12 +2,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const spectral = vi.hoisted(() => ({ on: false }));
+const bake = vi.hoisted(() => ({ started: 0, fail: false, mapGate: null as Promise<void> | null, hueGate: null as Promise<void> | null }));
 
 vi.mock('../dom/displacement', async (original) => {
   const real = await original<typeof import('../dom/displacement')>();
   let n = 0;
   const build = (_o: unknown, g: { width: number }, dpr: number) => ({ url: `map:${(n += 1)}:w${g.width}:d${dpr}`, width: 4, height: 4, scale: 10 });
-  return { ...real, buildDisplacementMap: build, buildDisplacementMapInSlices: async (o: unknown, g: { width: number }, dpr: number) => build(o, g, dpr) };
+  return { ...real, buildDisplacementMap: build, buildDisplacementMapInSlices: async (o: unknown, g: { width: number }, dpr: number) => {
+      bake.started += 1;
+      await bake.mapGate;
+      if (bake.fail) {
+        bake.fail = false;
+        throw new Error('bake failed');
+      }
+      return build(o, g, dpr);
+    },
+  };
 });
 
 vi.mock('../dom/spectral-map', async (original) => {
@@ -17,7 +27,10 @@ vi.mock('../dom/spectral-map', async (original) => {
     ...real,
     hasSpectralEdge: () => spectral.on,
     buildSpectralMap: (_o: unknown, _g: unknown, dpr: number) => ({ url: `hue:${(n += 1)}:d${dpr}`, headroom: 2 }),
-    buildSpectralMapInSlices: async (_o: unknown, _g: unknown, dpr: number) => ({ url: `hue:${(n += 1)}:d${dpr}`, headroom: 2 }),
+    buildSpectralMapInSlices: async (_o: unknown, _g: unknown, dpr: number) => {
+      await bake.hueGate;
+      return { url: `hue:${(n += 1)}:d${dpr}`, headroom: 2 };
+    },
   };
 });
 
@@ -25,6 +38,7 @@ vi.mock('../dom/probe', () => ({
   probeBackdrop: () => ({ luma: 0.5, lo: 0.4, hi: 0.6, busy: 0.1, r: 0.5, g: 0.5, b: 0.5 }),
 }));
 
+import { renderInSlices } from '../dom/bake';
 import { attachGlass, clearMapCache, renderStats, resetRenderStats, type GlassHandle } from '../dom';
 import { MATERIAL_PRESETS, resolveOptics } from '../index';
 import { resetSupportCache } from '../dom/support';
@@ -63,6 +77,7 @@ beforeEach(() => {
   decodes = [];
   box = { width: 200, height: 100 };
   spectral.on = false;
+  Object.assign(bake, { started: 0, fail: false, mapGate: null, hueGate: null });
   document.body.innerHTML = '<div id="g"></div>';
   el = document.getElementById('g') as HTMLElement;
   el.getBoundingClientRect = () =>
@@ -169,12 +184,105 @@ describe('a landing bakes its maps in tasks of their own, a frame apart, and lan
     expect(decodes.find((d) => d.url.startsWith('hue:'))?.url).toContain(':d1');
   });
 
-  it('bakes nothing more when the lens is destroyed during the wait', async () => {
+  it('lands nothing when the lens is destroyed after its bake started', async () => {
+    const g = land();
+    let release = () => {};
+    bake.mapGate = new Promise<void>((resolve) => (release = resolve));
+    await vi.advanceTimersByTimeAsync(20);
+    expect(bake.started).toBe(1);
+    g.destroy();
+    handle = null;
+    release();
+    await vi.advanceTimersByTimeAsync(120);
+    await settle();
+    expect(renderStats().fullBakes).toBe(1);
+    expect(decodes.some((d) => d.url.startsWith('hue:'))).toBe(false);
+  });
+
+  it('starts no bake when the lens is destroyed during the wait', async () => {
     const g = land();
     g.destroy();
     handle = null;
     await vi.advanceTimersByTimeAsync(120);
-    expect(renderStats().fullBakes).toBe(0);
+    expect(bake.started).toBe(0);
+  });
+
+  it('bakes after 100 ms where no frame comes', async () => {
+    vi.stubGlobal('requestAnimationFrame', () => 0);
+    land();
+    await vi.advanceTimersByTimeAsync(90);
+    expect(bake.started).toBe(0);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(bake.started).toBe(1);
+    vi.unstubAllGlobals();
+  });
+
+  it('lands nothing when a new key takes over between the displacement slice and the hue slice', async () => {
+    const g = land();
+    let release = () => {};
+    bake.mapGate = new Promise<void>((resolve) => (release = resolve));
+    await vi.advanceTimersByTimeAsync(20);
+    box = { width: 300, height: 100 };
+    g.update();
+    release();
+    await vi.advanceTimersByTimeAsync(120);
+    await settle();
+    expect(href()).toContain('w300');
+    expect(renderStats().fullBakes).toBe(3);
+    expect(decodes.filter((d) => d.url.startsWith('hue:'))).toHaveLength(0);
+  });
+
+  it('lands nothing when the lens re-enters interim during the displacement bake', async () => {
+    const g = land();
+    let release = () => {};
+    bake.mapGate = new Promise<void>((resolve) => (release = resolve));
+    await vi.advanceTimersByTimeAsync(20);
+    g.setInterim(true);
+    release();
+    await vi.advanceTimersByTimeAsync(120);
+    await settle();
+    expect(href()).not.toContain('w260');
+    expect(decodes.some((d) => d.url.startsWith('hue:'))).toBe(false);
+  });
+
+  it('lands nothing while the element is out of the document, and lands once it is back and measured', async () => {
+    let measured = () => {};
+    vi.stubGlobal('ResizeObserver', class { constructor(cb: () => void) { measured = cb; } observe() {} disconnect() {} });
+    const g = land();
+    el.remove();
+    await vi.advanceTimersByTimeAsync(120);
+    await settle();
+    expect(href()).not.toContain('w260');
+    document.body.append(el);
+    measured();
+    await vi.advanceTimersByTimeAsync(120);
+    await settle();
+    expect(href()).toContain('w260');
+    g.destroy();
+    handle = null;
+    vi.unstubAllGlobals();
+  });
+
+  it('survives a failed bake: reports it, and bakes again on the next apply and on the next landing', async () => {
+    const reported: unknown[] = [];
+    let measured = () => {};
+    vi.stubGlobal('reportError', (e: unknown) => reported.push(e));
+    vi.stubGlobal('ResizeObserver', class { constructor(cb: () => void) { measured = cb; } observe() {} disconnect() {} });
+    const g = land();
+    bake.fail = true;
+    await vi.advanceTimersByTimeAsync(120);
+    expect(reported).toHaveLength(1);
+    expect(href()).not.toContain('w260');
+    measured();
+    await vi.advanceTimersByTimeAsync(120);
+    await settle();
+    expect(href()).toContain('w260');
+    g.setInterim(true);
+    g.setInterim(false);
+    await vi.advanceTimersByTimeAsync(120);
+    await settle();
+    expect(href()).toContain('w260');
+    vi.unstubAllGlobals();
   });
 
   it('drops the wait when the box takes a new size during it', async () => {
@@ -442,5 +550,30 @@ describe('an element with no size', () => {
     box = { width: 200, height: 100 };
     g.setMorph(shape(91));
     expect(renderStats().reducedBakes).toBe(1);
+  });
+});
+
+describe('slicing on a hidden page', () => {
+  const rows = (height: number) => ({ height, rows: () => undefined, done: () => 'done' });
+
+  afterEach(() => {
+    Reflect.deleteProperty(document, 'hidden');
+  });
+
+  it('yields between slices while the page is shown', async () => {
+    vi.useFakeTimers();
+    const rendering = renderInSlices(rows(10), 0);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+    await vi.runAllTimersAsync();
+    await expect(rendering).resolves.toBe('done');
+  });
+
+  it('renders every row without waiting on a timer while the page is hidden', async () => {
+    vi.useFakeTimers();
+    Object.defineProperty(document, 'hidden', { value: true, configurable: true });
+    const rendering = renderInSlices(rows(10), 0);
+    expect(vi.getTimerCount()).toBe(0);
+    await expect(rendering).resolves.toBe('done');
   });
 });

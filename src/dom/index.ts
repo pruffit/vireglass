@@ -491,7 +491,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   let lastSample: BackdropSample | null = null;
   let seq = 0;
   let shownSeq = 0;
-  // A landing whose hue map waits for the next frame; a second landing of the same maps joins it.
+  // A landing whose maps wait for the next frame; a second landing of the same maps joins it.
   let deferred: { key: string; filter: SVGFilterElement; mine: number } | null = null;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   const interimMaps = createLru<InterimMap>(8);
@@ -712,19 +712,33 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
           } else {
             // After the next frame, in slices of a few ms: baked in the task that lands, the maps made it a long task.
             const entry = (deferred = { key, filter: forFilter, mine: (seq += 1) });
+            const rearm = () => {
+              mapKey = '';
+              settling = true;
+            };
+            const ours = () => !destroyed && !interim && filterEl === forFilter && mapKey === forKey && entry.mine > shownSeq;
             void (async () => {
-              await afterNextFrame();
-              if (current(entry.mine)) {
-                const map = await bakeMapInSlices();
-                const mapReady = decoded(map.url);
-                const hue = current(entry.mine) ? await bakeHueInSlices() : null;
+              try {
+                await afterNextFrame();
                 if (current(entry.mine)) {
-                  if (deferred === entry) deferred = null;
-                  await land(entry.mine, map, mapReady, hue);
-                  return;
+                  const map = await bakeMapInSlices();
+                  const mapReady = decoded(map.url);
+                  const hue = current(entry.mine) ? await bakeHueInSlices() : null;
+                  if (current(entry.mine)) {
+                    if (deferred === entry) deferred = null;
+                    await land(entry.mine, map, mapReady, hue);
+                    return;
+                  }
                 }
+                // Out of the document, the lens is landed by the next apply() once it is back.
+                if (ours() && !el.isConnected) rearm();
+              } catch (error) {
+                if (ours()) rearm();
+                if (typeof reportError === 'function') reportError(error);
+                else console.error(error);
+              } finally {
+                if (deferred === entry) deferred = null;
               }
-              if (deferred === entry) deferred = null;
             })();
           }
         } else {

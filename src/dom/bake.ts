@@ -15,7 +15,8 @@ export async function renderInSlices<T>(map: Rows<T>, sliceMs = SLICE_MS): Promi
       map.rows(row, row + 1);
       row += 1;
     } while (row < map.height && performance.now() - start < sliceMs);
-    if (row < map.height) await new Promise((resolve) => setTimeout(resolve, 0));
+    // A hidden page draws no frames to protect, and clamps setTimeout to about a second.
+    if (row < map.height && !(typeof document !== 'undefined' && document.hidden)) await new Promise((resolve) => setTimeout(resolve, 0));
   }
   return map.done();
 }
