@@ -129,6 +129,7 @@ const NOT_CALIBRATION = new Map([
   ['HEADROOM', 'fixed-point headroom in the spectral map'],
   ['STOPS', 'how many stops a conic gradient is emitted with'],
   ['LIMIT', 'cache size'],
+  ['SLICE_MS', 'how long a task renders map rows before it yields, traded against the time a map takes to land'],
   ['INTERIM_IDLE_MS', 'how long an interim mode may go without a call before it ends itself'],
   ['GRID_COLS', 'probe grid'],
   ['GRID_ROWS', 'probe grid'],

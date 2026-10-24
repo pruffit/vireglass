@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { roundedRectGeometry } from '../geometry';
 import { MATERIAL_PRESETS, resolveOptics } from '../material';
-import { buildDisplacementMap, renderDisplacementPixels } from '../dom/displacement';
+import { buildDisplacementMap, displacementRows, renderDisplacementPixels } from '../dom/displacement';
+import { buildSpectralMap, renderSpectralPixels, spectralRows } from '../dom/spectral-map';
+import { renderInSlices } from '../dom/bake';
 
 // Odd device-pixel counts so a pixel sample lands exactly on the geometric centre and on the
 // exact edge midpoint — an even count straddles both and every assertion becomes approximate.
@@ -67,6 +69,21 @@ describe('renderDisplacementPixels', () => {
   });
 });
 
+describe('rendering in slices', () => {
+  const panel = roundedRectGeometry(160, 120, 24);
+  const morph = { smoothing: 12, morph: { offsetX: -60, offsetY: 60, width: 44, height: 44, cornerRadius: 22 } };
+
+  it('gives the same pixels as one pass, yielding between slices', async () => {
+    const tasks = vi.spyOn(globalThis, 'setTimeout');
+    for (const [geometry, state] of [[GEOMETRY, {}], [panel, morph]] as const) {
+      expect(Array.from((await renderInSlices(displacementRows(OPTICS, geometry, DPR, state), 0.2)).data)).toEqual(Array.from(renderDisplacementPixels(OPTICS, geometry, DPR, state).data));
+      expect(Array.from((await renderInSlices(spectralRows(OPTICS, geometry, DPR), 0.2)).data)).toEqual(Array.from(renderSpectralPixels(OPTICS, geometry, DPR).data));
+    }
+    expect(tasks.mock.calls.length).toBeGreaterThan(3);
+    tasks.mockRestore();
+  });
+});
+
 describe('buildDisplacementMap (canvas wrapper)', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -100,6 +117,17 @@ describe('buildDisplacementMap (canvas wrapper)', () => {
     expect(map.height).toBe(41);
     expect(map.scale).toBeGreaterThan(0);
     expect(captured).not.toBeNull();
+  });
+
+  it('bakes both maps on a canvas kept in memory, which toDataURL reads without waiting for the GPU', () => {
+    const asked: unknown[] = [];
+    const fakeCtx = { createImageData: (w: number, h: number) => ({ data: new Uint8ClampedArray(w * h * 4) }), putImageData: () => undefined };
+    vi.stubGlobal('document', {
+      createElement: () => ({ width: 0, height: 0, getContext: (_kind: string, options: unknown) => (asked.push(options), fakeCtx), toDataURL: () => 'data:,' }),
+    });
+    buildDisplacementMap(OPTICS, GEOMETRY, DPR);
+    buildSpectralMap(OPTICS, GEOMETRY, DPR);
+    expect(asked).toEqual([{ willReadFrequently: true }, { willReadFrequently: true }]);
   });
 });
 

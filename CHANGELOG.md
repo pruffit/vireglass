@@ -1,5 +1,30 @@
 # Changelog
 
+## 3.4.1
+
+Maps are baked on a canvas kept in memory, and a landing bakes its maps after the next frame in slices of a few ms. DOM
+target only. The settled map lands at least a frame (up to 100 ms) later, plus the time of its slices, so the
+interim map stays on screen a little longer; nothing else on screen changes.
+
+`toDataURL` on a canvas the GPU backs waits for the GPU process, which is busy while the page animates: building a
+map took 11 to 44 ms there (up to 140 ms) and 1 to 3 ms on a canvas created with `willReadFrequently`, on a Ryzen 5
+3500U with Vega 8. Every bake, interim maps included, was paying it; a landing was a task of 16 to 34 ms and a lens
+attached in a frame was one of up to 42 ms.
+
+Leaving interim also baked the displacement map and the spectral map of a surface in the task that landed it, and a
+large one is a long task even alone (19 to 23 ms for a sheet). Now that task bakes nothing: after the next frame (or
+100 ms where no frame comes) the maps are rendered a few rows at a time, yielding every 5 ms, then encoded, and the
+two are retargeted together once both are decoded. `displacementRows`, `spectralRows` and `renderInSlices` give the
+same pixels as `renderDisplacementPixels` and `renderSpectralPixels`.
+
+- Both are baked at the device pixel ratio the landing was keyed for.
+- The wait lands nothing once the lens has entered interim again, been destroyed, left the document or taken a new
+  key; a second landing of the same maps during it joins it instead of queueing another.
+- A bake that throws is reported with `reportError`, and the lens bakes again on its next landing or resize.
+- A lens taken out of the document during the wait lands when it is back and measured again.
+- A hidden page renders the remaining rows at once: its timers are clamped to about a second, and it draws no frames.
+- A landing whose maps are all cached lands at once, as before.
+
 ## 3.4.0
 
 `VIREGLASS_CONTROL_MATERIAL` is frosted as the reference control over text: roughness 0.035 → 0.18, blur 0.42 →

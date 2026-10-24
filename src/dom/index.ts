@@ -12,9 +12,9 @@
 // See `docs/superpowers/specs/2026-09-19-vireglass-over-live-dom.md` for the technique and the
 // three findings that make it work (objectBoundingBox, prefiltering the source, the 8-bit step).
 import { ambientFrom, INK_DARK, INK_LIGHT, shouldInkBeLight, type BackdropSample } from '../adaptation';
-import { buildDisplacementMap, displacementScale, type DisplacementMap } from './displacement';
-import { buildSpectralMap, hasSpectralEdge, type SpectralMap } from './spectral-map';
-import { cached } from './map-cache';
+import { buildDisplacementMap, buildDisplacementMapInSlices, displacementScale, type DisplacementMap } from './displacement';
+import { buildSpectralMap, buildSpectralMapInSlices, hasSpectralEdge, type SpectralMap } from './spectral-map';
+import { cached, isCached } from './map-cache';
 import { roundedRectGeometry, type VireGlassGeometry } from '../geometry';
 import { resolveOptics, VIREGLASS_MATERIAL, type VireGlassMaterial, type VireGlassOptics } from '../material';
 import { probeBackdrop } from './probe';
@@ -305,6 +305,20 @@ function decoded(url: string): Promise<void> {
   return typeof img.decode === 'function' ? img.decode().catch(() => undefined) : Promise.resolve();
 }
 
+/** Resolves in a task after the next frame has been drawn, or after 100 ms where no frame comes (a hidden page). */
+function afterNextFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    const fallback = setTimeout(resolve, 100);
+    if (typeof requestAnimationFrame !== 'function') return;
+    requestAnimationFrame(() =>
+      setTimeout(() => {
+        clearTimeout(fallback);
+        resolve();
+      }, 0),
+    );
+  });
+}
+
 type InterimMap = { map: DisplacementMap; ready: boolean; geometry: VireGlassGeometry };
 
 /** Interim with no call for this long ends itself: a morph that never reported landing must not
@@ -477,6 +491,8 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   let lastSample: BackdropSample | null = null;
   let seq = 0;
   let shownSeq = 0;
+  // A landing whose maps wait for the next frame; a second landing of the same maps joins it.
+  let deferred: { key: string; filter: SVGFilterElement; mine: number } | null = null;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   const interimMaps = createLru<InterimMap>(8);
   let morph: GlassMorph | null = null;
@@ -642,35 +658,92 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       // it on every scroll would re-run a per-pixel loop and a PNG encode for a picture that did
       // not change; the refraction itself updates in the compositor with no JS at all.
       const full = settledOptics();
-      const key = `m${morphKey()}|${geometry.width}x${geometry.height}r${geometry.cornerRadius}@${devicePixelRatio()}:${full.refraction}:${full.refractionScale}:${full.bevelDp}:${full.blur}:${full.thicknessDp}:${full.film}:${full.iridescence}:${full.diffraction}`;
+      const dpr = devicePixelRatio();
+      const key = `m${morphKey()}|${geometry.width}x${geometry.height}r${geometry.cornerRadius}@${dpr}:${full.refraction}:${full.refractionScale}:${full.bevelDp}:${full.blur}:${full.thicknessDp}:${full.film}:${full.iridescence}:${full.diffraction}`;
       if (interim && filterEl) {
         // The filter keeps its map; feImage stretches it over the live box.
       } else if (isEmpty(geometry)) {
         // Nothing to refract in a box of no size; the next resize bakes it.
       } else if (key !== mapKey || !filterEl) {
         // Keyed by exactly what the maps are functions of, which is exactly the cache key above.
-        const map = cached(`d|${key}`, () => {
-          bump('fullBakes');
-          return buildDisplacementMap(full, geometry, devicePixelRatio(), morphState());
-        });
-        const hue = hasSpectralEdge(full)
-          ? cached(`h|${key}`, () => {
-              bump('fullBakes');
-              return buildSpectralMap(full, geometry, devicePixelRatio());
-            })
-          : null;
-        const signature = filterSignature(full.blur, full.ior, full.iorSpread, !!hue);
+        const morphNow = morphState();
+        const bakeMap = () =>
+          cached(`d|${key}`, () => {
+            bump('fullBakes');
+            return buildDisplacementMap(full, geometry, dpr, morphNow);
+          });
+        const spectral = hasSpectralEdge(full);
+        const bakeHue = () =>
+          spectral
+            ? cached(`h|${key}`, () => {
+                bump('fullBakes');
+                return buildSpectralMap(full, geometry, dpr);
+              })
+            : null;
+        const bakeMapInSlices = async () => {
+          if (isCached(`d|${key}`)) return bakeMap();
+          const built = await buildDisplacementMapInSlices(full, geometry, dpr, morphNow);
+          return cached(`d|${key}`, () => (bump('fullBakes'), built));
+        };
+        const bakeHueInSlices = async () => {
+          if (!spectral || isCached(`h|${key}`)) return bakeHue();
+          const built = await buildSpectralMapInSlices(full, geometry, dpr);
+          return cached(`h|${key}`, () => (bump('fullBakes'), built));
+        };
+        const signature = filterSignature(full.blur, full.ior, full.iorSpread, spectral);
         if (settling && filterEl?.getAttribute('data-vireglass-signature') === signature) {
           settling = false;
-          const mine = (seq += 1);
           const forFilter = filterEl;
           const forKey = key;
-          void Promise.all([decoded(map.url), hue ? decoded(hue.url) : undefined]).then(() => {
-            if (destroyed || filterEl !== forFilter || mapKey !== forKey || mine <= shownSeq) return;
-            shownSeq = mine;
-            retarget(forFilter, map, hue, geometry);
-          });
+          const current = (mine: number) => !destroyed && !interim && el.isConnected && filterEl === forFilter && mapKey === forKey && mine > shownSeq;
+          const land = (mine: number, map: DisplacementMap, mapReady: Promise<void>, hue: SpectralMap | null) =>
+            Promise.all([mapReady, hue ? decoded(hue.url) : undefined]).then(() => {
+              if (!current(mine)) return;
+              shownSeq = mine;
+              retarget(forFilter, map, hue, geometry);
+            });
+          const mapCached = isCached(`d|${key}`);
+          const hueCached = !spectral || isCached(`h|${key}`);
+          if (mapCached && hueCached) {
+            const map = bakeMap();
+            void land((seq += 1), map, decoded(map.url), bakeHue());
+          } else if (deferred && deferred.key === key && deferred.filter === forFilter) {
+            deferred.mine = seq += 1;
+          } else {
+            // After the next frame, in slices of a few ms: baked in the task that lands, the maps made it a long task.
+            const entry = (deferred = { key, filter: forFilter, mine: (seq += 1) });
+            const rearm = () => {
+              mapKey = '';
+              settling = true;
+            };
+            const ours = () => !destroyed && !interim && filterEl === forFilter && mapKey === forKey && entry.mine > shownSeq;
+            void (async () => {
+              try {
+                await afterNextFrame();
+                if (current(entry.mine)) {
+                  const map = await bakeMapInSlices();
+                  const mapReady = decoded(map.url);
+                  const hue = current(entry.mine) ? await bakeHueInSlices() : null;
+                  if (current(entry.mine)) {
+                    if (deferred === entry) deferred = null;
+                    await land(entry.mine, map, mapReady, hue);
+                    return;
+                  }
+                }
+                // Out of the document, the lens is landed by the next apply() once it is back.
+                if (ours() && !el.isConnected) rearm();
+              } catch (error) {
+                if (ours()) rearm();
+                if (typeof reportError === 'function') reportError(error);
+                else console.error(error);
+              } finally {
+                if (deferred === entry) deferred = null;
+              }
+            })();
+          }
         } else {
+          const map = bakeMap();
+          const hue = bakeHue();
           settling = false;
           invalidate();
           const defs = getFilterHost(host).querySelector('defs') as SVGDefsElement;

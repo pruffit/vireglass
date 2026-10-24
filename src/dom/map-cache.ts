@@ -35,3 +35,8 @@ export function clearMapCache(): void {
 export function mapCacheSize(): number {
   return store.size;
 }
+
+/** Whether a build for this key would be free. */
+export function isCached(key: string): boolean {
+  return store.has(key);
+}

@@ -11,6 +11,7 @@
 // coloured one.
 import { bevelDp, rimDp, thicknessDp, type VireGlassGeometry } from '../geometry';
 import type { VireGlassOptics } from '../material';
+import { pngFromPixels, renderInSlices, type Rows } from './bake';
 import { sdfRoundedRect } from '../sdf';
 import { spectralHue } from '../spectral';
 
@@ -51,11 +52,16 @@ function hueAlongDepth(bevel: number, rim: number, thick: number, optics: VireGl
   return table;
 }
 
-export function renderSpectralPixels(
-  optics: VireGlassOptics,
-  geometry: VireGlassGeometry,
-  dpr: number,
-): { data: Uint8ClampedArray; width: number; height: number; headroom: number } {
+export function renderSpectralPixels(optics: VireGlassOptics, geometry: VireGlassGeometry, dpr: number): SpectralPixels {
+  const map = spectralRows(optics, geometry, dpr);
+  map.rows(0, map.height);
+  return map.done();
+}
+
+export type SpectralPixels = { data: Uint8ClampedArray; width: number; height: number; headroom: number };
+
+/** `renderSpectralPixels` a row at a time: the same pixels whichever rows are rendered when. */
+export function spectralRows(optics: VireGlassOptics, geometry: VireGlassGeometry, dpr: number): Rows<SpectralPixels> {
   const bevel = bevelDp(geometry, optics);
   const density = mapDensity(bevel, dpr);
   const width = Math.max(1, Math.round(geometry.width * density));
@@ -73,30 +79,32 @@ export function renderSpectralPixels(
   new Uint32Array(data.buffer).fill(new Uint32Array(new Uint8ClampedArray([neutral, neutral, neutral, 255]).buffer)[0]!);
   const corner = Math.max(geometry.cornerRadius, bevel);
 
-  for (let py = 0; py < height; py += 1) {
-    const y = (py + 0.5) / density - halfH;
-    const ay = Math.abs(y);
-    // Where |x| is within this, the rounded rect's distance field puts the point at least a bevel deep.
-    const plain = Math.max(ay <= halfH - bevel ? halfW - corner : -1, ay <= halfH - corner ? halfW - bevel : -1);
-    for (let px = 0; px < width; px += 1) {
-      const x = (px + 0.5) / density - halfW;
-      if (Math.abs(x) <= plain) continue;
-      const i = (py * width + px) * 4;
-      const sd = sdfRoundedRect(x, y, geometry.width, geometry.height, geometry.cornerRadius);
-      const e = Math.max(-sd, 0);
-      if (e >= bevel) continue;
-      const u = Math.sqrt(e / bevel) * DEPTH_STEPS;
-      const k = Math.min(Math.floor(u), DEPTH_STEPS - 1);
-      const f = u - k;
-      const at = k * 3;
-      data[i] = Math.round((table[at] + (table[at + 3] - table[at]) * f) * toByte);
-      data[i + 1] = Math.round((table[at + 1] + (table[at + 4] - table[at + 1]) * f) * toByte);
-      data[i + 2] = Math.round((table[at + 2] + (table[at + 5] - table[at + 2]) * f) * toByte);
-      data[i + 3] = 255;
+  const rows = (from: number, to: number) => {
+    for (let py = from; py < Math.min(to, height); py += 1) {
+      const y = (py + 0.5) / density - halfH;
+      const ay = Math.abs(y);
+      // Where |x| is within this, the rounded rect's distance field puts the point at least a bevel deep.
+      const plain = Math.max(ay <= halfH - bevel ? halfW - corner : -1, ay <= halfH - corner ? halfW - bevel : -1);
+      for (let px = 0; px < width; px += 1) {
+        const x = (px + 0.5) / density - halfW;
+        if (Math.abs(x) <= plain) continue;
+        const i = (py * width + px) * 4;
+        const sd = sdfRoundedRect(x, y, geometry.width, geometry.height, geometry.cornerRadius);
+        const e = Math.max(-sd, 0);
+        if (e >= bevel) continue;
+        const u = Math.sqrt(e / bevel) * DEPTH_STEPS;
+        const k = Math.min(Math.floor(u), DEPTH_STEPS - 1);
+        const f = u - k;
+        const at = k * 3;
+        data[i] = Math.round((table[at] + (table[at + 3] - table[at]) * f) * toByte);
+        data[i + 1] = Math.round((table[at + 1] + (table[at + 4] - table[at + 1]) * f) * toByte);
+        data[i + 2] = Math.round((table[at + 2] + (table[at + 5] - table[at + 2]) * f) * toByte);
+        data[i + 3] = 255;
+      }
     }
-  }
+  };
 
-  return { data, width, height, headroom: HEADROOM };
+  return { height, rows, done: () => ({ data, width, height, headroom: HEADROOM }) };
 }
 
 /** Whether this material has a spectral edge at all. Three extra filter primitives and a per-pixel
@@ -114,13 +122,14 @@ export function buildSpectralMap(
     throw new Error('vireglass/dom: buildSpectralMap requires a DOM (canvas)');
   }
   const { data, width, height, headroom } = renderSpectralPixels(optics, geometry, dpr);
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('vireglass/dom: 2D canvas context unavailable');
-  const image = ctx.createImageData(width, height);
-  image.data.set(data);
-  ctx.putImageData(image, 0, 0);
-  return { url: canvas.toDataURL('image/png'), width, height, headroom };
+  return { url: pngFromPixels(data, width, height), width, height, headroom };
+}
+
+/** `buildSpectralMap` spread over several tasks, none of them longer than a slice. */
+export async function buildSpectralMapInSlices(optics: VireGlassOptics, geometry: VireGlassGeometry, dpr: number): Promise<SpectralMap> {
+  if (typeof document === 'undefined' || typeof document.createElement !== 'function') {
+    throw new Error('vireglass/dom: buildSpectralMap requires a DOM (canvas)');
+  }
+  const { data, width, height, headroom } = await renderInSlices(spectralRows(optics, geometry, dpr));
+  return { url: pngFromPixels(data, width, height), width, height, headroom };
 }
