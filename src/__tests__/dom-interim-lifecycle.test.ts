@@ -104,6 +104,27 @@ describe('a pending decode never lands on a filter it was not made for', () => {
     expect(href()).toBe(newer);
   });
 
+  it('bakes a landing\'s hue map a frame after its displacement map, and lands the two together', async () => {
+    vi.useFakeTimers();
+    spectral.on = true;
+    const g = attach();
+    g.setInterim(true);
+    box = { width: 260, height: 100 };
+    g.update();
+    resetRenderStats();
+    g.setInterim(false);
+    expect(renderStats().fullBakes).toBe(1);
+    const hue = () => document.querySelectorAll('svg[data-vireglass-filters] filter feImage')[1]?.getAttribute('href');
+    const before = hue();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(renderStats().fullBakes).toBe(2);
+    expect(href()).not.toContain('w260');
+    await settle();
+    expect(href()).toContain('w260');
+    expect(hue()).not.toBe(before);
+    expect(renderStats().filterSwaps).toBe(0);
+  });
+
   it('drops an interim decode after the finger path installed a map', async () => {
     vi.useFakeTimers();
     const g = attach({ interactive: true });

@@ -14,7 +14,7 @@
 import { ambientFrom, INK_DARK, INK_LIGHT, shouldInkBeLight, type BackdropSample } from '../adaptation';
 import { buildDisplacementMap, displacementScale, type DisplacementMap } from './displacement';
 import { buildSpectralMap, hasSpectralEdge, type SpectralMap } from './spectral-map';
-import { cached } from './map-cache';
+import { cached, isCached } from './map-cache';
 import { roundedRectGeometry, type VireGlassGeometry } from '../geometry';
 import { resolveOptics, VIREGLASS_MATERIAL, type VireGlassMaterial, type VireGlassOptics } from '../material';
 import { probeBackdrop } from './probe';
@@ -303,6 +303,20 @@ function decoded(url: string): Promise<void> {
   const img = new Image();
   img.src = url;
   return typeof img.decode === 'function' ? img.decode().catch(() => undefined) : Promise.resolve();
+}
+
+/** Resolves in a task after the next frame has been drawn, or after 100 ms where no frame comes (a hidden page). */
+function afterNextFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    const fallback = setTimeout(resolve, 100);
+    if (typeof requestAnimationFrame !== 'function') return;
+    requestAnimationFrame(() =>
+      setTimeout(() => {
+        clearTimeout(fallback);
+        resolve();
+      }, 0),
+    );
+  });
 }
 
 type InterimMap = { map: DisplacementMap; ready: boolean; geometry: VireGlassGeometry };
@@ -653,24 +667,32 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
           bump('fullBakes');
           return buildDisplacementMap(full, geometry, devicePixelRatio(), morphState());
         });
-        const hue = hasSpectralEdge(full)
-          ? cached(`h|${key}`, () => {
-              bump('fullBakes');
-              return buildSpectralMap(full, geometry, devicePixelRatio());
-            })
-          : null;
-        const signature = filterSignature(full.blur, full.ior, full.iorSpread, !!hue);
+        const spectral = hasSpectralEdge(full);
+        const bakeHue = () =>
+          spectral
+            ? cached(`h|${key}`, () => {
+                bump('fullBakes');
+                return buildSpectralMap(full, geometry, devicePixelRatio());
+              })
+            : null;
+        const signature = filterSignature(full.blur, full.ior, full.iorSpread, spectral);
         if (settling && filterEl?.getAttribute('data-vireglass-signature') === signature) {
           settling = false;
           const mine = (seq += 1);
           const forFilter = filterEl;
           const forKey = key;
-          void Promise.all([decoded(map.url), hue ? decoded(hue.url) : undefined]).then(() => {
-            if (destroyed || filterEl !== forFilter || mapKey !== forKey || mine <= shownSeq) return;
-            shownSeq = mine;
-            retarget(forFilter, map, hue, geometry);
-          });
+          const current = () => !destroyed && filterEl === forFilter && mapKey === forKey && mine > shownSeq;
+          const land = (hue: SpectralMap | null) =>
+            Promise.all([decoded(map.url), hue ? decoded(hue.url) : undefined]).then(() => {
+              if (!current()) return;
+              shownSeq = mine;
+              retarget(forFilter, map, hue, geometry);
+            });
+          // The landing's two bakes a frame apart: in one task they were a long task of their own, 20 to 35 ms for a sheet.
+          if (!spectral || isCached(`h|${key}`)) void land(bakeHue());
+          else void afterNextFrame().then(() => (current() ? land(bakeHue()) : undefined));
         } else {
+          const hue = bakeHue();
           settling = false;
           invalidate();
           const defs = getFilterHost(host).querySelector('defs') as SVGDefsElement;
