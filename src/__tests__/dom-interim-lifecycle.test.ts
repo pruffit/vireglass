@@ -6,15 +6,8 @@ const spectral = vi.hoisted(() => ({ on: false }));
 vi.mock('../dom/displacement', async (original) => {
   const real = await original<typeof import('../dom/displacement')>();
   let n = 0;
-  return {
-    ...real,
-    buildDisplacementMap: (_o: unknown, g: { width: number }, dpr: number) => ({
-      url: `map:${(n += 1)}:w${g.width}:d${dpr}`,
-      width: 4,
-      height: 4,
-      scale: 10,
-    }),
-  };
+  const build = (_o: unknown, g: { width: number }, dpr: number) => ({ url: `map:${(n += 1)}:w${g.width}:d${dpr}`, width: 4, height: 4, scale: 10 });
+  return { ...real, buildDisplacementMap: build, buildDisplacementMapInSlices: async (o: unknown, g: { width: number }, dpr: number) => build(o, g, dpr) };
 });
 
 vi.mock('../dom/spectral-map', async (original) => {
@@ -24,6 +17,7 @@ vi.mock('../dom/spectral-map', async (original) => {
     ...real,
     hasSpectralEdge: () => spectral.on,
     buildSpectralMap: (_o: unknown, _g: unknown, dpr: number) => ({ url: `hue:${(n += 1)}:d${dpr}`, headroom: 2 }),
+    buildSpectralMapInSlices: async (_o: unknown, _g: unknown, dpr: number) => ({ url: `hue:${(n += 1)}:d${dpr}`, headroom: 2 }),
   };
 });
 
@@ -145,14 +139,13 @@ describe('a landing bakes its maps in tasks of their own, a frame apart, and lan
     Reflect.deleteProperty(window, 'devicePixelRatio');
   });
 
-  it('bakes nothing in the task that lands, the displacement map after the next frame and the hue map after the one after, well before the fallback', async () => {
+  it('bakes nothing in the task that lands, and both maps after the next frame, well before the fallback', async () => {
     land();
     expect(renderStats().fullBakes).toBe(0);
-    await vi.advanceTimersByTimeAsync(20);
-    expect(renderStats().fullBakes).toBe(1);
-    expect(decodes.some((d) => d.url.includes('w260'))).toBe(true);
+    expect(decodes.some((d) => d.url.includes('w260'))).toBe(false);
     await vi.advanceTimersByTimeAsync(20);
     expect(renderStats().fullBakes).toBe(2);
+    expect(decodes.some((d) => d.url.includes('w260'))).toBe(true);
   });
 
   it('sends the displacement map and the hue map out in the same retarget', async () => {

@@ -12,8 +12,8 @@
 // See `docs/superpowers/specs/2026-09-19-vireglass-over-live-dom.md` for the technique and the
 // three findings that make it work (objectBoundingBox, prefiltering the source, the 8-bit step).
 import { ambientFrom, INK_DARK, INK_LIGHT, shouldInkBeLight, type BackdropSample } from '../adaptation';
-import { buildDisplacementMap, displacementScale, type DisplacementMap } from './displacement';
-import { buildSpectralMap, hasSpectralEdge, type SpectralMap } from './spectral-map';
+import { buildDisplacementMap, buildDisplacementMapInSlices, displacementScale, type DisplacementMap } from './displacement';
+import { buildSpectralMap, buildSpectralMapInSlices, hasSpectralEdge, type SpectralMap } from './spectral-map';
 import { cached, isCached } from './map-cache';
 import { roundedRectGeometry, type VireGlassGeometry } from '../geometry';
 import { resolveOptics, VIREGLASS_MATERIAL, type VireGlassMaterial, type VireGlassOptics } from '../material';
@@ -666,10 +666,11 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
         // Nothing to refract in a box of no size; the next resize bakes it.
       } else if (key !== mapKey || !filterEl) {
         // Keyed by exactly what the maps are functions of, which is exactly the cache key above.
+        const morphNow = morphState();
         const bakeMap = () =>
           cached(`d|${key}`, () => {
             bump('fullBakes');
-            return buildDisplacementMap(full, geometry, dpr, morphState());
+            return buildDisplacementMap(full, geometry, dpr, morphNow);
           });
         const spectral = hasSpectralEdge(full);
         const bakeHue = () =>
@@ -679,6 +680,16 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
                 return buildSpectralMap(full, geometry, dpr);
               })
             : null;
+        const bakeMapInSlices = async () => {
+          if (isCached(`d|${key}`)) return bakeMap();
+          const built = await buildDisplacementMapInSlices(full, geometry, dpr, morphNow);
+          return cached(`d|${key}`, () => (bump('fullBakes'), built));
+        };
+        const bakeHueInSlices = async () => {
+          if (!spectral || isCached(`h|${key}`)) return bakeHue();
+          const built = await buildSpectralMapInSlices(full, geometry, dpr);
+          return cached(`h|${key}`, () => (bump('fullBakes'), built));
+        };
         const signature = filterSignature(full.blur, full.ior, full.iorSpread, spectral);
         if (settling && filterEl?.getAttribute('data-vireglass-signature') === signature) {
           settling = false;
@@ -699,17 +710,17 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
           } else if (deferred && deferred.key === key && deferred.filter === forFilter) {
             deferred.mine = seq += 1;
           } else {
-            // Each map is baked in a task of its own after a frame: in the task that lands, they made it a long task.
+            // After the next frame, in slices of a few ms: baked in the task that lands, the maps made it a long task.
             const entry = (deferred = { key, filter: forFilter, mine: (seq += 1) });
             void (async () => {
-              if (!mapCached) await afterNextFrame();
+              await afterNextFrame();
               if (current(entry.mine)) {
-                const map = bakeMap();
+                const map = await bakeMapInSlices();
                 const mapReady = decoded(map.url);
-                if (!hueCached) await afterNextFrame();
+                const hue = current(entry.mine) ? await bakeHueInSlices() : null;
                 if (current(entry.mine)) {
                   if (deferred === entry) deferred = null;
-                  await land(entry.mine, map, mapReady, bakeHue());
+                  await land(entry.mine, map, mapReady, hue);
                   return;
                 }
               }

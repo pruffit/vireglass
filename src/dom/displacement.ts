@@ -4,6 +4,7 @@
 import { bevelDp, thicknessDp, type VireGlassGeometry } from '../geometry';
 import { BEVEL } from '../law';
 import type { VireGlassOptics } from '../material';
+import { pngFromPixels, renderInSlices, type Rows } from './bake';
 import {
   sceneDistance,
   sceneGradient,
@@ -100,7 +101,16 @@ export function renderDisplacementPixels(
   geometry: VireGlassGeometry,
   dpr: number,
   state: DisplacementState = {},
-): { data: Uint8ClampedArray; width: number; height: number; scale: number } {
+): DisplacementPixels {
+  const map = displacementRows(optics, geometry, dpr, state);
+  map.rows(0, map.height);
+  return map.done();
+}
+
+export type DisplacementPixels = { data: Uint8ClampedArray; width: number; height: number; scale: number };
+
+/** `renderDisplacementPixels` a row at a time: the same pixels whichever rows are rendered when. */
+export function displacementRows(optics: VireGlassOptics, geometry: VireGlassGeometry, dpr: number, state: DisplacementState = {}): Rows<DisplacementPixels> {
   const bevel = bevelDp(geometry, optics);
   const density = mapDensity(geometry, bevel, dpr);
   const width = Math.max(1, Math.round(geometry.width * density));
@@ -114,37 +124,39 @@ export function renderDisplacementPixels(
   const halfW = geometry.width / 2;
   const halfH = geometry.height / 2;
 
-  for (let py = 0; py < height; py += 1) {
-    const y = (py + 0.5) / density - halfH;
-    for (let px = 0; px < width; px += 1) {
-      const x = (px + 0.5) / density - halfW;
-      const i = (py * width + px) * 4;
-      // Warp the FIELD first, then read the scene at the warped point — the shader's own order.
-      const [wx, wy] = state.touch ? touchWarp(x, y, state.touch) : [x, y];
-      const sd = sceneDistance(wx, wy, geometry.width, geometry.height, geometry.cornerRadius, smoothing, ...shapes);
-      const t = Math.min(Math.max((sd + bevel) / bevel, 0), 1);
-      if (t <= 0 || scale <= 0) {
-        data[i] = 128;
-        data[i + 1] = 128;
+  const rows = (from: number, to: number) => {
+    for (let py = from; py < Math.min(to, height); py += 1) {
+      const y = (py + 0.5) / density - halfH;
+      for (let px = 0; px < width; px += 1) {
+        const x = (px + 0.5) / density - halfW;
+        const i = (py * width + px) * 4;
+        // Warp the FIELD first, then read the scene at the warped point — the shader's own order.
+        const [wx, wy] = state.touch ? touchWarp(x, y, state.touch) : [x, y];
+        const sd = sceneDistance(wx, wy, geometry.width, geometry.height, geometry.cornerRadius, smoothing, ...shapes);
+        const t = Math.min(Math.max((sd + bevel) / bevel, 0), 1);
+        if (t <= 0 || scale <= 0) {
+          data[i] = 128;
+          data[i + 1] = 128;
+          data[i + 2] = 128;
+          data[i + 3] = 255;
+          continue;
+        }
+        const [gx, gy] = sceneGradient(wx, wy, geometry.width, geometry.height, geometry.cornerRadius, smoothing, ...shapes);
+        // The rim reaches half the scale: the encoding can only span ±scale/2, so the derived
+        // displacement is expressed as a fraction of that half-range.
+        const magnitude = bevelProfile(t) * (scale / 2);
+        const dx = -gx * magnitude;
+        const dy = -gy * magnitude;
+        // Inverse of the spec's own formula: channel = 255 * (displacement / scale + 0.5).
+        data[i] = encode(dx, scale);
+        data[i + 1] = encode(dy, scale);
         data[i + 2] = 128;
         data[i + 3] = 255;
-        continue;
       }
-      const [gx, gy] = sceneGradient(wx, wy, geometry.width, geometry.height, geometry.cornerRadius, smoothing, ...shapes);
-      // The rim reaches half the scale: the encoding can only span ±scale/2, so the derived
-      // displacement is expressed as a fraction of that half-range.
-      const magnitude = bevelProfile(t) * (scale / 2);
-      const dx = -gx * magnitude;
-      const dy = -gy * magnitude;
-      // Inverse of the spec's own formula: channel = 255 * (displacement / scale + 0.5).
-      data[i] = encode(dx, scale);
-      data[i + 1] = encode(dy, scale);
-      data[i + 2] = 128;
-      data[i + 3] = 255;
     }
-  }
+  };
 
-  return { data, width, height, scale };
+  return { height, rows, done: () => ({ data, width, height, scale }) };
 }
 
 function hasCanvasSupport(): boolean {
@@ -163,14 +175,19 @@ export function buildDisplacementMap(
     throw new Error('vireglass/dom: buildDisplacementMap requires a DOM (canvas)');
   }
   const { data, width, height, scale } = renderDisplacementPixels(optics, geometry, dpr, state);
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  // On a canvas the GPU backs, toDataURL waits for the GPU process: 11 to 44 ms a map while the page animates, 1 to 3 here.
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  if (!ctx) throw new Error('vireglass/dom: 2D canvas context unavailable');
-  const imageData = ctx.createImageData(width, height);
-  imageData.data.set(data);
-  ctx.putImageData(imageData, 0, 0);
-  return { url: canvas.toDataURL('image/png'), width, height, scale };
+  return { url: pngFromPixels(data, width, height), width, height, scale };
+}
+
+/** `buildDisplacementMap` spread over several tasks, none of them longer than a slice. */
+export async function buildDisplacementMapInSlices(
+  optics: VireGlassOptics,
+  geometry: VireGlassGeometry,
+  dpr: number,
+  state: DisplacementState = {},
+): Promise<DisplacementMap> {
+  if (!hasCanvasSupport()) {
+    throw new Error('vireglass/dom: buildDisplacementMap requires a DOM (canvas)');
+  }
+  const { data, width, height, scale } = await renderInSlices(displacementRows(optics, geometry, dpr, state));
+  return { url: pngFromPixels(data, width, height), width, height, scale };
 }

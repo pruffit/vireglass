@@ -2,18 +2,19 @@
 
 ## 3.4.1 (unreleased)
 
-Maps are baked on a canvas kept in memory, and a landing bakes each map in a task of its own. DOM target only; nothing
-on screen changes.
+Maps are baked on a canvas kept in memory, and a landing bakes its maps after the next frame in slices of a few ms. DOM
+target only; nothing on screen changes.
 
 `toDataURL` on a canvas the GPU backs waits for the GPU process, which is busy while the page animates: building a
 map took 11 to 44 ms there (up to 140 ms) and 1 to 3 ms on a canvas created with `willReadFrequently`, on a Ryzen 5
 3500U with Vega 8. Every bake, interim maps included, was paying it; a landing was a task of 16 to 34 ms and a lens
 attached in a frame was one of up to 42 ms.
 
-Leaving interim also baked the displacement map and the spectral map of a surface in the task that landed it. Now
-that task bakes nothing: the displacement map is baked in a task after the next frame and its decode started, the
-spectral map in a task after the frame that follows (each after 100 ms where no frame comes), and the two are
-retargeted together once both are decoded.
+Leaving interim also baked the displacement map and the spectral map of a surface in the task that landed it, and a
+large one is a long task even alone (19 to 23 ms for a sheet). Now that task bakes nothing: after the next frame (or
+100 ms where no frame comes) the maps are rendered a few rows at a time, yielding every 5 ms, then encoded, and the
+two are retargeted together once both are decoded. `displacementRows`, `spectralRows` and `renderInSlices` give the
+same pixels as `renderDisplacementPixels` and `renderSpectralPixels`.
 
 - Both are baked at the device pixel ratio the landing was keyed for.
 - The wait lands nothing once the lens has entered interim again, been destroyed, left the document or taken a new
