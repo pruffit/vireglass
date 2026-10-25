@@ -1,5 +1,32 @@
 # Changelog
 
+## 3.5.0 (unreleased)
+
+Interim maps are built in a worker. DOM target only. A morph in interim mode no longer renders rows or encodes a PNG on
+the main thread; the pixels are the same bytes as before.
+
+Measured from vireuikit's frame gate (pruffit/vireuikit#40, a popover growing on a Ryzen 5 3500U with Vega 8): the
+map's rows took 2.3 to 5.4 ms on about 12 of 20 frames, the first one 5.4 ms, and the buffers and the encode fed a
+scavenge of 0.9 to 2.2 ms in the same frames. The first frame of growth was a 17.2 ms task, over a 16.7 ms bound.
+
+- One worker for the page, made on the first interim build from a Blob URL. Its source is bundled into the package as a
+  string at build time: there is no second file to serve.
+- It renders the rows with `renderDisplacementPixels` and encodes with `OffscreenCanvas.convertToBlob`. The main thread
+  makes a blob URL, decodes it and retargets, as for any map.
+- Until the built map arrives the lens shows the map it has, stretched to the new box, as it does while a map decodes.
+  The new map lands a frame or more after the one that asked for it.
+- One build in flight per lens. When it lands and a newer key was asked for meanwhile, the result is dropped and only
+  the newest key is built; the keys in between are never built.
+- A result lands nothing once the lens left interim, was destroyed, took another filter or another key.
+- A key still in the store of 8 is answered at once, with no build. A map the store drops, and every map of a
+  destroyed lens, has its blob URL revoked.
+- Without `Worker`, `OffscreenCanvas` or `convertToBlob`, or when a CSP refuses the blob worker, or when the worker
+  errors, the main thread builds as before, for the rest of the page's life. A job that fails is reported with
+  `reportError` and the lens gets its map from the main thread; a worker that cannot start is not reported.
+- A page with a `worker-src` policy needs `blob:` in it to use the worker; without it the fallback applies.
+- `renderStats()` gains `mainThreadBakes` (interim maps built on the main thread) and `workerBakes` (built in the
+  worker). `reducedBakes` still counts the interim maps asked for.
+
 ## 3.4.1
 
 Maps are baked on a canvas kept in memory, and a landing bakes its maps after the next frame in slices of a few ms. DOM
