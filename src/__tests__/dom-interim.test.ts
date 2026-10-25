@@ -57,6 +57,21 @@ describe('the interim store', () => {
   });
 });
 
+describe('deleting from the store', () => {
+  it('removes a value only when it is the one stored under the key', () => {
+    const gone: string[] = [];
+    const lru = createLru<string>(4, (v) => gone.push(v));
+    lru.set('k', 'old');
+    lru.set('k', 'new');
+    lru.delete('k', 'old');
+    expect(lru.get('k')).toBe('new');
+    expect(gone).toEqual(['old']);
+    lru.delete('k', 'new');
+    expect(lru.get('k')).toBeUndefined();
+    expect(gone).toEqual(['old', 'new']);
+  });
+});
+
 describe('render counters', () => {
   it('count and reset', () => {
     resetRenderStats();

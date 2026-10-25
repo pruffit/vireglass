@@ -71,9 +71,9 @@ export function createLru<T>(limit: number, onEvict?: (value: T) => void) {
         }
       }
     },
-    delete(key: string): void {
+    delete(key: string, only?: T): void {
       const old = store.get(key);
-      if (old === undefined) return;
+      if (old === undefined || (only !== undefined && old !== only)) return;
       store.delete(key);
       onEvict?.(old);
     },

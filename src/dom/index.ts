@@ -702,7 +702,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   /** Keeps a pair in the lens's store and under the byte budget. */
   function remember(rec: InterimMap): void {
     interimMaps.set(rec.key, rec);
-    rec.budget = { bytes: pairBytes(rec.map, rec.hue), offscreen, pinned: () => !rec.ready || isPinned(rec), evict: () => interimMaps.delete(rec.key) };
+    rec.budget = { bytes: pairBytes(rec.map, rec.hue), offscreen, pinned: () => !rec.ready || isPinned(rec), evict: () => interimMaps.delete(rec.key, rec) };
     track(rec.budget);
   }
 
