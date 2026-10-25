@@ -240,7 +240,7 @@ const FIXTURE = `<!doctype html>
     };
     const built = shown && shown.startsWith('blob:') ? await decode(shown) : null;
     const settled = applyAccessibility(applyGlassScale(resolveOptics(MATERIAL_PRESETS.glass), GLASS_SCALE_DEFAULT), systemAccessibility());
-    const dpr = Math.min(1, devicePixelRatio);
+    const dpr = devicePixelRatio;
     const compare = (index) => {
       const { smoothing, shape } = shapeAt(index);
       const sync = renderDisplacementPixels(settled, geometry, dpr, { smoothing, morph: shape });
@@ -254,6 +254,60 @@ const FIXTURE = `<!doctype html>
     lens.destroy();
     glass.style.display = 'none';
     return { stats, shown, same, other, frames: FRAMES };
+  };
+  // A geometry-only motion in interim and the landing after it. Nothing but the box moves, and the backdrop is stated,
+  // so the lens at the end of the motion has to look like the lens at the end of the landing.
+  let landing = null;
+  let landStart = null;
+  const feHrefs = () => [...document.querySelectorAll('svg[data-vireglass-filters] filter feImage')].map((n) => n.getAttribute('href'));
+  globalThis.__landBegin = async (steps) => {
+    morphing?.destroy();
+    morphing = null;
+    live?.destroy();
+    live = null;
+    orb?.destroy();
+    orb = null;
+    document.body.classList.remove('flat', 'bright', 'colour');
+    document.getElementById('orb').style.display = 'none';
+    const glass = document.getElementById('glass');
+    glass.style.display = 'block';
+    glass.style.width = '${BOX.w}px';
+    landing = attachGlass(glass, { material: MATERIAL_PRESETS.glass, interactive: false, shadow: false, sample });
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    landStart = feHrefs();
+    landing.setInterim(true);
+    resetRenderStats();
+    for (let i = 1; i <= steps; i += 1) {
+      glass.style.width = (${BOX.w} + 2 * i) + 'px';
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+    let last = feHrefs().join('|');
+    let since = performance.now();
+    const started = since;
+    while (performance.now() - since < 300 && performance.now() - started < 4000) {
+      await new Promise((r) => setTimeout(r, 25));
+      const now = feHrefs().join('|');
+      if (now !== last) {
+        last = now;
+        since = performance.now();
+      }
+    }
+    return { hrefs: feHrefs(), start: landStart, stats: renderStats() };
+  };
+  globalThis.__landStale = () => {
+    const images = document.querySelectorAll('svg[data-vireglass-filters] filter feImage');
+    landStart.forEach((href, i) => images[i]?.setAttribute('href', href));
+  };
+  globalThis.__landEnd = async () => {
+    resetRenderStats();
+    landing.setInterim(false);
+    await new Promise((r) => setTimeout(r, 700));
+    return { hrefs: feHrefs(), stats: renderStats() };
+  };
+  globalThis.__landDone = () => {
+    landing?.destroy();
+    landing = null;
+    document.getElementById('glass').style.width = '${BOX.w}px';
   };
   globalThis.__morphDone = () => {
     morphing?.destroy();
@@ -404,6 +458,31 @@ const DIFF = `(a, b, rect) => {
     let sum = 0;
     for (let i = 0; i < pa.length; i += 4) sum += Math.abs(pa[i] - pb[i]);
     return sum / (pa.length / 4);
+  });
+}`;
+
+/** How many pixels of a rectangle differ by more than `tolerance` levels in any channel between two frames. */
+const COUNT = `(a, b, rect, tolerance) => {
+  const load = (src) => new Promise((res, rej) => {
+    const img = new Image();
+    img.onload = () => res(img);
+    img.onerror = rej;
+    img.src = src;
+  });
+  return Promise.all([load(a), load(b)]).then(([ia, ib]) => {
+    const c = document.createElement('canvas');
+    c.width = rect.w; c.height = rect.h;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(ia, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.h);
+    const pa = ctx.getImageData(0, 0, rect.w, rect.h).data;
+    ctx.clearRect(0, 0, rect.w, rect.h);
+    ctx.drawImage(ib, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.h);
+    const pb = ctx.getImageData(0, 0, rect.w, rect.h).data;
+    let count = 0;
+    for (let i = 0; i < pa.length; i += 4) {
+      if (Math.abs(pa[i] - pb[i]) > tolerance || Math.abs(pa[i + 1] - pb[i + 1]) > tolerance || Math.abs(pa[i + 2] - pb[i + 2]) > tolerance) count += 1;
+    }
+    return count;
   });
 }`;
 
@@ -797,7 +876,7 @@ try {
   if (iDuring.fullBakes !== 0) fail(`interim rebuilt the map at full resolution ${iDuring.fullBakes} times`);
   if (iDuring.filterSwaps !== 0) fail(`interim swapped the filter element ${iDuring.filterSwaps} times`);
   if (iAfter.probes !== 1) fail(`ending interim should probe once, probed ${iAfter.probes}`);
-  if (iAfter.fullBakes !== MAPS) fail(`ending interim should bake once at full resolution (${MAPS} maps), baked ${iAfter.fullBakes}`);
+  if (iAfter.fullBakes > MAPS) fail(`ending interim should bake at most once at full resolution (${MAPS} maps), baked ${iAfter.fullBakes}`);
   if (iAfter.filterSwaps !== 0) fail(`ending interim replaced the filter element (${iAfter.filterSwaps}); it should update in place`);
   if (!(cAfter.fullBakes >= MAPS * (FRAMES - 5) && cAfter.probes >= FRAMES - 5 && cAfter.filterSwaps >= FRAMES - 5)) {
     fail(`canary: sixty frames without interim counted ${cAfter.probes} probes, ${cAfter.fullBakes} bakes, ${cAfter.filterSwaps} swaps — the gate cannot fail`);
@@ -858,6 +937,38 @@ try {
   if (!worked.shown || !worked.shown.startsWith('blob:')) fail(`the filter ended on ${worked.shown}, not on a map the worker built`);
   if (worked.same.differing !== 0) fail(`the worker's map differs from the main thread's in ${worked.same.differing} bytes`);
   if (!(worked.other.differing > 0)) fail('canary: the first frame draws the same map as the last, so the comparison cannot tell maps apart');
+
+  // 10c3. A geometry-only motion in interim gets pairs for the live box, so the landing has nothing left to change: the
+  //    frame after the landing is the last interim frame, pixel for pixel. The canary puts the stretched maps of the
+  //    first box back before the last interim frame, which the landing then has to replace.
+  const STEPS = 30;
+  const GROWN = { x: BOX.x, y: BOX.y, w: BOX.w + 2 * STEPS, h: BOX.h };
+  const count = (a, b) => page.evaluate(([x, y, r, t, fn]) => new Function(`return ${fn}`)()(x, y, r, t), [a, b, GROWN, 1, COUNT]);
+  const shotNow = async () => `data:image/png;base64,${(await page.screenshot()).toString('base64')}`;
+  const landCase = async (stale) => {
+    const begun = await page.evaluate((n) => globalThis.__landBegin(n), STEPS);
+    if (stale) await page.evaluate(() => globalThis.__landStale());
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const before = await shotNow();
+    const ended = await page.evaluate(() => globalThis.__landEnd());
+    const after = await shotNow();
+    await page.evaluate(() => globalThis.__landDone());
+    return { begun, ended, differing: await count(before, after) };
+  };
+  const landed = await landCase(false);
+  const staleLanded = await landCase(true);
+  console.log(
+    `check-dom: ${STEPS} geometry-only frames in interim — ${landed.begun.stats.reducedBakes} pairs requested, ${landed.begun.stats.workerBakes} built in the worker, ` +
+      `${landed.begun.stats.fullBakes} full bakes; landing: ${landed.ended.stats.fullBakes} bakes, ${landed.ended.stats.filterSwaps} swaps, ` +
+      `${landed.differing} pixels differ by more than 1 level from the last interim frame (canary with the first box's maps put back: ${staleLanded.differing})`,
+  );
+  if (landed.begun.stats.workerBakes < 1) fail('a geometry-only motion in interim got no pair from the worker');
+  if (landed.begun.stats.fullBakes !== 0) fail(`a geometry-only motion in interim did ${landed.begun.stats.fullBakes} full bakes`);
+  if (landed.begun.hrefs.join('|') === landed.begun.start.join('|')) fail("the filter still showed the first box's maps at the end of a geometry-only motion");
+  if (landed.ended.stats.fullBakes !== 0 || landed.ended.stats.filterSwaps !== 0) fail(`the landing baked ${landed.ended.stats.fullBakes} maps and swapped ${landed.ended.stats.filterSwaps} filters although it landed on a pair it had shown`);
+  if (landed.ended.hrefs.join('|') !== landed.begun.hrefs.join('|')) fail('the landing changed the maps of a lens that was already showing the pair for its box');
+  if (landed.differing !== 0) fail(`the landed frame differs from the last interim frame in ${landed.differing} pixels`);
+  if (!(staleLanded.differing > 0)) fail('canary: replacing the shown maps with a stale stretched pair changed no pixel at the landing, so the comparison cannot fail');
 
   // 10d. Appear is the lens's strength written in place (§1, materialise by bending light): thirty
   //    steps cost no bake and no swap, absent reads as the page, half as less than present. The canary
