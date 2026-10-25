@@ -19,7 +19,18 @@ export function browserWorker(): WorkerLike | null {
   if (typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined') return null;
   if (typeof OffscreenCanvas.prototype.convertToBlob !== 'function' || typeof URL.createObjectURL !== 'function') return null;
   const url = URL.createObjectURL(new Blob([workerSource], { type: 'text/javascript' }));
-  return new Worker(url) as unknown as WorkerLike;
+  try {
+    const made = new Worker(url);
+    const terminate = made.terminate.bind(made);
+    made.terminate = () => {
+      terminate();
+      URL.revokeObjectURL(url);
+    };
+    return made as unknown as WorkerLike;
+  } catch (error) {
+    URL.revokeObjectURL(url);
+    throw error;
+  }
 }
 
 export function createInterimBuilder(make: () => WorkerLike | null) {

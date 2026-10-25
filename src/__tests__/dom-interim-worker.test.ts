@@ -373,6 +373,41 @@ describe('without a worker, the main thread builds', () => {
     }
   });
 
+  it('revokes the Blob URL of the worker source once the worker is disabled, and not before', async () => {
+    const g = globalThis as Record<string, unknown>;
+    const had = { Worker: g.Worker, OffscreenCanvas: g.OffscreenCanvas };
+    const real: { onerror?: () => void; terminated: boolean }[] = [];
+    try {
+      g.Worker = class {
+        terminated = false;
+        onerror?: () => void;
+        postMessage() {}
+        terminate() {
+          this.terminated = true;
+        }
+        constructor() {
+          real.push(this);
+        }
+      };
+      g.OffscreenCanvas = class {
+        convertToBlob() {}
+      };
+      setInterimWorker(browserWorker);
+      const lens = attach();
+      lens.setInterim(true);
+      lens.setMorph(shape(10));
+      expect(urls).toHaveLength(1);
+      expect(revoked).toEqual([]);
+      real[0]!.onerror?.();
+      await flush();
+      expect(real[0]!.terminated).toBe(true);
+      expect(revoked).toEqual([urls[0]]);
+    } finally {
+      g.Worker = had.Worker;
+      g.OffscreenCanvas = had.OffscreenCanvas;
+    }
+  });
+
   it('starts the bundled source from a Blob URL when it can', () => {
     const g = globalThis as Record<string, unknown>;
     const had = { Worker: g.Worker, OffscreenCanvas: g.OffscreenCanvas };
@@ -382,6 +417,7 @@ describe('without a worker, the main thread builds', () => {
         constructor(url: string) {
           started.push(url);
         }
+        terminate() {}
       };
       g.OffscreenCanvas = class {
         convertToBlob() {}
