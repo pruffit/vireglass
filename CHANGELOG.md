@@ -24,6 +24,11 @@ scavenge of 0.9 to 2.2 ms in the same frames. The first frame of growth was a 17
 - Without `Worker`, `OffscreenCanvas` or `convertToBlob`, or when a CSP refuses the blob worker, or when the worker
   errors, the main thread builds as before, for the rest of the page's life. A job that fails is reported with
   `reportError` and the lens gets its map from the main thread; a worker that cannot start is not reported.
+- A job that fails, a worker that errors, a message that cannot be read, or a worker silent for 2 s switches the whole
+  page to the main thread for good. A failed job is reported once, by its own lens; the lenses with other jobs in
+  flight fall back silently, and no lens is left without a map. A `postMessage` that throws (a DataCloneError) is
+  reported the same way.
+- The Blob URL of the worker source is revoked when the worker is terminated.
 - A page with a `worker-src` policy needs `blob:` in it to use the worker; without it the fallback applies.
 - `renderStats()` gains `mainThreadBakes` (interim maps built on the main thread) and `workerBakes` (built in the
   worker). `reducedBakes` still counts the interim maps asked for.
