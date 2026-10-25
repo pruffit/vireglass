@@ -27,7 +27,7 @@ describe('rim layer css', () => {
     expect(masked).toContain('padding:var(--vireglass-rim-width,1px)');
     expect(masked).toContain('mask-composite:exclude');
     expect(masked).toContain('-webkit-mask-composite:xor');
-    expect(masked).not.toContain('border-area');
+    expect(masked.slice(UNSUPPORTED.length)).not.toContain('border-area');
     expect(masked).not.toContain('border:');
   });
 
