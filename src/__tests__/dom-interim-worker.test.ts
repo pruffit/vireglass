@@ -115,6 +115,7 @@ beforeEach(() => {
 afterEach(() => {
   handle?.destroy();
   handle = null;
+  delete (globalThis as { matchMedia?: unknown }).matchMedia;
   setInterimWorker(browserWorker);
 });
 
@@ -228,6 +229,29 @@ describe('a stale result never lands', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('does not build the queued key of a filter that was replaced', async () => {
+    let transparent = false;
+    const handlers: (() => void)[] = [];
+    (globalThis as { matchMedia?: unknown }).matchMedia = (query: string) => ({
+      get matches() {
+        return transparent && query.includes('transparency');
+      },
+      addEventListener: (_: string, h: () => void) => void handlers.push(h),
+      removeEventListener: () => {},
+    });
+    const g = attach();
+    g.setInterim(true);
+    g.setMorph(shape(10));
+    g.setMorph(shape(20));
+    transparent = true;
+    for (const h of handlers) h();
+    g.setInterim(false);
+    g.setInterim(true);
+    const posted = worker.jobs.length;
+    await worker.answer(0);
+    expect(worker.jobs).toHaveLength(posted);
   });
 
   it('when the decode of its map ends after a newer map was shown', async () => {

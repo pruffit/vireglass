@@ -678,7 +678,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   function pump(): void {
     const job = wanted;
     wanted = null;
-    if (!job || destroyed || !interim || job.key !== latestKey) return;
+    if (!job || destroyed || !interim || job.key !== latestKey || job.forFilter !== filterEl) return;
     const hit = interimMaps.get(job.key);
     if (hit) {
       showInterim(job.mine, hit, job.forFilter);
