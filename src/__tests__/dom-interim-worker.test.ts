@@ -801,7 +801,7 @@ describe('a material step rewrites attributes and keeps the filter', () => {
 
   it('changes blur, ior ratios and scales in place, with no swap and no bake, in interim and on leaving it', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'requestAnimationFrame', 'cancelAnimationFrame'] });
-    const material = { ...MATERIAL_PRESETS.glass };
+    const material = { ...MATERIAL_PRESETS.glass, roughness: MATERIAL_PRESETS.glass.roughness as number, ior: MATERIAL_PRESETS.glass.ior as number };
     const g = attach({ material });
     g.setInterim(true);
     const node = filter();
