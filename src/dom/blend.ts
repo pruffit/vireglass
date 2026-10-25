@@ -1,6 +1,5 @@
-// The last resort of a landing: the destination pair was not ready, so the shown pair is mixed into it over a few
-// frames. Two extra feImages and two arithmetic composites are put in the filter for the blend and taken out after it;
-// every frame in between is an attribute.
+// A landing whose destination pair is not ready mixes the shown pair into it. The extra feImages and composites live in
+// the filter only for the blend, and every frame in between writes attributes.
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 export const BLEND_MS = 120;

@@ -773,11 +773,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     else retarget(f, map, hue, rec, key);
   }
 
-  /**
-   * The maps are baked at full presence and appear is these attributes. The spectral hue is
-   * `1 + appear * (hue - 1)`, so mixing the full one in is the same picture. The strength follows
-   * the live box, not the box the shown map was baked for.
-   */
+  /** Maps are baked at full presence and appear is these attributes; the strength follows the live box, not the box the shown map was baked for. */
   function present(f: SVGFilterElement, live?: VireGlassGeometry): void {
     const o = optics();
     const scale = displacementScale(o, live ?? opts.geometry ?? measureGeometry(el));
