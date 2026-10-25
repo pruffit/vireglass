@@ -1004,13 +1004,18 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     })();
   }
 
+  /** A destination job still queued for the worker is taken back, unless a landing waits for it. */
+  function takeBackDestination(): void {
+    if (destJob && destJob.p !== landing && destJob.cancel()) destJob = null;
+  }
+
   function startPrepared(p: Prepared): void {
     const hit = adoptable(p.key, p.hue) ?? cachedRec(p.key, p.full, p.geometry, p.dpr, p.state, p.hue);
     if (hit) {
       holdRec(p, hit);
       return;
     }
-    if (destJob && destJob.p !== landing && destJob.cancel()) destJob = null;
+    takeBackDestination();
     if (destJob) {
       destWanted = p;
       return;
@@ -1203,6 +1208,8 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     const old = prepared;
     if (!target) {
       prepared = null;
+      destWanted = null;
+      takeBackDestination();
       maybeRelease(old?.rec);
       settle();
       return;

@@ -198,6 +198,27 @@ describe('superseded destinations', () => {
   });
 });
 
+describe('prepare(null)', () => {
+  it('takes back a destination job that still waits for the worker', async () => {
+    const g = attach();
+    g.setInterim(true);
+    g.setMorph({ smoothing: 10, shape: { offsetX: 10, offsetY: 0, width: 40, height: 40, cornerRadius: 8 } });
+    g.prepare(dest(111));
+    g.prepare(null);
+    await worker.answer(0);
+    expect(worker.jobs).toHaveLength(1);
+  });
+
+  it('drops a destination that waits behind a job the worker already has', async () => {
+    const g = attach();
+    g.prepare(dest(222));
+    g.prepare(dest(333));
+    g.prepare(null);
+    await worker.answer(0);
+    expect(worker.jobs).toHaveLength(1);
+  });
+});
+
 describe('a landing that is not ready', () => {
   it('returns blend after a retarget, mixes through attributes and ends on the destination', async () => {
     timers();
