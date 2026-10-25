@@ -1,16 +1,30 @@
+import type { VireGlassGeometry } from '../geometry';
+import type { VireGlassOptics } from '../material';
+
 /** Geometry snapped to a grid, so a morph that moves by a fraction of a pixel reuses a map. */
 export function quantise(value: number, step = 2): number {
   return Math.round(value / step) * step;
 }
 
-export function interimKey(
-  width: number,
-  height: number,
-  cornerRadius: number,
-  morph: string,
-  extra: string,
-): string {
-  return `i|${quantise(width)}x${quantise(height)}r${quantise(cornerRadius)}|${morph}|${extra}`;
+/** The box a map is baked for: the measured one on a half-pixel grid, so interim and settled maps of one box are one map. */
+export function snapGeometry(g: VireGlassGeometry): VireGlassGeometry {
+  return {
+    width: quantise(g.width, 0.5),
+    height: quantise(g.height, 0.5),
+    cornerRadius: quantise(g.cornerRadius, 0.5),
+  };
+}
+
+/** What the pixels of a displacement map and of a hue map are functions of, besides the box and the morph. */
+export type MapOptics = Pick<VireGlassOptics, 'refraction' | 'thicknessDp' | 'bevelDp' | 'film' | 'iridescence' | 'diffraction'>;
+
+/**
+ * The key of a pair of maps: interim and settled maps are built from the same box (snapped), morph, optics and
+ * density, so the same key is the same bytes whichever path made them.
+ */
+export function mapKeyFor(snapped: VireGlassGeometry, morph: string, o: MapOptics, dpr: number): string {
+  const { width, height, cornerRadius } = snapped;
+  return `${width}x${height}r${cornerRadius}@${dpr}|${morph}|${o.refraction}:${o.thicknessDp}:${o.bevelDp}:${o.film}:${o.iridescence}:${o.diffraction}`;
 }
 
 /**

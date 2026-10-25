@@ -139,7 +139,6 @@ describe('a landing bakes its maps in tasks of their own, a frame apart, and lan
     const g = attach();
     g.setInterim(true);
     box = { width: 260, height: 100 };
-    g.update();
     resetRenderStats();
     g.setInterim(false);
     return g;
@@ -372,7 +371,7 @@ describe('appear is written in place, never baked', () => {
     g.setInterim(true);
     box = { width: 260, height: 100 };
     g.update();
-    expectStrength(0.4, 200);
+    expectStrength(0.4, 260);
     g.setInterim(false);
     await vi.advanceTimersByTimeAsync(120);
     await settle();
@@ -380,13 +379,13 @@ describe('appear is written in place, never baked', () => {
     expectStrength(0.4, 260);
   });
 
-  it('keeps the strength at appear, and at the map\'s box, when a reduced map lands in interim', async () => {
+  it('keeps the strength at appear, and at the live box, before and after a reduced map lands in interim', async () => {
     const g = attach();
     g.setInterim(true);
     g.setAppear(0.4);
     box = { width: 240, height: 100 };
     g.update();
-    expectStrength(0.4, 200);
+    expectStrength(0.4, 240);
     g.setMorph(shape(90));
     await settle();
     expect(href()).toContain('w240');

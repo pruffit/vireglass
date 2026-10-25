@@ -1,17 +1,27 @@
 import { describe, expect, it } from 'vitest';
-import { createLru, filterSignature, interimKey, quantise } from '../dom/interim';
+import { createLru, filterSignature, mapKeyFor, quantise, snapGeometry } from '../dom/interim';
+import { resolveOptics } from '../material';
+import { MATERIAL_PRESETS } from '../index';
 import { bump, renderStats, resetRenderStats } from '../dom/stats';
 
-describe('interim keys', () => {
-  it('snaps geometry to 2 px', () => {
+describe('map keys', () => {
+  const optics = resolveOptics(MATERIAL_PRESETS.glass);
+  const key = (w: number, h: number, r: number, morph = 'm', dpr = 2, o = optics) => mapKeyFor(snapGeometry({ width: w, height: h, cornerRadius: r }), morph, o, dpr);
+
+  it('snaps geometry to half a pixel, the same for every path', () => {
     expect(quantise(100.4)).toBe(100);
     expect(quantise(101.2)).toBe(102);
-    expect(interimKey(100.4, 50.9, 12, 'm', 'x')).toBe(interimKey(99.6, 50.4, 12.4, 'm', 'x'));
-    expect(interimKey(100, 50, 12, 'm', 'x')).not.toBe(interimKey(104, 50, 12, 'm', 'x'));
+    expect(snapGeometry({ width: 100.2, height: 50.3, cornerRadius: 12.1 })).toEqual({ width: 100, height: 50.5, cornerRadius: 12 });
+    expect(key(100.1, 50.9, 12)).toBe(key(99.9, 51.1, 12.2));
+    expect(key(100, 50, 12)).not.toBe(key(101, 50, 12));
   });
 
-  it('separates morphs', () => {
-    expect(interimKey(100, 50, 12, 'a', 'x')).not.toBe(interimKey(100, 50, 12, 'b', 'x'));
+  it('separates morphs, densities and the optics the pixels depend on, and not the rest', () => {
+    expect(key(100, 50, 12, 'a')).not.toBe(key(100, 50, 12, 'b'));
+    expect(key(100, 50, 12, 'm', 1)).not.toBe(key(100, 50, 12, 'm', 2));
+    expect(key(100, 50, 12, 'm', 2, { ...optics, bevelDp: optics.bevelDp + 1 })).not.toBe(key(100, 50, 12));
+    expect(key(100, 50, 12, 'm', 2, { ...optics, diffraction: optics.diffraction + 0.1 })).not.toBe(key(100, 50, 12));
+    expect(key(100, 50, 12, 'm', 2, { ...optics, blur: optics.blur + 3, ior: optics.ior + 0.1 })).toBe(key(100, 50, 12));
   });
 
   it('tells filter structures apart', () => {

@@ -2,11 +2,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const spectral = vi.hoisted(() => ({ on: false }));
+const settled = vi.hoisted(() => ({ displacement: [] as unknown[][], hue: [] as unknown[][] }));
 
 vi.mock('../dom/displacement', async (original) => {
   const real = await original<typeof import('../dom/displacement')>();
   let n = 0;
-  return { ...real, buildDisplacementMap: () => ({ url: `main:${(n += 1)}`, width: 4, height: 4, scale: 10 }) };
+  return {
+    ...real,
+    buildDisplacementMap: (...args: unknown[]) => {
+      settled.displacement.push(args);
+      return { url: `main:${(n += 1)}`, width: 4, height: 4, scale: 10 };
+    },
+    buildDisplacementMapInSlices: async (...args: unknown[]) => {
+      settled.displacement.push(args);
+      return { url: `main:${(n += 1)}`, width: 4, height: 4, scale: 10 };
+    },
+  };
 });
 
 vi.mock('../dom/spectral-map', async (original) => {
@@ -15,7 +26,10 @@ vi.mock('../dom/spectral-map', async (original) => {
   return {
     ...real,
     hasSpectralEdge: () => spectral.on,
-    buildSpectralMap: () => ({ url: `hue:${(n += 1)}`, headroom: 2 }),
+    buildSpectralMap: (...args: unknown[]) => {
+      settled.hue.push(args);
+      return { url: `hue:${(n += 1)}`, headroom: 2 };
+    },
     buildSpectralMapInSlices: async () => ({ url: `hue:${(n += 1)}`, headroom: 2 }),
   };
 });
@@ -85,6 +99,8 @@ function attach(extra: Parameters<typeof attachGlass>[1] = {}): GlassHandle {
 
 beforeEach(() => {
   spectral.on = false;
+  settled.displacement = [];
+  settled.hue = [];
   decodes = [];
   made = 0;
   urls = [];
@@ -131,6 +147,7 @@ function attachSecond(): GlassHandle {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   second?.destroy();
   second = null;
   handle?.destroy();
@@ -633,5 +650,143 @@ describe('the worker timeout counts from the start of a job', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('interim and settled maps are one family', () => {
+  const hueHref = () => document.querySelectorAll('svg[data-vireglass-filters] filter feImage')[1]?.getAttribute('href');
+  const bridge = { smoothing: 14, shape: { offsetX: 0, offsetY: 70, width: 60, height: 60, cornerRadius: 30 } };
+
+  afterEach(() => {
+    Reflect.deleteProperty(window, 'devicePixelRatio');
+  });
+
+  it('builds the pair from the same inputs the settled bake takes, down to the bytes', async () => {
+    Object.defineProperty(window, 'devicePixelRatio', { value: 2, configurable: true });
+    spectral.on = true;
+    el.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, right: 200.3, bottom: 100.2, x: 0, y: 0, width: 200.3, height: 100.2, toJSON() {} }) as DOMRect;
+    const g = attach();
+    g.setInterim(true);
+    g.setMorph(bridge);
+    const job = worker.jobs[0]!;
+    const result = (await worker.answer(0)) as { blob: Blob; hue: { blob: Blob } };
+
+    settled.displacement = [];
+    settled.hue = [];
+    const other = attachSecond();
+    other.setMorph(bridge);
+    const [optics, geometry, dpr, state] = settled.displacement[0] as [unknown, unknown, number, unknown];
+    expect({ optics, geometry, dpr, state }).toEqual({ optics: job.optics, geometry: job.geometry, dpr: job.dpr, state: job.state });
+    expect(job.dpr).toBe(2);
+    expect(settled.hue[0]).toEqual([job.optics, job.geometry, job.dpr, job.state]);
+
+    const main = renderDisplacementPixels(optics as never, geometry as never, dpr, state as never);
+    expect(Array.from(pixels.get(result.blob)!.data)).toEqual(Array.from(main.data));
+    const mainHue = renderSpectralPixels(job.optics, job.geometry, job.dpr, job.state);
+    expect(Array.from(pixels.get(result.hue.blob)!.data)).toEqual(Array.from(mainHue.data));
+  });
+
+  it('keeps the pair it showed when the lens lands on its key, and bakes and swaps nothing', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'requestAnimationFrame', 'cancelAnimationFrame'] });
+    spectral.on = true;
+    const g = attach();
+    g.setInterim(true);
+    g.setMorph(bridge);
+    await worker.answer(0);
+    await decodeAll();
+    const shown = [href(), hueHref()];
+    expect(shown).toEqual(urls);
+    resetRenderStats();
+    g.setInterim(false);
+    expect([href(), hueHref()]).toEqual(shown);
+    await vi.advanceTimersByTimeAsync(300);
+    await decodeAll();
+    expect([href(), hueHref()]).toEqual(shown);
+    expect(renderStats()).toMatchObject({ fullBakes: 0, filterSwaps: 0, probes: 1 });
+    expect(revoked).toEqual([]);
+  });
+
+  it('keeps it also when the pair is still decoding as the lens lands', async () => {
+    const g = attach();
+    g.setInterim(true);
+    g.setMorph(bridge);
+    await worker.answer(0);
+    resetRenderStats();
+    g.setInterim(false);
+    await decodeAll();
+    await flush();
+    expect(href()).toBe(urls[0]);
+    expect(renderStats().fullBakes).toBe(0);
+  });
+
+  it('does not revoke the URLs on screen when the store drops their record', async () => {
+    const g = attach();
+    g.setInterim(true);
+    g.setMorph(bridge);
+    await worker.answer(0);
+    await decodeAll();
+    g.setInterim(false);
+    g.setInterim(true);
+    for (let i = 0; i < 9; i += 1) {
+      g.setMorph(shape(10 + i));
+      await worker.answer(worker.jobs.length - 1);
+    }
+    expect(revoked).not.toContain(urls[0]);
+    g.destroy();
+    handle = null;
+    expect(revoked).toContain(urls[0]);
+  });
+});
+
+describe('geometry-only motion gets interim pairs', () => {
+  it('requests a pair for the live box when the box changes in interim, and shows it', async () => {
+    const g = attach();
+    g.setInterim(true);
+    const before = href();
+    el.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, right: 260, bottom: 100, x: 0, y: 0, width: 260, height: 100, toJSON() {} }) as DOMRect;
+    g.update();
+    expect(worker.jobs).toHaveLength(1);
+    expect(worker.jobs[0]!.geometry).toMatchObject({ width: 260, height: 100 });
+    expect(href()).toBe(before);
+    await worker.answer(0);
+    await decodeAll();
+    expect(href()).toBe(urls[0]);
+    expect(renderStats()).toMatchObject({ reducedBakes: 1, workerBakes: 1, mainThreadBakes: 0 });
+  });
+
+  it('builds one for the newest box and skips the boxes in between, with one job in flight', async () => {
+    const g = attach();
+    g.setInterim(true);
+    for (const width of [210, 220, 230, 240]) {
+      el.getBoundingClientRect = () =>
+        ({ left: 0, top: 0, right: width, bottom: 100, x: 0, y: 0, width, height: 100, toJSON() {} }) as DOMRect;
+      g.update();
+    }
+    expect(worker.jobs).toHaveLength(1);
+    await worker.answer(0);
+    expect(worker.jobs).toHaveLength(2);
+    expect(worker.jobs[1]!.geometry.width).toBe(240);
+  });
+
+  it('asks for nothing again while the box stays put', async () => {
+    const g = attach();
+    g.setInterim(true);
+    g.update();
+    g.update();
+    expect(worker.jobs).toHaveLength(0);
+    expect(renderStats().reducedBakes).toBe(0);
+  });
+
+  it('builds on the main thread for a box change when there is no worker', () => {
+    setInterimWorker(() => null);
+    const g = attach();
+    g.setInterim(true);
+    el.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, right: 260, bottom: 100, x: 0, y: 0, width: 260, height: 100, toJSON() {} }) as DOMRect;
+    g.update();
+    expect(href()).toMatch(/^main:/);
+    expect(renderStats().mainThreadBakes).toBe(1);
   });
 });

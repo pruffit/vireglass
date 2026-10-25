@@ -19,7 +19,7 @@ import { roundedRectGeometry, type VireGlassGeometry } from '../geometry';
 import { resolveOptics, VIREGLASS_MATERIAL, type VireGlassMaterial, type VireGlassOptics } from '../material';
 import { probeBackdrop } from './probe';
 import { bump } from './stats';
-import { createLru, filterSignature, interimKey, quantise } from './interim';
+import { createLru, filterSignature, mapKeyFor, quantise, snapGeometry } from './interim';
 import { interimBuilder, releaseMap, type InterimPair, type WorkerFailure } from './interim-build';
 import { supportsSvgBackdropFilter } from './support';
 import { boxShadowCss } from './shadow';
@@ -325,7 +325,15 @@ function afterNextFrame(): Promise<void> {
   });
 }
 
-type InterimMap = { map: DisplacementMap; hue: SpectralMap | null; ready: boolean; geometry: VireGlassGeometry };
+type InterimMap = {
+  key: string;
+  map: DisplacementMap;
+  hue: SpectralMap | null;
+  ready: boolean;
+  geometry: VireGlassGeometry;
+  /** Dropped from the store while its maps are on screen: released when something else is shown. */
+  evicted?: boolean;
+};
 
 function releaseRecord(rec: InterimMap): void {
   releaseMap(rec.map.url);
@@ -506,8 +514,9 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   let filterEl: SVGFilterElement | null = null;
   let destroyed = false;
   let mapKey = '';
-  // The box the shown map was baked for: its strength belongs to that map, also while interim stretches it.
-  let shownGeometry: VireGlassGeometry | null = null;
+  // The key of the pair on the filter, and the interim record it came from, if it did.
+  let shownKey = '';
+  let shownRec: InterimMap | null = null;
   let interim = false;
   let settling = false;
   let lastSample: BackdropSample | null = null;
@@ -516,7 +525,10 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   // A landing whose maps wait for the next frame; a second landing of the same maps joins it.
   let deferred: { key: string; filter: SVGFilterElement; mine: number } | null = null;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
-  const interimMaps = createLru<InterimMap>(8, releaseRecord);
+  const interimMaps = createLru<InterimMap>(8, (rec) => {
+    if (rec === shownRec) rec.evicted = true;
+    else releaseRecord(rec);
+  });
   // The newest interim key asked for, the worker build in flight, and the one to build when it lands.
   let latestKey = '';
   let building: PendingBuild | null = null;
@@ -534,7 +546,6 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     mapKey = '';
     deform.setElastic(elasticAllowed(opts.accessibility ?? a11y));
     apply();
-    if (interim) requestInterimMap();
   });
 
   warnIfNested(el);
@@ -572,11 +583,20 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     return { smoothing: morph.smoothing, morph: morph.shape, morph2: morph.shape2, morphs: morph.shapes };
   }
 
-  function morphKey(): string {
-    if (!morph) return '0';
-    const part = (s?: MorphShape) =>
-      s ? `${s.offsetX},${s.offsetY},${s.width},${s.height},${s.cornerRadius}` : '-';
-    return `${morph.smoothing}/${part(morph.shape)}/${part(morph.shape2)}`;
+  function morphSignature(): string {
+    return morph ? JSON.stringify([morph.smoothing, morph.shape, morph.shape2, morph.shapes]) : '0';
+  }
+
+  function setShown(rec: InterimMap | null): void {
+    const prev = shownRec;
+    shownRec = rec;
+    if (prev && prev !== rec && prev.evicted) releaseRecord(prev);
+  }
+
+  /** The interim pair of this key, if it has everything the filter shows. */
+  function adoptable(key: string, spectral: boolean): InterimMap | undefined {
+    const rec = interimMaps.get(key);
+    return rec && (!spectral || rec.hue) ? rec : undefined;
   }
 
   /** Drops every pending decode: whatever installs a map synchronously supersedes them. */
@@ -595,28 +615,30 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     idleTimer = null;
     if (destroyed || !interim) return;
     interim = false;
+    latestKey = '';
     invalidate();
     mapKey = '';
     settling = true;
     apply();
   }
 
-  function retarget(f: SVGFilterElement, map: DisplacementMap, hue: SpectralMap | null, geometry: VireGlassGeometry): void {
+  function retarget(f: SVGFilterElement, map: DisplacementMap, hue: SpectralMap | null, rec: InterimMap | null, key: string): void {
     const images = f.querySelectorAll('feImage');
-    images[0]?.setAttribute('href', map.url);
-    if (hue) images[1]?.setAttribute('href', hue.url);
-    shownGeometry = geometry;
+    if (images[0]) writeAttr(images[0], 'href', map.url);
+    if (hue && images[1]) writeAttr(images[1], 'href', hue.url);
+    setShown(rec);
+    shownKey = key;
     present(f);
   }
 
   /**
    * The maps are baked at full presence and appear is these attributes. The spectral hue is
-   * `1 + appear * (hue - 1)`, so mixing the full one in is the same picture.
+   * `1 + appear * (hue - 1)`, so mixing the full one in is the same picture. The strength follows
+   * the live box, not the box the shown map was baked for.
    */
-  function present(f: SVGFilterElement): void {
-    if (!shownGeometry) return;
+  function present(f: SVGFilterElement, live?: VireGlassGeometry): void {
     const o = optics();
-    const scale = displacementScale(o, shownGeometry);
+    const scale = displacementScale(o, live ?? opts.geometry ?? measureGeometry(el));
     // EVERY pass, with its own share of the scale: see paintInteraction.
     for (const pass of f.querySelectorAll('feDisplacementMap')) {
       const ratio = Number(pass.getAttribute('data-vireglass-ratio') ?? 1);
@@ -632,23 +654,28 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     }
   }
 
-  function requestInterimMap(): void {
+  function requestInterimMap(measured?: VireGlassGeometry): void {
     if (!svgSupported || !filterEl || destroyed) return;
-    const geometry = opts.geometry ?? measureGeometry(el);
-    if (isEmpty(geometry)) return;
+    const live = measured ?? opts.geometry ?? measureGeometry(el);
+    if (isEmpty(live)) return;
     const full = settledOptics();
-    const key = interimKey(
-      geometry.width,
-      geometry.height,
-      geometry.cornerRadius,
-      JSON.stringify([morph?.smoothing, morph?.shape, morph?.shape2, morph?.shapes]),
-      `${full.refraction}:${full.refractionScale}:${full.bevelDp}`,
-    );
+    const dpr = devicePixelRatio();
+    const geometry = snapGeometry(live);
+    const key = mapKeyFor(geometry, morphSignature(), full, dpr);
+    if (key === latestKey) return;
     latestKey = key;
-    const dpr = Math.min(1, devicePixelRatio());
     const hue = hasSpectralEdge(full) && filterEl.querySelectorAll('feImage').length > 1;
-    const found = interimMaps.get(key);
-    const rec = found && (!hue || found.hue) ? found : undefined;
+    let rec = adoptable(key, hue);
+    if (!rec && isCached(`d|${key}`) && (!hue || isCached(`h|${key}`))) {
+      rec = {
+        key,
+        map: cached(`d|${key}`, () => buildDisplacementMap(full, geometry, dpr, morphState())),
+        hue: hue ? cached(`h|${key}`, () => buildSpectralMap(full, geometry, dpr, morphState())) : null,
+        ready: false,
+        geometry,
+      };
+      interimMaps.set(key, rec);
+    }
     if (!rec && interimBuilder().ready()) {
       bump('reducedBakes');
       wanted = { key, mine: (seq += 1), forFilter: filterEl, optics: full, geometry, dpr, state: morphState(), hue };
@@ -658,7 +685,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     if (!rec) {
       bump('reducedBakes');
       bump('mainThreadBakes');
-      const built = { map: buildDisplacementMap(full, geometry, dpr, morphState()), hue: null, ready: false, geometry };
+      const built = { key, map: buildDisplacementMap(full, geometry, dpr, morphState()), hue: null, ready: false, geometry };
       interimMaps.set(key, built);
       showInterim((seq += 1), built, filterEl);
       return;
@@ -671,7 +698,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     const show = () => {
       if (destroyed || filterEl !== forFilter || mine <= shownSeq) return;
       shownSeq = mine;
-      retarget(forFilter, record.map, record.hue, record.geometry);
+      retarget(forFilter, record.map, record.hue, record, record.key);
     };
     if (record.ready) {
       show();
@@ -716,7 +743,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       if (pair.hue) releaseMap(pair.hue.url);
       return;
     }
-    const rec: InterimMap = { ...pair, ready: false, geometry: job.geometry };
+    const rec: InterimMap = { ...pair, key: job.key, ready: false, geometry: job.geometry };
     interimMaps.set(job.key, rec);
     showInterim(job.mine, rec, job.forFilter);
   }
@@ -724,6 +751,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   function recoverOnMainThread(job: PendingBuild): void {
     wanted = null;
     if (destroyed || !interim || filterEl !== job.forFilter) return;
+    latestKey = '';
     try {
       requestInterimMap();
     } catch (error) {
@@ -748,35 +776,39 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       // not change; the refraction itself updates in the compositor with no JS at all.
       const full = settledOptics();
       const dpr = devicePixelRatio();
-      const key = `m${morphKey()}|${geometry.width}x${geometry.height}r${geometry.cornerRadius}@${dpr}:${full.refraction}:${full.refractionScale}:${full.bevelDp}:${full.blur}:${full.thicknessDp}:${full.film}:${full.iridescence}:${full.diffraction}`;
+      const snapped = snapGeometry(geometry);
+      // The same key the interim pairs are made under, so a lens that lands on a pair it showed keeps it.
+      const key = mapKeyFor(snapped, morphSignature(), full, dpr);
       if (interim && filterEl) {
-        // The filter keeps its map; feImage stretches it over the live box.
+        requestInterimMap(geometry);
       } else if (isEmpty(geometry)) {
         // Nothing to refract in a box of no size; the next resize bakes it.
       } else if (key !== mapKey || !filterEl) {
-        // Keyed by exactly what the maps are functions of, which is exactly the cache key above.
         const morphNow = morphState();
+        const spectral = hasSpectralEdge(full);
+        const adopted = adoptable(key, spectral);
         const bakeMap = () =>
+          adopted?.map ??
           cached(`d|${key}`, () => {
             bump('fullBakes');
-            return buildDisplacementMap(full, geometry, dpr, morphNow);
+            return buildDisplacementMap(full, snapped, dpr, morphNow);
           });
-        const spectral = hasSpectralEdge(full);
         const bakeHue = () =>
           spectral
-            ? cached(`h|${key}`, () => {
+            ? (adopted?.hue ??
+              cached(`h|${key}`, () => {
                 bump('fullBakes');
-                return buildSpectralMap(full, geometry, dpr);
-              })
+                return buildSpectralMap(full, snapped, dpr, morphNow);
+              }))
             : null;
         const bakeMapInSlices = async () => {
-          if (isCached(`d|${key}`)) return bakeMap();
-          const built = await buildDisplacementMapInSlices(full, geometry, dpr, morphNow);
+          if (adopted || isCached(`d|${key}`)) return bakeMap();
+          const built = await buildDisplacementMapInSlices(full, snapped, dpr, morphNow);
           return cached(`d|${key}`, () => (bump('fullBakes'), built));
         };
         const bakeHueInSlices = async () => {
-          if (!spectral || isCached(`h|${key}`)) return bakeHue();
-          const built = await buildSpectralMapInSlices(full, geometry, dpr);
+          if (!spectral || adopted || isCached(`h|${key}`)) return bakeHue();
+          const built = await buildSpectralMapInSlices(full, snapped, dpr, morphNow);
           return cached(`h|${key}`, () => (bump('fullBakes'), built));
         };
         const signature = filterSignature(full.blur, full.ior, full.iorSpread, spectral);
@@ -789,11 +821,14 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
             Promise.all([mapReady, hue ? decoded(hue.url) : undefined]).then(() => {
               if (!current(mine)) return;
               shownSeq = mine;
-              retarget(forFilter, map, hue, geometry);
+              retarget(forFilter, map, hue, adopted ?? null, forKey);
             });
           const mapCached = isCached(`d|${key}`);
           const hueCached = !spectral || isCached(`h|${key}`);
-          if (mapCached && hueCached) {
+          if (adopted?.ready) {
+            shownSeq = seq += 1;
+            retarget(forFilter, adopted.map, adopted.hue, adopted, forKey);
+          } else if (adopted || (mapCached && hueCached)) {
             const map = bakeMap();
             void land((seq += 1), map, decoded(map.url), bakeHue());
           } else if (deferred && deferred.key === key && deferred.filter === forFilter) {
@@ -841,11 +876,12 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
           else defs.appendChild(next);
           bump('filterSwaps');
           filterEl = next;
-          shownGeometry = geometry;
+          shownKey = key;
+          setShown(adopted ?? null);
         }
         mapKey = key;
       }
-      if (filterEl) present(filterEl);
+      if (filterEl) present(filterEl, geometry);
       el.style.setProperty('backdrop-filter', `url(#${id})`);
       el.style.setProperty('-webkit-backdrop-filter', `url(#${id})`);
     } else {
@@ -950,6 +986,9 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       }
     }
     mapKey = '';
+    shownKey = '';
+    latestKey = '';
+    setShown(null);
 
     paintGlow(sampleOut.touchX, sampleOut.touchY, sampleOut.active * base.edgeLight, geometry);
 
@@ -1007,7 +1046,6 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       opts.onGlow?.(null);
       settling = !interim;
       apply();
-      if (interim) requestInterimMap();
       return;
     }
     frame = requestAnimationFrame(tick);
@@ -1071,6 +1109,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     destroyed = true;
     wanted = null;
     interimMaps.clear();
+    setShown(null);
     invalidate();
     if (idleTimer !== null) clearTimeout(idleTimer);
     idleTimer = null;
@@ -1140,7 +1179,6 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       morph = next && next.smoothing > 0 ? next : null;
       if (interim) {
         apply();
-        requestInterimMap();
         return;
       }
       mapKey = '';
@@ -1150,6 +1188,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       if (destroyed) return;
       if (on) {
         // A gesture held still sends no geometry, so a repeat is the host saying it is still moving.
+        if (!interim) latestKey = shownKey;
         interim = true;
         keepInterim();
         return;
