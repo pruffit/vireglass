@@ -769,7 +769,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     if (images[0]) writeAttr(images[0], 'href', map.url);
     if (hue && images[1]) writeAttr(images[1], 'href', hue.url);
     setShown(rec);
-    shownKey = key;
+    shownKey = hue || images.length < 2 ? key : '';
     present(f);
   }
 
@@ -820,13 +820,32 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     if (!rec) {
       bump('reducedBakes');
       bump('mainThreadBakes');
-      const built = { key, map: buildDisplacementMap(full, geometry, dpr, morphState()), hue: null, ready: false, geometry };
+      const built: InterimMap = { key, map: buildDisplacementMap(full, geometry, dpr, morphState()), hue: null, ready: false, geometry };
       remember(built);
       showInterim((seq += 1), built, filterEl);
+      if (hue) void buildHueInSlices(built, filterEl, full, dpr);
       return;
     }
     wanted = null;
     showInterim((seq += 1), rec, filterEl);
+  }
+
+  /** The main-thread pair has its map first; the hue follows in slices once the key holds still, and only then is the key claimed as shown. */
+  async function buildHueInSlices(rec: InterimMap, forFilter: SVGFilterElement, full: VireGlassOptics, dpr: number): Promise<void> {
+    const live = () => !destroyed && interim && !rec.released && latestKey === rec.key && filterEl === forFilter;
+    try {
+      const hue = await buildSpectralMapInSlices(full, rec.geometry, dpr, morphState(), { sliceMs: 4, live });
+      if (!live()) return;
+      rec.hue = hue;
+      if (rec.budget) rec.budget.bytes = pairBytes(rec.map, hue);
+      await decoded(hue.url);
+      if (!live() || shownRec !== rec || blend) return;
+      const image = forFilter.querySelectorAll('feImage')[1];
+      if (image) writeAttr(image, 'href', hue.url);
+      shownKey = rec.key;
+    } catch (error) {
+      if (!(error instanceof Superseded)) reportFailure(error);
+    }
   }
 
   function showInterim(mine: number, record: InterimMap, forFilter: SVGFilterElement): void {
