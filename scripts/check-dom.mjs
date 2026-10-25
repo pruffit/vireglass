@@ -325,6 +325,32 @@ const FIXTURE = `<!doctype html>
     return renderStats();
   };
 
+  // The rim ring as it was drawn before border-area: the two masks, frozen here as the reference.
+  const OLD_RIM = "[data-rimold]::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;padding:var(--vireglass-rim-width,1px);background:var(--vireglass-rim,none);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);mask-composite:exclude}";
+  const rimStyle = document.createElement('style');
+  rimStyle.textContent = OLD_RIM + 'body.rimtest #page, body.rimtest #glass{display:none} html:has(body.rimtest), body.rimtest{background:#000}';
+  document.head.append(rimStyle);
+
+  globalThis.__rimSupported = () => CSS.supports('background-clip', 'border-area');
+  // One rim on a black page: 'old' is the mask pair, 'new' is what ships. shrink insets the box by that
+  // many px on every side, which is how the canary moves the ring.
+  globalThis.__rimCase = async (shape, mode, rim, shrink) => {
+    document.body.classList.add('rimtest');
+    document.getElementById('rimcase')?.remove();
+    const el = document.createElement('div');
+    el.id = 'rimcase';
+    el.setAttribute(mode === 'old' ? 'data-rimold' : 'data-vireglass', '');
+    el.style.cssText = 'position:absolute;left:' + (40 + shrink) + 'px;top:' + (40 + shrink) + 'px;width:' + (shape.w - 2 * shrink) + 'px;height:' + (shape.h - 2 * shrink) + 'px;border-radius:' + shape.radius + ';--vireglass-rim-width:' + shape.rim + 'px;--vireglass-rim:' + rim;
+    document.body.append(el);
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  };
+  globalThis.__rimSolid = () => 'conic-gradient(#fff 0deg, #fff 360deg)';
+  globalThis.__rimReal = () => rimGradientCss(resolveOptics(MATERIAL_PRESETS.glass), [0.35, 0.4, 0.5], REST_LIGHT);
+  globalThis.__rimDone = () => {
+    document.getElementById('rimcase')?.remove();
+    document.body.classList.remove('rimtest');
+  };
+
   globalThis.__mount('full');
   globalThis.__ready = true;
 </script>`;
@@ -467,6 +493,51 @@ const ORB = `(src, c) => new Promise((resolve, reject) => {
   };
   img.src = src;
 })`;
+
+/**
+ * Two frames of the same rim, old against new: the largest and the mean channel difference, and how
+ * many pixels differ by more than TOL while neither frame has partial coverage within 1 px of them.
+ * Partial coverage is read off the frames themselves (the ring is white on black), so the band is the
+ * anti-aliased edge and nothing wider.
+ */
+const RIMCMP = `(a, b, rect) => {
+  const load = (s) => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = s; });
+  return Promise.all([load(a), load(b)]).then(([ia, ib]) => {
+    const { w, h } = rect;
+    const read = (img) => {
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const g = c.getContext('2d', { willReadFrequently: true });
+      g.drawImage(img, rect.x, rect.y, w, h, 0, 0, w, h);
+      return g.getImageData(0, 0, w, h).data;
+    };
+    const pa = read(ia), pb = read(ib);
+    const TOL = 2;
+    const partial = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i += 1) {
+      const va = pa[i * 4 + 1], vb = pb[i * 4 + 1];
+      if ((va > 8 && va < 247) || (vb > 8 && vb < 247)) partial[i] = 1;
+    }
+    let max = 0, sum = 0, outside = 0, over = 0, inked = 0;
+    for (let y = 0; y < h; y += 1) for (let x = 0; x < w; x += 1) {
+      const i = y * w + x;
+      let d = 0;
+      for (let k = 0; k < 3; k += 1) d = Math.max(d, Math.abs(pa[i * 4 + k] - pb[i * 4 + k]));
+      sum += d;
+      if (d > max) max = d;
+      if (pa[i * 4 + 1] > 8) inked += 1;
+      if (d <= TOL) continue;
+      over += 1;
+      let near = false;
+      for (let dy = -1; dy <= 1 && !near; dy += 1) for (let dx = -1; dx <= 1; dx += 1) {
+        const xx = x + dx, yy = y + dy;
+        if (xx >= 0 && yy >= 0 && xx < w && yy < h && partial[yy * w + xx]) { near = true; break; }
+      }
+      if (!near) outside += 1;
+    }
+    return { max, mean: sum / (w * h), over, outside, inked };
+  });
+}`;
 
 const server = await serve();
 const { port } = server.address();
@@ -898,6 +969,46 @@ try {
   if (blank.busy > 0.05) fail(`canary: the same page without its text reads busy ${blank.busy.toFixed(3)}, so the text gate cannot tell them apart`);
   if (Math.abs(prose.luma - blank.luma) > 0.02) fail(`the text moved the probe's lightness (${prose.luma.toFixed(3)} against ${blank.luma.toFixed(3)}); it must only add spread`);
   if (!(prose.shadow > blank.shadow * 1.5)) fail(`the shadow does not answer the text: ${prose.shadow.toFixed(3)} over it, ${blank.shadow.toFixed(3)} without it`);
+
+  // 12. The rim is the border area of its layer, the same ring the two masks cut: the pixels agree to
+  //    the anti-aliasing of the hairline's two edges, on a still capsule, a rounded rect and a morph shape
+  //    (four different elliptical radii, as a box mid-morph has them).
+  if (await page.evaluate(() => globalThis.__rimSupported())) {
+    const shapes = [
+      { name: 'capsule', w: 220, h: 64, radius: '9999px', rim: 4 },
+      { name: 'rounded rect', w: 220, h: 120, radius: '28px', rim: 4 },
+      { name: 'morph shape', w: 220, h: 120, radius: '60px 20px 8px 44px / 30px 50px 12px 20px', rim: 4 },
+    ];
+    const rimShot = async (shape, mode, rim, shrink) => {
+      await page.evaluate(([s, m, r, k]) => globalThis.__rimCase(s, m, r, k), [shape, mode, rim, shrink]);
+      return `data:image/png;base64,${(await page.screenshot({ clip: { x: 30, y: 30, width: 240, height: 140 } })).toString('base64')}`;
+    };
+    const compare = (a, b) =>
+      page.evaluate(([x, y, r, fn]) => new Function(`return ${fn}`)()(x, y, r), [a, b, { x: 0, y: 0, w: 240, h: 140 }, RIMCMP]);
+    const solid = await page.evaluate(() => globalThis.__rimSolid());
+    const real = await page.evaluate(() => globalThis.__rimReal());
+    for (const shape of shapes) {
+      const oldRim = await rimShot(shape, 'old', solid, 0);
+      const newRim = await rimShot(shape, 'new', solid, 0);
+      const moved = await rimShot(shape, 'new', solid, 1);
+      const same = await compare(oldRim, newRim);
+      const shifted = await compare(oldRim, moved);
+      const oldReal = await rimShot(shape, 'old', real, 0);
+      const newReal = await rimShot(shape, 'new', real, 0);
+      const coloured = await compare(oldReal, newReal);
+      console.log(
+        `check-dom: rim on a ${shape.name}: max ${same.max} mean ${same.mean.toFixed(4)}, ${same.over} px differ, ${same.outside} outside a 1 px band (of ${same.inked} inked); ` +
+          `with the real gradient max ${coloured.max} mean ${coloured.mean.toFixed(4)}, ${coloured.outside} outside the band; ring inset 1 px more: ${shifted.outside} outside`,
+      );
+      if (same.inked < 200) fail(`the ${shape.name} rim drew only ${same.inked} pixels, so the comparison measures nothing`);
+      if (same.outside !== 0) fail(`the ${shape.name} rim differs from the masked ring in ${same.outside} pixels away from its edges`);
+      if (coloured.outside !== 0) fail(`the ${shape.name} rim, with its real gradient, differs from the masked ring in ${coloured.outside} pixels away from its edges`);
+      if (shifted.outside === 0) fail(`canary: the ${shape.name} ring inset by 1 px more passed the band check, so it cannot fail`);
+    }
+    await page.evaluate(() => globalThis.__rimDone());
+  } else {
+    console.log('check-dom: this Chromium has no background-clip: border-area; the rim keeps its masks and the ring comparison is skipped');
+  }
 
   if (!failed) {
     console.log('check-dom: the glass bends live DOM at its rim, leaves its middle alone, touches nothing outside itself, and the interactive variant is absent until touched');

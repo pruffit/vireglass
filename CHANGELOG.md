@@ -1,5 +1,25 @@
 # Changelog
 
+## 3.6.0
+
+The rim is drawn without a mask. DOM target only. The hairline was an `::after` with two conic layers cut by a pair of
+gradient masks (`mask-composite: exclude`), and a mask costs two offscreen layers the size of the whole box, almost all
+of it empty interior, redrawn on every frame the box resizes. It is now the border area of that layer:
+`border: var(--vireglass-rim-width) solid transparent` with `background-clip: border-area`. The browser clips the paint
+to the ring itself, following the box and its radii, with no script and nothing to keep current.
+
+Why: in vireuikit's navigation morph (pruffit/vireuikit#41) hiding the rim saved about 1.7 ms of GPU-process work a
+frame in frames 1 to 3. That is the ceiling for this change; the saving of the clip itself is not measured here.
+
+- The ring is the same one. `check:dom` renders it old and new on a capsule, a rounded rect and a box with four different
+  elliptical radii, and no pixel differs by more than 2/255 farther than 1 px from an anti-aliased edge. The differences
+  are edge pixels of the curves: at most 38/255 on one channel with a solid white ring (mean 0.12 to 0.14 over the
+  240 by 140 crop), at most 23 with the real gradient (mean 0.03 to 0.04). A ring inset 1 px more fails the same check.
+- The masks had no soft inner edge, so nothing is lost: the inner radius is the outer one less the ring width, floored at
+  0, and CSS clamps a radius larger than half the box first, as before.
+- Browsers without `background-clip: border-area` keep the pair of masks, chosen by `@supports`, and draw what they drew.
+- `--vireglass-rim-width` still sets the width. The padding the masks needed exists only in the fallback branch.
+
 ## 3.5.0
 
 Interim maps are built in a worker. DOM target only. A morph in interim mode no longer renders rows or encodes a PNG on
