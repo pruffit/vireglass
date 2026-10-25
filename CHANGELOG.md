@@ -1,6 +1,6 @@
 # Changelog
 
-## 3.6.0 (unreleased)
+## 3.6.0
 
 The rim is drawn without a mask. DOM target only. The hairline was an `::after` with two conic layers cut by a pair of
 gradient masks (`mask-composite: exclude`), and a mask costs two offscreen layers the size of the whole box, almost all
