@@ -344,6 +344,55 @@ const FIXTURE = `<!doctype html>
     await new Promise((r) => requestAnimationFrame(r));
     return { landed, stats, before };
   };
+  // The host path with no prepare: a resize in interim and setInterim(false), on a page with no worker.
+  let hostLens = null;
+  let hostStart = [];
+  const hostReset = () => {
+    morphing?.destroy();
+    morphing = null;
+    live?.destroy();
+    live = null;
+    orb?.destroy();
+    orb = null;
+    hostLens?.destroy();
+    hostLens = null;
+    document.body.classList.remove('flat', 'bright', 'colour');
+    document.getElementById('orb').style.display = 'none';
+    const glass = document.getElementById('glass');
+    glass.style.display = 'block';
+    return glass;
+  };
+  globalThis.__hostRun = async (steps) => {
+    const glass = hostReset();
+    glass.style.width = '${BOX.w}px';
+    hostLens = attachGlass(glass, { material: MATERIAL_PRESETS.glass, interactive: false, shadow: false, sample });
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    hostStart = feHrefs();
+    hostLens.setInterim(true);
+    for (let i = 1; i <= steps; i += 1) {
+      glass.style.width = (${BOX.w} + 2 * i) + 'px';
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+    resetRenderStats();
+    hostLens.setInterim(false);
+    await new Promise((r) => setTimeout(r, 1200));
+    return { stats: renderStats(), hrefs: feHrefs(), start: hostStart };
+  };
+  globalThis.__hostStale = async () => {
+    const images = document.querySelectorAll('svg[data-vireglass-filters] filter feImage');
+    images[1]?.setAttribute('href', hostStart[1]);
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  };
+  globalThis.__hostSettled = async () => {
+    const glass = hostReset();
+    hostLens = attachGlass(glass, { material: MATERIAL_PRESETS.glass, interactive: false, shadow: false, sample });
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  };
+  globalThis.__hostDone = () => {
+    hostLens?.destroy();
+    hostLens = null;
+    document.getElementById('glass').style.width = '${BOX.w}px';
+  };
   globalThis.__prepSettle = (ms) => new Promise((r) => setTimeout(r, ms));
   globalThis.__prepDone = () => {
     prepLens?.destroy();
@@ -921,7 +970,7 @@ try {
   if (iDuring.probes !== 0) fail(`interim probed the backdrop ${iDuring.probes} times`);
   if (iDuring.fullBakes !== 0) fail(`interim rebuilt the map at full resolution ${iDuring.fullBakes} times`);
   if (iDuring.filterSwaps !== 0) fail(`interim swapped the filter element ${iDuring.filterSwaps} times`);
-  if (iAfter.probes !== 0) fail(`landing should not probe, probed ${iAfter.probes}`);
+  if (iAfter.probes !== 1) fail(`a landing with no prepare should probe once, probed ${iAfter.probes}`);
   if (iAfter.fullBakes > MAPS) fail(`ending interim should bake at most once at full resolution (${MAPS} maps), baked ${iAfter.fullBakes}`);
   if (iAfter.filterSwaps !== 0) fail(`ending interim replaced the filter element (${iAfter.filterSwaps}); it should update in place`);
   if (!(cAfter.fullBakes >= MAPS * (FRAMES - 5) && cAfter.probes >= FRAMES - 5 && cAfter.filterSwaps >= FRAMES - 5)) {
@@ -1059,6 +1108,25 @@ try {
     if (run.stats.fullBakes !== run.before.fullBakes || run.stats.probes !== run.before.probes || run.stats.filterSwaps !== run.before.filterSwaps) fail(`prepare + land (${label}) baked, probed or swapped at the landing`);
     if (moved !== 0) fail(`${moved} pixels change after the last motion frame (${label})`);
     if (tasks.over.length) fail(`main-thread tasks over 16.7 ms in the run (${label}): ${tasks.over.join(', ')} ms`);
+  }
+  {
+    const shot = async () => `data:image/png;base64,${(await noWorker.screenshot()).toString('base64')}`;
+    const host = await noWorker.evaluate((n) => globalThis.__hostRun(n), STEPS);
+    const landedShot = await shot();
+    await noWorker.evaluate(() => globalThis.__hostStale());
+    const staleShot = await shot();
+    await noWorker.evaluate(() => globalThis.__hostSettled());
+    const settledShot = await shot();
+    await noWorker.evaluate(() => globalThis.__hostDone());
+    const differing = await countWhole(noWorker, landedShot, settledShot);
+    const staleDiffering = await countWhole(noWorker, staleShot, settledShot);
+    console.log(
+      `check-dom: no worker, resize in interim, setInterim(false) — ${host.stats.landedExact} exact, ${host.stats.landedBlend} blend, ${host.stats.fullBakes} full bakes; ` +
+        `${differing} pixels differ from a lens settled on the final box (canary with the first box's hue put back: ${staleDiffering})`,
+    );
+    if (host.hrefs.join('|') === host.start.join('|')) fail('no worker: the filter still showed the first box maps after setInterim(false)');
+    if (differing !== 0) fail(`no worker: ${differing} pixels of the landed lens differ from a lens settled on the final box`);
+    if (!(staleDiffering > 0)) fail('canary: the first box hue on the landed lens changed no pixel, so the comparison cannot fail');
   }
   await noWorker.close();
   {
