@@ -21,7 +21,7 @@ import { probeBackdrop } from './probe';
 import { bump } from './stats';
 import { createLru, filterSignature, mapKeyFor, quantise, sampleMoved, snapGeometry } from './interim';
 import { interimBuilder, releaseMap, type InterimPair, type WorkerFailure } from './interim-build';
-import { Superseded } from './bake';
+import { Superseded, yieldTask } from './bake';
 import { startBlend, type Blend } from './blend';
 import { pairBytes, touch, track, untrack, type BudgetEntry } from './pair-budget';
 import { supportsSvgBackdropFilter } from './support';
@@ -401,6 +401,7 @@ type PendingBuild = {
   dpr: number;
   state: DisplacementState;
   hue: boolean;
+  onMain: boolean;
 };
 
 /** Interim with no call for this long ends itself: a morph that never reported landing must not
@@ -807,19 +808,12 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     latestKey = key;
     const hue = hasSpectralEdge(full) && filterEl.querySelectorAll('feImage').length > 1;
     let rec = adoptable(key, hue) ?? cachedRec(key, full, geometry, dpr, morphState(), hue);
-    if (!rec && !onMainThread && interimBuilder().ready()) {
-      bump('reducedBakes');
-      wanted = { key, mine: (seq += 1), forFilter: filterEl, optics: full, geometry, dpr, state: morphState(), hue };
-      if (!building) pump();
-      return;
-    }
     if (!rec) {
+      const onMain = onMainThread || !interimBuilder().ready();
       bump('reducedBakes');
-      bump('mainThreadBakes');
-      const built: InterimMap = { key, map: buildDisplacementMap(full, geometry, dpr, morphState()), hue: null, ready: false, geometry };
-      remember(built);
-      showInterim((seq += 1), built, filterEl);
-      if (hue) void buildHueInSlices(built, filterEl, full, dpr);
+      if (onMain) bump('mainThreadBakes');
+      wanted = { key, mine: (seq += 1), forFilter: filterEl, optics: full, geometry, dpr, state: morphState(), hue, onMain };
+      if (!building) pump();
       return;
     }
     wanted = null;
@@ -867,6 +861,10 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       return;
     }
     building = job;
+    if (job.onMain) {
+      void buildHere(job);
+      return;
+    }
     interimBuilder()
       .build(job.optics, job.geometry, job.dpr, job.state, job.hue)
       .then(
@@ -882,6 +880,26 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
           recoverOnMainThread(job, error.timedOut);
         },
       );
+  }
+
+  /** Without a worker the map is rendered in slices of 4 ms; a newer key waits for the build in flight, so the filter keeps moving. */
+  async function buildHere(job: PendingBuild): Promise<void> {
+    const live = () => !destroyed && interim && filterEl === job.forFilter;
+    try {
+      await yieldTask();
+      const map = await buildDisplacementMapInSlices(job.optics, job.geometry, job.dpr, job.state, { sliceMs: 4, live });
+      building = null;
+      if (live() && job.mine > shownSeq) {
+        const rec: InterimMap = { key: job.key, map, hue: null, ready: false, geometry: job.geometry };
+        remember(rec);
+        showInterim(job.mine, rec, job.forFilter);
+        if (job.hue) void buildHueInSlices(rec, job.forFilter, job.optics, job.dpr);
+      }
+    } catch (error) {
+      building = null;
+      if (!(error instanceof Superseded)) reportFailure(error);
+    }
+    pump();
   }
 
   function landBuilt(job: PendingBuild, pair: InterimPair): void {

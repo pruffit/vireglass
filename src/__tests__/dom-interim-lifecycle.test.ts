@@ -58,7 +58,12 @@ let el: HTMLElement;
 const href = () => document.querySelector('svg[data-vireglass-filters] filter feImage')?.getAttribute('href');
 const filters = () => document.querySelectorAll('svg[data-vireglass-filters] filter').length;
 const settle = async () => {
-  for (const d of decodes.splice(0)) d.resolve();
+  for (let round = 0; round < 3; round += 1) {
+    if (vi.isFakeTimers()) await vi.advanceTimersByTimeAsync(0);
+    else await new Promise((r) => setTimeout(r, 0));
+    for (let i = 0; i < 6; i += 1) await Promise.resolve();
+    for (const d of decodes.splice(0)) d.resolve();
+  }
   await Promise.resolve();
   await Promise.resolve();
 };

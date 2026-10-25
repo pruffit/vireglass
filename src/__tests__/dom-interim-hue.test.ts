@@ -40,7 +40,11 @@ const decodeAll = async () => {
 };
 
 const decodeNow = async () => {
-  for (const d of decodes.splice(0)) d.resolve();
+  for (let round = 0; round < 3; round += 1) {
+    await vi.advanceTimersByTimeAsync(0);
+    for (let i = 0; i < 6; i += 1) await Promise.resolve();
+    for (const d of decodes.splice(0)) d.resolve();
+  }
   for (let i = 0; i < 6; i += 1) await Promise.resolve();
 };
 
