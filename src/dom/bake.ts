@@ -6,7 +6,13 @@ export type Rows<T> = { height: number; rows(from: number, to: number): void; do
 /** A task's share of rows: past this the renderer yields, so a large map is never one long task. */
 const SLICE_MS = 5;
 
-/** Renders every row, yielding to the event loop each time a slice has run for `SLICE_MS`. */
+/** Ends the task. A hidden page draws no frames to protect, and clamps setTimeout to about a second. */
+export function yieldTask(): Promise<void> {
+  if (typeof document !== 'undefined' && document.hidden) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/** Renders every row, yielding to the event loop each time a slice has run for `SLICE_MS` and after the last, so the encode never shares a task with rows. */
 export async function renderInSlices<T>(map: Rows<T>, sliceMs = SLICE_MS): Promise<T> {
   let row = 0;
   while (row < map.height) {
@@ -15,8 +21,7 @@ export async function renderInSlices<T>(map: Rows<T>, sliceMs = SLICE_MS): Promi
       map.rows(row, row + 1);
       row += 1;
     } while (row < map.height && performance.now() - start < sliceMs);
-    // A hidden page draws no frames to protect, and clamps setTimeout to about a second.
-    if (row < map.height && !(typeof document !== 'undefined' && document.hidden)) await new Promise((resolve) => setTimeout(resolve, 0));
+    await yieldTask();
   }
   return map.done();
 }

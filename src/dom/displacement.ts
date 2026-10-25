@@ -4,7 +4,7 @@
 import { bevelDp, thicknessDp, type VireGlassGeometry } from '../geometry';
 import { BEVEL } from '../law';
 import type { VireGlassOptics } from '../material';
-import { pngFromPixels, renderInSlices, type Rows } from './bake';
+import { pngFromPixels, renderInSlices, yieldTask, type Rows } from './bake';
 import {
   sceneDistance,
   sceneGradient,
@@ -189,5 +189,7 @@ export async function buildDisplacementMapInSlices(
     throw new Error('vireglass/dom: buildDisplacementMap requires a DOM (canvas)');
   }
   const { data, width, height, scale } = await renderInSlices(displacementRows(optics, geometry, dpr, state));
-  return { url: pngFromPixels(data, width, height), width, height, scale };
+  const url = pngFromPixels(data, width, height);
+  await yieldTask();
+  return { url, width, height, scale };
 }

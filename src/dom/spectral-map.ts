@@ -11,7 +11,7 @@
 // coloured one.
 import { bevelDp, rimDp, thicknessDp, type VireGlassGeometry } from '../geometry';
 import type { VireGlassOptics } from '../material';
-import { pngFromPixels, renderInSlices, type Rows } from './bake';
+import { pngFromPixels, renderInSlices, yieldTask, type Rows } from './bake';
 import { sdfRoundedRect } from '../sdf';
 import { spectralHue } from '../spectral';
 
@@ -131,5 +131,7 @@ export async function buildSpectralMapInSlices(optics: VireGlassOptics, geometry
     throw new Error('vireglass/dom: buildSpectralMap requires a DOM (canvas)');
   }
   const { data, width, height, headroom } = await renderInSlices(spectralRows(optics, geometry, dpr));
-  return { url: pngFromPixels(data, width, height), width, height, headroom };
+  const url = pngFromPixels(data, width, height);
+  await yieldTask();
+  return { url, width, height, headroom };
 }

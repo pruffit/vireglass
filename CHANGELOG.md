@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.6.1 (unreleased)
+
+The deferred landing never puts rows and an encode in one task. DOM target only. A map whose rows fit in one slice went
+on to its PNG encode in the same task, and then into the next map's first slice, so one task held the displacement rows
+(about 5 ms), their `toDataURL` (about 1.2 ms), the spectral rows (about 5 ms), their encode (about 1.8 ms) and the
+garbage they made: 10 to 14 ms, once 23 ms, over a 16.7 ms main-thread bound. A slice followed by its encode made
+7 to 9 ms tasks. Measured from vireuikit's frame gate on the popover-to-sheet and sheet detent traces.
+
+- Every task of a landing now does at most one slice of rows or one encode: it yields after the last slice of a map,
+  after each encode, and so between the displacement map and the spectral map.
+- Same pixels, same guards, and both maps are still retargeted together once both are decoded. On a hidden page nothing
+  yields, as before. Interim maps are not affected.
+
 ## 3.6.0
 
 The rim is drawn without a mask. DOM target only. The hairline was an `::after` with two conic layers cut by a pair of
