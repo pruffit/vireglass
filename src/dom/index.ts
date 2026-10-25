@@ -364,10 +364,12 @@ type InterimMap = {
   geometry: VireGlassGeometry;
   /** Dropped from the store while its maps are on screen or held: released when nothing uses it. */
   evicted?: boolean;
+  released?: boolean;
   budget?: BudgetEntry;
 };
 
 function releaseRecord(rec: InterimMap): void {
+  rec.released = true;
   if (rec.budget) untrack(rec.budget);
   releaseMap(rec.map.url);
   if (rec.hue) releaseMap(rec.hue.url);
@@ -602,6 +604,8 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   let easeTimer: ReturnType<typeof setTimeout> | null = null;
   let onVisible: (() => void) | null = null;
   let verifying: InterimMap | null = null;
+  // The pair being stored: not for the budget to take back in the very call that adds it.
+  let born: InterimMap | null = null;
   let mapKey = '';
   // The key of the pair on the filter, and the interim record it came from, if it did.
   let shownKey = '';
@@ -703,8 +707,10 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   /** Keeps a pair in the lens's store and under the byte budget. */
   function remember(rec: InterimMap): void {
     interimMaps.set(rec.key, rec);
-    rec.budget = { bytes: pairBytes(rec.map, rec.hue), offscreen, pinned: () => !rec.ready || isPinned(rec), evict: () => interimMaps.delete(rec.key, rec) };
+    rec.budget = { bytes: pairBytes(rec.map, rec.hue), offscreen, pinned: () => rec === born || isPinned(rec), evict: () => interimMaps.delete(rec.key, rec) };
+    born = rec;
     track(rec.budget);
+    born = null;
   }
 
   function decodeRec(rec: InterimMap, then?: () => void): Promise<void> {
@@ -825,7 +831,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
 
   function showInterim(mine: number, record: InterimMap, forFilter: SVGFilterElement): void {
     const show = () => {
-      if (destroyed || filterEl !== forFilter || mine <= shownSeq) return;
+      if (destroyed || filterEl !== forFilter || mine <= shownSeq || record.released) return;
       shownSeq = mine;
       retarget(forFilter, record.map, record.hue, record, record.key);
     };
@@ -1321,6 +1327,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
             Promise.all([mapReady, hue ? decoded(hue.url) : undefined]).then(() => {
               if (!current(mine)) return;
               shownSeq = mine;
+              if (adopted) adopted.ready = true;
               retarget(forFilter, map, hue, adopted ?? null, forKey);
             });
           const mapCached = isCached(`d|${key}`);

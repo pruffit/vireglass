@@ -300,6 +300,34 @@ describe('the byte budget', () => {
   });
 });
 
+describe('pairs that never decoded', () => {
+  it('are released when the budget is over, as soon as nothing holds them', async () => {
+    const g = attach();
+    g.setInterim(true);
+    setPairBudget(1);
+    g.prepare(dest(260));
+    await worker.answer(0);
+    g.prepare(dest(300));
+    await worker.answer(1);
+    expect(revoked).toContain(urls[0]);
+    expect(revoked).not.toContain(urls[1]);
+  });
+
+  it('are not shown after the budget released them while they decoded', async () => {
+    const g = attach();
+    g.setInterim(true);
+    setPairBudget(1);
+    const bridge = (x: number) => ({ smoothing: 10, shape: { offsetX: x, offsetY: 0, width: 40, height: 40, cornerRadius: 8 } });
+    g.setMorph(bridge(10));
+    await worker.answer(0);
+    g.setMorph(bridge(20));
+    await worker.answer(1);
+    expect(revoked).toContain(urls[0]);
+    await decodeAll();
+    expect(href()).toBe(urls[1]);
+  });
+});
+
 describe('a hidden page', () => {
   it('lands an undecoded pair at once and settles on visibilitychange', async () => {
     const g = attach();
