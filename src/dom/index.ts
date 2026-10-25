@@ -20,7 +20,7 @@ import { resolveOptics, VIREGLASS_MATERIAL, type VireGlassMaterial, type VireGla
 import { probeBackdrop } from './probe';
 import { bump } from './stats';
 import { createLru, filterSignature, interimKey, quantise } from './interim';
-import { interimBuilder, releaseMap, type WorkerFailure } from './interim-build';
+import { interimBuilder, releaseMap, type InterimPair, type WorkerFailure } from './interim-build';
 import { supportsSvgBackdropFilter } from './support';
 import { boxShadowCss } from './shadow';
 import { bodyLayer, resolveBody, withPresence } from './body';
@@ -325,7 +325,12 @@ function afterNextFrame(): Promise<void> {
   });
 }
 
-type InterimMap = { map: DisplacementMap; ready: boolean; geometry: VireGlassGeometry };
+type InterimMap = { map: DisplacementMap; hue: SpectralMap | null; ready: boolean; geometry: VireGlassGeometry };
+
+function releaseRecord(rec: InterimMap): void {
+  releaseMap(rec.map.url);
+  if (rec.hue) releaseMap(rec.hue.url);
+}
 
 type PendingBuild = {
   key: string;
@@ -335,6 +340,7 @@ type PendingBuild = {
   geometry: VireGlassGeometry;
   dpr: number;
   state: DisplacementState;
+  hue: boolean;
 };
 
 /** Interim with no call for this long ends itself: a morph that never reported landing must not
@@ -510,7 +516,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   // A landing whose maps wait for the next frame; a second landing of the same maps joins it.
   let deferred: { key: string; filter: SVGFilterElement; mine: number } | null = null;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
-  const interimMaps = createLru<InterimMap>(8, (rec) => releaseMap(rec.map.url));
+  const interimMaps = createLru<InterimMap>(8, releaseRecord);
   // The newest interim key asked for, the worker build in flight, and the one to build when it lands.
   let latestKey = '';
   let building: PendingBuild | null = null;
@@ -640,17 +646,19 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     );
     latestKey = key;
     const dpr = Math.min(1, devicePixelRatio());
-    const rec = interimMaps.get(key);
+    const hue = hasSpectralEdge(full) && filterEl.querySelectorAll('feImage').length > 1;
+    const found = interimMaps.get(key);
+    const rec = found && (!hue || found.hue) ? found : undefined;
     if (!rec && interimBuilder().ready()) {
       bump('reducedBakes');
-      wanted = { key, mine: (seq += 1), forFilter: filterEl, optics: full, geometry, dpr, state: morphState() };
+      wanted = { key, mine: (seq += 1), forFilter: filterEl, optics: full, geometry, dpr, state: morphState(), hue };
       if (!building) pump();
       return;
     }
     if (!rec) {
       bump('reducedBakes');
       bump('mainThreadBakes');
-      const built = { map: buildDisplacementMap(full, geometry, dpr, morphState()), ready: false, geometry };
+      const built = { map: buildDisplacementMap(full, geometry, dpr, morphState()), hue: null, ready: false, geometry };
       interimMaps.set(key, built);
       showInterim((seq += 1), built, filterEl);
       return;
@@ -663,13 +671,13 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     const show = () => {
       if (destroyed || filterEl !== forFilter || mine <= shownSeq) return;
       shownSeq = mine;
-      retarget(forFilter, record.map, null, record.geometry);
+      retarget(forFilter, record.map, record.hue, record.geometry);
     };
     if (record.ready) {
       show();
       return;
     }
-    void decoded(record.map.url).then(() => {
+    void Promise.all([decoded(record.map.url), record.hue ? decoded(record.hue.url) : undefined]).then(() => {
       record.ready = true;
       show();
     });
@@ -686,12 +694,12 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     }
     building = job;
     interimBuilder()
-      .build(job.optics, job.geometry, job.dpr, job.state)
+      .build(job.optics, job.geometry, job.dpr, job.state, job.hue)
       .then(
-        (map) => {
+        (pair) => {
           building = null;
           bump('workerBakes');
-          landBuilt(job, map);
+          landBuilt(job, pair);
           pump();
         },
         (error: WorkerFailure) => {
@@ -702,12 +710,13 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       );
   }
 
-  function landBuilt(job: PendingBuild, map: DisplacementMap): void {
+  function landBuilt(job: PendingBuild, pair: InterimPair): void {
     if (destroyed || filterEl !== job.forFilter || !interim || job.mine <= shownSeq) {
-      releaseMap(map.url);
+      releaseMap(pair.map.url);
+      if (pair.hue) releaseMap(pair.hue.url);
       return;
     }
-    const rec: InterimMap = { map, ready: false, geometry: job.geometry };
+    const rec: InterimMap = { ...pair, ready: false, geometry: job.geometry };
     interimMaps.set(job.key, rec);
     showInterim(job.mine, rec, job.forFilter);
   }

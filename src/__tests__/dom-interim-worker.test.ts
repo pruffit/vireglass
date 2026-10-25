@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const spectral = vi.hoisted(() => ({ on: false }));
+
 vi.mock('../dom/displacement', async (original) => {
   const real = await original<typeof import('../dom/displacement')>();
   let n = 0;
@@ -12,6 +14,7 @@ vi.mock('../dom/spectral-map', async (original) => {
   let n = 0;
   return {
     ...real,
+    hasSpectralEdge: () => spectral.on,
     buildSpectralMap: () => ({ url: `hue:${(n += 1)}`, headroom: 2 }),
     buildSpectralMapInSlices: async () => ({ url: `hue:${(n += 1)}`, headroom: 2 }),
   };
@@ -22,10 +25,11 @@ vi.mock('../dom/probe', () => ({
 }));
 
 import { attachGlass, clearMapCache, renderStats, resetRenderStats, type GlassHandle } from '../dom';
-import { MATERIAL_PRESETS } from '../index';
+import { MATERIAL_PRESETS, resolveOptics } from '../index';
 import { resetSupportCache } from '../dom/support';
 import { displacementScale, renderDisplacementPixels } from '../dom/displacement';
-import { browserWorker, setInterimWorker, type WorkerLike } from '../dom/interim-build';
+import { browserWorker, createInterimBuilder, setInterimWorker, type WorkerLike } from '../dom/interim-build';
+import { renderSpectralPixels } from '../dom/spectral-map';
 import { renderInterim, type InterimJob, type InterimResult } from '../dom/interim-render';
 
 class FakeWorker implements WorkerLike {
@@ -80,6 +84,7 @@ function attach(extra: Parameters<typeof attachGlass>[1] = {}): GlassHandle {
 }
 
 beforeEach(() => {
+  spectral.on = false;
   decodes = [];
   made = 0;
   urls = [];
@@ -294,17 +299,18 @@ describe('two lenses share the worker', () => {
     b.setInterim(true);
     a.setMorph(shape(10));
     b.setMorph(shape(10));
-    expect(worker.jobs).toHaveLength(2);
+    expect(worker.jobs).toHaveLength(1);
     return [a, b];
   }
 
-  it('lands each answer on the lens that asked, whatever the order', async () => {
+  it('posts the second lens job once the first is answered, and lands each answer on the lens that asked', async () => {
     both();
-    await worker.answer(1);
     await worker.answer(0);
+    expect(worker.jobs).toHaveLength(2);
+    await worker.answer(1);
     await decodeAll();
-    expect(hrefOf(el2)).toBe(urls[0]);
-    expect(hrefOf(el)).toBe(urls[1]);
+    expect(hrefOf(el)).toBe(urls[0]);
+    expect(hrefOf(el2)).toBe(urls[1]);
   });
 
   it('drops the answer of a lens destroyed mid-build and leaves the other alone', async () => {
@@ -312,6 +318,7 @@ describe('two lenses share the worker', () => {
     a.destroy();
     await worker.answer(0);
     expect(revoked).toEqual([urls[0]]);
+    expect(worker.jobs).toHaveLength(2);
     await worker.answer(1);
     await decodeAll();
     expect(href()).toBe(urls[1]);
@@ -525,6 +532,106 @@ describe('without a worker, the main thread builds', () => {
     } finally {
       g.Worker = had.Worker;
       g.OffscreenCanvas = had.OffscreenCanvas;
+    }
+  });
+});
+
+describe('an interim job is a pair: the displacement map and the hue', () => {
+  const hueHref = () => document.querySelectorAll('svg[data-vireglass-filters] filter feImage')[1]?.getAttribute('href');
+
+  it('asks for the hue when the filter has one, and shows both only once both have decoded', async () => {
+    spectral.on = true;
+    const g = attach();
+    g.setInterim(true);
+    const before = { map: href(), hue: hueHref() };
+    g.setMorph(shape(10));
+    expect(worker.jobs[0]!.hue).toBe(true);
+    const result = await worker.answer(0);
+    expect((result as { hue: unknown }).hue).not.toBeNull();
+    expect(urls).toHaveLength(2);
+    expect(decodes.map((d) => d.url)).toEqual(urls);
+    decodes[0]!.resolve();
+    await flush();
+    expect(href()).toBe(before.map);
+    expect(hueHref()).toBe(before.hue);
+    await decodeAll();
+    expect(href()).toBe(urls[0]);
+    expect(hueHref()).toBe(urls[1]);
+    expect(renderStats().workerBakes).toBe(1);
+  });
+
+  it('asks for no hue when the material has none, and the pair has no hue', async () => {
+    const g = attach();
+    g.setInterim(true);
+    g.setMorph(shape(10));
+    expect(worker.jobs[0]!.hue).toBe(false);
+    expect(((await worker.answer(0)) as { hue: unknown }).hue).toBeNull();
+    expect(urls).toHaveLength(1);
+  });
+
+  it('revokes both URLs of a pair that arrives too late', async () => {
+    spectral.on = true;
+    const g = attach();
+    g.setInterim(true);
+    g.setMorph(shape(10));
+    g.setInterim(false);
+    await worker.answer(0);
+    expect(revoked).toEqual(urls);
+    expect(urls).toHaveLength(2);
+  });
+
+  it('renders the hue pixels the main thread would, on the morph silhouette', async () => {
+    spectral.on = true;
+    const g = attach();
+    g.setInterim(true);
+    g.setMorph({ smoothing: 14, shape: { offsetX: 0, offsetY: 70, width: 60, height: 60, cornerRadius: 30 } });
+    const job = worker.jobs[0]!;
+    const result = (await worker.answer(0)) as { hue: { blob: Blob; width: number; headroom: number } };
+    const sync = renderSpectralPixels(job.optics, job.geometry, job.dpr, job.state);
+    const sent = pixels.get(result.hue.blob)!;
+    expect(sent.width).toBe(sync.width);
+    expect(Array.from(sent.data)).toEqual(Array.from(sync.data));
+    expect(Array.from(sent.data)).not.toEqual(Array.from(renderSpectralPixels(job.optics, job.geometry, job.dpr).data));
+  });
+});
+
+describe('the worker timeout counts from the start of a job', () => {
+  const optics = resolveOptics(MATERIAL_PRESETS.glass);
+  const box = { width: 100, height: 60, cornerRadius: 10 };
+  const ask = (builder: ReturnType<typeof createInterimBuilder>) => builder.build(optics, box, 1, {}, false);
+
+  it('does not fire while jobs wait in the queue', async () => {
+    vi.useFakeTimers();
+    try {
+      const builder = createInterimBuilder(() => worker);
+      const done: number[] = [];
+      for (let i = 0; i < 3; i += 1) void ask(builder).then(() => done.push(i));
+      expect(worker.jobs).toHaveLength(1);
+      for (let i = 0; i < 3; i += 1) {
+        await vi.advanceTimersByTimeAsync(1500);
+        await worker.answer(i);
+      }
+      expect(done).toEqual([0, 1, 2]);
+      expect(worker.terminated).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('fires for a job that started and hangs, and rejects the jobs behind it', async () => {
+    vi.useFakeTimers();
+    try {
+      const builder = createInterimBuilder(() => worker);
+      const outcomes: string[] = [];
+      for (let i = 0; i < 2; i += 1) ask(builder).then(() => outcomes.push('done'), (e: Error) => outcomes.push(e.message));
+      await vi.advanceTimersByTimeAsync(1999);
+      expect(worker.terminated).toBe(false);
+      await vi.advanceTimersByTimeAsync(2);
+      expect(worker.terminated).toBe(true);
+      expect(outcomes).toHaveLength(2);
+      expect(worker.jobs).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
     }
   });
 });
