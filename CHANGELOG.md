@@ -1,6 +1,6 @@
 # Changelog
 
-## 3.6.1 (unreleased)
+## 3.6.1
 
 The deferred landing never puts rows and an encode in one task. DOM target only. A map whose rows fit in one slice went
 on to its PNG encode in the same task, and then into the next map's first slice, so one task held the displacement rows
