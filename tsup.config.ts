@@ -1,4 +1,5 @@
 import { defineConfig } from 'tsup';
+import { inlineWorkerEsbuild } from './scripts/inline-worker.mjs';
 
 export default defineConfig({
   entry: {
@@ -15,4 +16,5 @@ export default defineConfig({
   sourcemap: true,
   treeshake: true,
   target: 'es2022',
+  esbuildPlugins: [inlineWorkerEsbuild()],
 });
