@@ -12,7 +12,7 @@
 // See `docs/superpowers/specs/2026-09-19-vireglass-over-live-dom.md` for the technique and the
 // three findings that make it work (objectBoundingBox, prefiltering the source, the 8-bit step).
 import { ambientFrom, INK_DARK, INK_LIGHT, shouldInkBeLight, type BackdropSample } from '../adaptation';
-import { buildDisplacementMap, buildDisplacementMapInSlices, displacementScale, type DisplacementMap } from './displacement';
+import { buildDisplacementMap, buildDisplacementMapInSlices, displacementScale, type DisplacementMap, type DisplacementState } from './displacement';
 import { buildSpectralMap, buildSpectralMapInSlices, hasSpectralEdge, type SpectralMap } from './spectral-map';
 import { cached, isCached } from './map-cache';
 import { roundedRectGeometry, type VireGlassGeometry } from '../geometry';
@@ -20,6 +20,7 @@ import { resolveOptics, VIREGLASS_MATERIAL, type VireGlassMaterial, type VireGla
 import { probeBackdrop } from './probe';
 import { bump } from './stats';
 import { createLru, filterSignature, interimKey, quantise } from './interim';
+import { interimBuilder, releaseMap, type WorkerFailure } from './interim-build';
 import { supportsSvgBackdropFilter } from './support';
 import { boxShadowCss } from './shadow';
 import { bodyLayer, resolveBody, withPresence } from './body';
@@ -305,6 +306,11 @@ function decoded(url: string): Promise<void> {
   return typeof img.decode === 'function' ? img.decode().catch(() => undefined) : Promise.resolve();
 }
 
+function reportFailure(error: unknown): void {
+  if (typeof reportError === 'function') reportError(error);
+  else console.error(error);
+}
+
 /** Resolves in a task after the next frame has been drawn, or after 100 ms where no frame comes (a hidden page). */
 function afterNextFrame(): Promise<void> {
   return new Promise((resolve) => {
@@ -320,6 +326,16 @@ function afterNextFrame(): Promise<void> {
 }
 
 type InterimMap = { map: DisplacementMap; ready: boolean; geometry: VireGlassGeometry };
+
+type PendingBuild = {
+  key: string;
+  mine: number;
+  forFilter: SVGFilterElement;
+  optics: VireGlassOptics;
+  geometry: VireGlassGeometry;
+  dpr: number;
+  state: DisplacementState;
+};
 
 /** Interim with no call for this long ends itself: a morph that never reported landing must not
  *  leave the glass on a stretched map for good. */
@@ -494,7 +510,11 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   // A landing whose maps wait for the next frame; a second landing of the same maps joins it.
   let deferred: { key: string; filter: SVGFilterElement; mine: number } | null = null;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
-  const interimMaps = createLru<InterimMap>(8);
+  const interimMaps = createLru<InterimMap>(8, (rec) => releaseMap(rec.map.url));
+  // The newest interim key asked for, the worker build in flight, and the one to build when it lands.
+  let latestKey = '';
+  let building: PendingBuild | null = null;
+  let wanted: PendingBuild | null = null;
   let morph: GlassMorph | null = null;
   const onlyWhenTouched = opts.variant === 'interactive';
   let appear = onlyWhenTouched ? 0 : (opts.appear ?? 1);
@@ -618,15 +638,28 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       JSON.stringify([morph?.smoothing, morph?.shape, morph?.shape2, morph?.shapes]),
       `${full.refraction}:${full.refractionScale}:${full.bevelDp}`,
     );
-    let rec = interimMaps.get(key);
+    latestKey = key;
+    const dpr = Math.min(1, devicePixelRatio());
+    const rec = interimMaps.get(key);
+    if (!rec && interimBuilder().ready()) {
+      bump('reducedBakes');
+      wanted = { key, mine: (seq += 1), forFilter: filterEl, optics: full, geometry, dpr, state: morphState() };
+      if (!building) pump();
+      return;
+    }
     if (!rec) {
       bump('reducedBakes');
-      rec = { map: buildDisplacementMap(full, geometry, Math.min(1, devicePixelRatio()), morphState()), ready: false, geometry };
-      interimMaps.set(key, rec);
+      bump('mainThreadBakes');
+      const built = { map: buildDisplacementMap(full, geometry, dpr, morphState()), ready: false, geometry };
+      interimMaps.set(key, built);
+      showInterim((seq += 1), built, filterEl);
+      return;
     }
-    const mine = (seq += 1);
-    const record = rec;
-    const forFilter = filterEl;
+    wanted = null;
+    showInterim((seq += 1), rec, filterEl);
+  }
+
+  function showInterim(mine: number, record: InterimMap, forFilter: SVGFilterElement): void {
     const show = () => {
       if (destroyed || filterEl !== forFilter || mine <= shownSeq) return;
       shownSeq = mine;
@@ -640,6 +673,53 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       record.ready = true;
       show();
     });
+  }
+
+  function pump(): void {
+    const job = wanted;
+    wanted = null;
+    if (!job || destroyed || !interim || job.key !== latestKey || job.forFilter !== filterEl) return;
+    const hit = interimMaps.get(job.key);
+    if (hit) {
+      showInterim(job.mine, hit, job.forFilter);
+      return;
+    }
+    building = job;
+    interimBuilder()
+      .build(job.optics, job.geometry, job.dpr, job.state)
+      .then(
+        (map) => {
+          building = null;
+          bump('workerBakes');
+          landBuilt(job, map);
+          pump();
+        },
+        (error: WorkerFailure) => {
+          building = null;
+          if (!error.silent) reportFailure(error);
+          recoverOnMainThread(job);
+        },
+      );
+  }
+
+  function landBuilt(job: PendingBuild, map: DisplacementMap): void {
+    if (destroyed || filterEl !== job.forFilter || !interim || job.mine <= shownSeq) {
+      releaseMap(map.url);
+      return;
+    }
+    const rec: InterimMap = { map, ready: false, geometry: job.geometry };
+    interimMaps.set(job.key, rec);
+    showInterim(job.mine, rec, job.forFilter);
+  }
+
+  function recoverOnMainThread(job: PendingBuild): void {
+    wanted = null;
+    if (destroyed || !interim || filterEl !== job.forFilter) return;
+    try {
+      requestInterimMap();
+    } catch (error) {
+      reportFailure(error);
+    }
   }
 
   function apply(): void {
@@ -734,8 +814,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
                 if (ours() && !el.isConnected) rearm();
               } catch (error) {
                 if (ours()) rearm();
-                if (typeof reportError === 'function') reportError(error);
-                else console.error(error);
+                reportFailure(error);
               } finally {
                 if (deferred === entry) deferred = null;
               }
@@ -981,6 +1060,8 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
 
   function destroy(): void {
     destroyed = true;
+    wanted = null;
+    interimMaps.clear();
     invalidate();
     if (idleTimer !== null) clearTimeout(idleTimer);
     idleTimer = null;

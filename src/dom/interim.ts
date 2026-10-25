@@ -22,7 +22,7 @@ export function filterSignature(blur: number, ior: number, iorSpread: number, ha
 }
 
 /** A small least-recently-used store, so a long morph cannot evict the resting maps. */
-export function createLru<T>(limit: number) {
+export function createLru<T>(limit: number, onEvict?: (value: T) => void) {
   const store = new Map<string, T>();
   return {
     get(key: string): T | undefined {
@@ -33,12 +33,22 @@ export function createLru<T>(limit: number) {
       return hit;
     },
     set(key: string, value: T): void {
+      const old = store.get(key);
       store.delete(key);
+      if (old !== undefined && old !== value) onEvict?.(old);
       store.set(key, value);
       if (store.size > limit) {
-        const oldest = store.keys().next();
-        if (!oldest.done) store.delete(oldest.value);
+        const oldest = store.entries().next();
+        if (!oldest.done) {
+          store.delete(oldest.value[0]);
+          onEvict?.(oldest.value[1]);
+        }
       }
+    },
+    clear(): void {
+      const all = [...store.values()];
+      store.clear();
+      for (const value of all) onEvict?.(value);
     },
     get size(): number {
       return store.size;

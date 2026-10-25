@@ -5,11 +5,15 @@ export type RenderStats = {
   fullBakes: number;
   /** Displacement maps baked at reduced resolution: interim morphs and the finger path. */
   reducedBakes: number;
+  /** Interim maps built on the main thread: the fallback when the worker is unavailable. */
+  mainThreadBakes: number;
+  /** Interim maps the worker built and the main thread received. */
+  workerBakes: number;
   /** Filter elements put into the shared `<defs>`, replacing or adding. */
   filterSwaps: number;
 };
 
-const counts: RenderStats = { probes: 0, fullBakes: 0, reducedBakes: 0, filterSwaps: 0 };
+const counts: RenderStats = { probes: 0, fullBakes: 0, reducedBakes: 0, mainThreadBakes: 0, workerBakes: 0, filterSwaps: 0 };
 
 /** The work the renderer has done since the last reset; the hook for a consumer's performance gate. */
 export function renderStats(): RenderStats {
@@ -20,6 +24,8 @@ export function resetRenderStats(): void {
   counts.probes = 0;
   counts.fullBakes = 0;
   counts.reducedBakes = 0;
+  counts.mainThreadBakes = 0;
+  counts.workerBakes = 0;
   counts.filterSwaps = 0;
 }
 
