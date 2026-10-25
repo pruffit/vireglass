@@ -779,7 +779,7 @@ describe('interim and settled maps are one family', () => {
     await vi.advanceTimersByTimeAsync(300);
     await decodeAll();
     expect([href(), hueHref()]).toEqual(shown);
-    expect(renderStats()).toMatchObject({ fullBakes: 0, filterSwaps: 0, probes: 0, landedExact: 1 });
+    expect(renderStats()).toMatchObject({ fullBakes: 0, filterSwaps: 0, probes: 1, probesAtLand: 1, landedExact: 1 });
     expect(revoked).toEqual([]);
   });
 

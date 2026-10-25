@@ -116,7 +116,7 @@ function ensureRimStyles(host: Document | ShadowRoot): void {
   ensureColourProperties();
   style.textContent =
     rimLayerCss(`[${GLASS_ATTR}]`) +
-    `:where([data-vireglass-ease]){transition:--vireglass-ink-color ${EASE_MS}ms,--vireglass-tint-color ${EASE_MS}ms,--vireglass-body-color ${EASE_MS}ms,background-color ${EASE_MS}ms}` +
+    `:where([data-vireglass-ease]){transition:--vireglass-ink-color ${EASE_MS}ms,--vireglass-tint-color ${EASE_MS}ms,--vireglass-body-color ${EASE_MS}ms,background-color ${EASE_MS}ms,box-shadow ${EASE_MS}ms}` +
     // The touch glow (§5) lights the material from the point of contact. Below the content, above
     // the refraction — it is light inside the glass, not a film over the label.
     `[${GLASS_ATTR}]::before{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--vireglass-glow,none);opacity:var(--vireglass-glow-opacity,0)}`;
@@ -527,9 +527,9 @@ export type PrepareTarget = {
   morph?: GlassMorph | null;
   /** The final material, over the one the lens was attached with. */
   material?: Partial<VireGlassMaterial>;
-  /** The backdrop of the destination. At `land()` the lens takes its tint, ink, body, rim and shadow from it without probing. */
+  /** The backdrop of the destination: the colours start easing to it at `prepare`, and `land()` does not probe. */
   sample?: BackdropSample;
-  /** The destination's box in the viewport: with no `sample`, an idle lens probes there. */
+  /** The destination's box in the viewport: with no `sample`, the lens probes there once, after a frame. */
   rect?: { left: number; top: number; width: number; height: number };
 };
 
@@ -549,29 +549,11 @@ export type GlassHandle = {
   setMorph(morph: GlassMorph | null): void;
   /** Changes the material (a patch over the current one), the way a `prepare({ material })` expects its destination to be reached. */
   setMaterial(material: Partial<VireGlassMaterial>): void;
-  /**
-   * While on, the element is changing shape every frame (a morph, a drag, a growth). It stops
-   * probing the backdrop, stops baking on the main thread and keeps its filter. A change of the box,
-   * of `setMorph` shapes or of the material asks a worker for a pair of maps (displacement and
-   * hue), shown once both have decoded; the strength follows the live box meanwhile. Turning it
-   * off on a lens that shows the pair for its box changes nothing; otherwise it does one
-   * full-resolution rebuild and one probe. With no call for 2 s it turns itself off; calling it on again restarts
-   * the 2 s, which is how a host keeps a gesture held still interim. Turning it off twice does nothing. `setInterim(false)` is `land()`.
-   */
+  /** While on, the lens changes shape every frame: no probe, no main-thread bake, the same filter. With no call for 2 s it ends itself; `setInterim(false)` is `land()`. */
   setInterim(on: boolean): void;
-  /**
-   * Announces where the motion ends: the lens builds and decodes the pair of maps for `target` ahead (in the worker
-   * when there is one, with priority over interim maps), and holds it for `land()`. The newest call wins; a
-   * superseded pair goes to the cache and is never shown. Call it when the motion starts, or while idle for a
-   * destination that may be reached. `null` forgets it.
-   */
+  /** Announces where the motion ends, so its pair of maps and colours are ready by `land()`. The newest call wins; `null` forgets it. */
   prepare(target: PrepareTarget | null): void;
-  /**
-   * Ends interim on the prepared destination, or on the current box when nothing was prepared. A decoded pair is
-   * written in this task, with no timer, probe or bake, and returns `'exact'`. Otherwise the shown pair is blended
-   * into the destination's over about 120 ms as soon as it is ready, and returns `'blend'`. Call it in the
-   * motion's last frame, after the host has set the final box and `setMorph`.
-   */
+  /** Ends interim on the prepared destination, or on the current box: `'exact'` in this task when its pair is decoded, otherwise `'blend'`. */
   land(): 'exact' | 'blend';
   /** Resolves when the prepared pair is decoded, or has failed, or nothing is prepared. */
   whenPrepared(): Promise<void>;
@@ -619,6 +601,8 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   let interim = false;
   let settling = false;
   let lastSample: BackdropSample | null = null;
+  // A backdrop the colours move to in the next apply, eased, instead of one that is probed or held.
+  let toSample: BackdropSample | null = null;
   let seq = 0;
   let shownSeq = 0;
   // A landing whose maps wait for the next frame; a second landing of the same maps joins it.
@@ -1165,6 +1149,10 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     return isEmpty(g) ? null : describe(g, morph);
   }
 
+  function adoptSample(sample: BackdropSample | null): void {
+    if (sample && sample !== lastSample && !toSample) toSample = sample;
+  }
+
   const differs = (p: Prepared, d: { key: string; print: string }) => p.key !== d.key || p.print !== d.print;
 
   /** The lens changed under a landing: the destination becomes what it is now, and the pair on the filter stays until that one is ready. */
@@ -1273,6 +1261,10 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     let p = prepared;
     let sample: BackdropSample | null = null;
     let nearest: InterimMap | null = null;
+    if (!p && !supplied) {
+      bump('probesAtLand');
+      toSample = probe(el);
+    }
     if (p && differs(p, live)) {
       sample = p.sample;
       if (p.rec?.ready && !blend && structureHolds(p)) nearest = p.rec;
@@ -1282,7 +1274,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     }
     endInterim();
     if (p) {
-      if (p.sample) lastSample = p.sample;
+      adoptSample(p.sample);
       if (p.key === shownKey && structureHolds(p)) {
         prepared = null;
         maybeRelease(p.rec);
@@ -1301,7 +1293,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       }
       if (nearest) retarget(filterEl, nearest.map, nearest.hue, nearest, nearest.key);
       p = prepared = { token: (preparedToken += 1), ...live, sample, rec: null, failed: false };
-      if (sample) lastSample = sample;
+      adoptSample(sample);
       startPrepared(p);
       maybeRelease(nearest);
     }
@@ -1343,11 +1335,13 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     prepared = p;
     maybeRelease(old?.rec);
     startPrepared(p);
+    if (p.sample && interim) retint(p.sample);
     const rect = target.rect;
-    if (rect && !p.sample && !interim) {
+    if (rect && !p.sample) {
       void afterNextFrame().then(() => {
-        if (destroyed || prepared !== p || p.sample || interim) return;
+        if (destroyed || prepared !== p || p.sample) return;
         p.sample = probe(el, rect);
+        if (interim || landing === p) retint(p.sample);
       });
     }
   }
@@ -1357,6 +1351,12 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       waiters.push(resolve);
       settle();
     });
+  }
+
+  /** Moves the colours to `sample` over `EASE_MS`, for a destination whose backdrop is known before the lens gets there. */
+  function retint(sample: BackdropSample): void {
+    toSample = sample;
+    apply();
   }
 
   /** Eases the colours to a backdrop that really changed: not on a landing, a motion or a change of presence. */
@@ -1375,11 +1375,14 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     const geometry = opts.geometry ?? measureGeometry(el);
     const opticsNow = optics();
     const before = lastSample;
+    const incoming = toSample;
+    toSample = null;
     const held = (interim || landingNow) && lastSample;
-    if (landingNow && !supplied && !held) bump('probesAtLand');
-    const sample = supplied ?? (held ? lastSample! : probe(el));
+    if (landingNow && !supplied && !held && !incoming) bump('probesAtLand');
+    const sample = supplied ?? incoming ?? (held ? lastSample! : probe(el));
     lastSample = sample;
-    if (!interim && !landingNow && appear === lastAppear && before && sampleMoved(before, sample)) easeTo();
+    const moved = before && sampleMoved(before, sample);
+    if (incoming ? moved : !interim && !landingNow && appear === lastAppear && moved) easeTo();
     lastAppear = appear;
     const light = shouldInkBeLight(sample, wasLight);
     wasLight = light;
