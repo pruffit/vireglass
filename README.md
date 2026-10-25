@@ -163,8 +163,9 @@ every frame costs no bake and no new filter, at rest or interim.
 import { attachGlass, renderStats, resetRenderStats } from 'vireglass/dom';
 
 glass.setInterim(true);   // before a morph, a drag or a growth
+glass.prepare({ geometry: end, morph: endMorph, sample: endSample }); // where it ends, announced at the start
 // ...animate the element's box, and `setMorph` shapes if it flows into others...
-glass.setInterim(false);  // when it lands
+glass.land();             // in the last frame: 'exact', or 'blend' if the destination was not ready
 ```
 
 A glass element that changes shape every frame used to re-run the whole pipeline every frame: a
@@ -175,10 +176,13 @@ every frame. A change of the box, of the morph shapes passed to `setMorph` or of
 worker for a pair, the displacement map and the spectral hue map for that box, one build at a time and
 the newest wins. The pair is shown once both maps have decoded; until then the browser stretches the
 last one, and the refraction strength already follows the live box. Interim and settled maps share one
-key, so `setInterim(false)` on a lens that is showing the pair for its box changes nothing on screen,
-bakes nothing and, with a supplied `sample`, probes nothing; otherwise it does one full-resolution
-rebuild and one probe. Repeating `setInterim(false)` is a no-op. Without a worker the displacement map
-is built on the main thread, as before.
+key, so the pair built for the final box is the pair the lens rests on. `prepare(target)` builds and
+decodes the destination's pair ahead (priority over interim maps, the newest call wins), and `land()`
+writes it in the task of the call: no timer, probe or bake, and the frame after is the frame before.
+If the destination is not ready, `land()` blends from the shown pair into it over about 120 ms and
+returns `'blend'`. `setInterim(false)` is `land()`; it takes the held sample and does not probe, so call
+`update()` when the backdrop really changed (the colours ease over 200 ms). Without a worker the maps
+are built on the main thread in slices of 4 ms after a frame. See docs/dom.md.
 
 Always pair `setInterim(true)` with `setInterim(false)`. As a safety net an element that gets no call
 at all for 2 seconds (no resize, morph, appear or update) leaves interim by itself, exactly as
@@ -186,7 +190,7 @@ at all for 2 seconds (no resize, morph, appear or update) leaves interim by itse
 stretched map. A pause longer than that in the middle of a morph ends interim early. A gesture held
 still sends no geometry, so a host that keeps a drag or a press open longer than that calls `setInterim(true)` again while it lasts: each call restarts the 2 seconds.
 
-`renderStats()` returns `{ probes, fullBakes, reducedBakes, filterSwaps }`, counted since the last
+`renderStats()` returns `{ probes, fullBakes, reducedBakes, mainThreadBakes, workerBakes, filterSwaps, landedExact, landedBlend, probesAtLand, syncSwaps }`, counted since the last
 `resetRenderStats()`. Every map counts: a rebuild with a spectral edge is two full bakes, one for
 each map; a cache hit is none. It is the hook for a performance gate that counts work instead of
 timing it: drive a morph, then assert the counters stayed at zero.

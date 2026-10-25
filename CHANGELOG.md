@@ -32,6 +32,25 @@ and a motion that only changes the box gets maps of its own.
   differs from the last interim frame by more than one level, and the same run with the first box's maps put back
   differs at 5308 pixels.
 
+### Prepare and land (also 3.7.0)
+
+- `handle.prepare(target | null)`: the host announces the destination (`geometry`, `morph`, `material`, `sample`, `rect`)
+  when a motion starts. The pair is built and decoded ahead, in the worker with priority over interim jobs, or on the
+  main thread after a frame in slices of 4 ms when there is no worker. The newest call wins; a superseded result goes
+  to the cache and is never shown. `handle.whenPrepared()` resolves when it is ready.
+- `handle.land()` returns `'exact'` when the pair is decoded and writes it with the presentation in the same task: no
+  timer, probe, bake or filter swap. Otherwise it returns `'blend'`: a 120 ms mix from the shown pair into the
+  destination, written as attributes of two added `feImage`s and `feComposite`s, removed at the end.
+  `setInterim(false)` is `land()`, so it no longer probes: the held sample is kept (or the prepared one), and real
+  backdrop changes ease over 200 ms through registered `--vireglass-ink-color`, `-tint-color` and `-body-color`.
+- A hidden page installs the pair undecoded and settles on `visibilitychange`.
+- The decoded pairs of all lenses stay under about 24 MB; lenses off screen go first, and a pair a filter shows or a
+  landing holds is never released. The worker queue serves destinations before interim maps.
+- `renderStats()` gains `landedExact`, `landedBlend`, `probesAtLand` and `syncSwaps`.
+- `check:dom`: a morph with `prepare` at its start and `land()` in its last frame changes 0 pixels afterwards, with
+  the worker and without it, and no main-thread task of the run passes 16.7 ms (longest 5.2 ms with the worker, 6.7 ms
+  without); a morph without `prepare` lands as a blend and changes 650 pixels.
+
 ## 3.6.1
 
 The deferred landing never puts rows and an encode in one task. DOM target only. A map whose rows fit in one slice went

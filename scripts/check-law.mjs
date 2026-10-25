@@ -129,6 +129,8 @@ const NOT_CALIBRATION = new Map([
   ['HEADROOM', 'fixed-point headroom in the spectral map'],
   ['STOPS', 'how many stops a conic gradient is emitted with'],
   ['JOB_TIMEOUT_MS', 'how long the page waits for a worker before it builds on the main thread, not a property of the material'],
+  ['EASE_MS', 'how long the page eases a colour to a changed backdrop, a host-interface timing, not a property of the material'],
+  ['BLEND_MS', 'how long a landing mixes two pairs of maps, a host-interface timing, not a property of the material'],
   ['LIMIT', 'cache size'],
   ['SLICE_MS', 'how long a task renders map rows before it yields, traded against the time a map takes to land'],
   ['INTERIM_IDLE_MS', 'how long an interim mode may go without a call before it ends itself'],
