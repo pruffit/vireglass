@@ -33,6 +33,7 @@ class FakeWorker implements WorkerLike {
   terminated = false;
   onmessage: WorkerLike['onmessage'] = null;
   onerror: WorkerLike['onerror'] = null;
+  onmessageerror: WorkerLike['onmessageerror'] = null;
   postMessage(job: InterimJob): void {
     this.jobs.push(structuredClone(job));
   }
@@ -326,6 +327,35 @@ describe('two lenses share the worker', () => {
     expect(hrefOf(el2)).toMatch(/^main:/);
     expect(reported).toHaveLength(0);
     expect(worker.terminated).toBe(true);
+  });
+
+  it('gives both a map from the main thread when the worker stays silent past the timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      const lenses = both();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(worker.terminated).toBe(false);
+      for (const lens of lenses) lens.setInterim(true);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(worker.terminated).toBe(true);
+      await decodeAll();
+      expect(hrefOf(el)).toMatch(/^main:/);
+      expect(hrefOf(el2)).toMatch(/^main:/);
+      expect(reported).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('gives both a map from the main thread when a message cannot be read', async () => {
+    both();
+    worker.onmessageerror?.({});
+    await flush();
+    await decodeAll();
+    expect(worker.terminated).toBe(true);
+    expect(hrefOf(el)).toMatch(/^main:/);
+    expect(hrefOf(el2)).toMatch(/^main:/);
+    expect(reported).toHaveLength(0);
   });
 
   it('reports a failed job once, by the lens whose job it was, and the other falls back silently', async () => {

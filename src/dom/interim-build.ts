@@ -10,7 +10,10 @@ export type WorkerLike = {
   terminate(): void;
   onmessage: ((event: { data: InterimResult }) => void) | null;
   onerror: ((event: unknown) => void) | null;
+  onmessageerror?: ((event: unknown) => void) | null;
 };
+
+const JOB_TIMEOUT_MS = 2000;
 
 /** `silent`: the worker itself failed (a refused blob worker, a crash) rather than one job, which is not worth a report. */
 export type WorkerFailure = Error & { silent?: boolean };
@@ -39,7 +42,12 @@ export function createInterimBuilder(make: () => WorkerLike | null) {
   let worker: WorkerLike | null = null;
   let off = false;
   let nextId = 0;
-  const waiting = new Map<number, { resolve: (map: DisplacementMap) => void; reject: (error: WorkerFailure) => void }>();
+  type Entry = {
+    resolve: (map: DisplacementMap) => void;
+    reject: (error: WorkerFailure) => void;
+    timer: ReturnType<typeof setTimeout>;
+  };
+  const waiting = new Map<number, Entry>();
 
   function disable(error: WorkerFailure): void {
     off = true;
@@ -47,7 +55,10 @@ export function createInterimBuilder(make: () => WorkerLike | null) {
     worker = null;
     const all = [...waiting.values()];
     waiting.clear();
-    for (const entry of all) entry.reject(error);
+    for (const entry of all) {
+      clearTimeout(entry.timer);
+      entry.reject(error);
+    }
   }
 
   function start(): WorkerLike | null {
@@ -66,6 +77,7 @@ export function createInterimBuilder(make: () => WorkerLike | null) {
       const entry = waiting.get(data.id);
       if (!entry) return;
       waiting.delete(data.id);
+      clearTimeout(entry.timer);
       if ('error' in data) {
         entry.reject(new Error(data.error));
         disable(silent('vireglass/dom: the interim worker failed on another job'));
@@ -74,6 +86,7 @@ export function createInterimBuilder(make: () => WorkerLike | null) {
       entry.resolve({ url: URL.createObjectURL(data.blob), width: data.width, height: data.height, scale: data.scale });
     };
     worker.onerror = () => disable(silent('vireglass/dom: the interim worker failed'));
+    worker.onmessageerror = () => disable(silent('vireglass/dom: the interim worker sent an unreadable message'));
     return worker;
   }
 
@@ -87,11 +100,13 @@ export function createInterimBuilder(make: () => WorkerLike | null) {
       if (!target) return Promise.reject(silent('vireglass/dom: no interim worker'));
       const id = (nextId += 1);
       return new Promise((resolve, reject) => {
-        waiting.set(id, { resolve, reject });
+        const timer = setTimeout(() => disable(silent('vireglass/dom: the interim worker did not answer')), JOB_TIMEOUT_MS);
+        waiting.set(id, { resolve, reject, timer });
         try {
           target.postMessage({ id, optics, geometry, dpr, state });
         } catch (error) {
           waiting.delete(id);
+          clearTimeout(timer);
           reject(error instanceof Error ? error : new Error(String(error)));
           disable(silent('vireglass/dom: the interim worker refused a job'));
         }

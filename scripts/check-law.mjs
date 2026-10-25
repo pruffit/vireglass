@@ -128,6 +128,7 @@ const NOT_CALIBRATION = new Map([
   ['DEPTH_STEPS', 'how finely the hue is tabled along the depth, traded against build cost'],
   ['HEADROOM', 'fixed-point headroom in the spectral map'],
   ['STOPS', 'how many stops a conic gradient is emitted with'],
+  ['JOB_TIMEOUT_MS', 'how long the page waits for a worker before it builds on the main thread, not a property of the material'],
   ['LIMIT', 'cache size'],
   ['SLICE_MS', 'how long a task renders map rows before it yields, traded against the time a map takes to land'],
   ['INTERIM_IDLE_MS', 'how long an interim mode may go without a call before it ends itself'],
