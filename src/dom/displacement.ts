@@ -79,6 +79,11 @@ export type DisplacementState = {
   morphs?: readonly MorphShape[];
 };
 
+/** One list, whichever way the caller expressed the shapes. */
+export function morphShapes(state: DisplacementState): (MorphShape | undefined)[] {
+  return [state.morph, state.morph2, ...(state.morphs ?? [])];
+}
+
 /**
  * The `feDisplacementMap` scale for these optics. The map's pixels are a fraction of it and do not
  * depend on it, so a change of strength alone, such as appear, is this attribute and not a bake.
@@ -117,8 +122,7 @@ export function displacementRows(optics: VireGlassOptics, geometry: VireGlassGeo
   const height = Math.max(1, Math.round(geometry.height * density));
   const scale = displacementScale(optics, geometry);
   const smoothing = state.smoothing ?? 0;
-  // One list, whichever way the caller expressed it.
-  const shapes: (MorphShape | undefined)[] = [state.morph, state.morph2, ...(state.morphs ?? [])];
+  const shapes = morphShapes(state);
 
   const data = new Uint8ClampedArray(width * height * 4);
   const halfW = geometry.width / 2;

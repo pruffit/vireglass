@@ -12,7 +12,8 @@
 import { bevelDp, rimDp, thicknessDp, type VireGlassGeometry } from '../geometry';
 import type { VireGlassOptics } from '../material';
 import { pngFromPixels, renderInSlices, yieldTask, type Rows } from './bake';
-import { sdfRoundedRect } from '../sdf';
+import { sceneDistance } from '../sdf';
+import { morphShapes, type DisplacementState } from './displacement';
 import { spectralHue } from '../spectral';
 
 export type SpectralMap = { url: string; width: number; height: number; headroom: number };
@@ -52,8 +53,8 @@ function hueAlongDepth(bevel: number, rim: number, thick: number, optics: VireGl
   return table;
 }
 
-export function renderSpectralPixels(optics: VireGlassOptics, geometry: VireGlassGeometry, dpr: number): SpectralPixels {
-  const map = spectralRows(optics, geometry, dpr);
+export function renderSpectralPixels(optics: VireGlassOptics, geometry: VireGlassGeometry, dpr: number, state: DisplacementState = {}): SpectralPixels {
+  const map = spectralRows(optics, geometry, dpr, state);
   map.rows(0, map.height);
   return map.done();
 }
@@ -61,7 +62,7 @@ export function renderSpectralPixels(optics: VireGlassOptics, geometry: VireGlas
 export type SpectralPixels = { data: Uint8ClampedArray; width: number; height: number; headroom: number };
 
 /** `renderSpectralPixels` a row at a time: the same pixels whichever rows are rendered when. */
-export function spectralRows(optics: VireGlassOptics, geometry: VireGlassGeometry, dpr: number): Rows<SpectralPixels> {
+export function spectralRows(optics: VireGlassOptics, geometry: VireGlassGeometry, dpr: number, state: DisplacementState = {}): Rows<SpectralPixels> {
   const bevel = bevelDp(geometry, optics);
   const density = mapDensity(bevel, dpr);
   const width = Math.max(1, Math.round(geometry.width * density));
@@ -78,6 +79,8 @@ export function spectralRows(optics: VireGlassOptics, geometry: VireGlassGeometr
   // Past the bevel the glass is plain: a neutral multiplier, not a missing one.
   new Uint32Array(data.buffer).fill(new Uint32Array(new Uint8ClampedArray([neutral, neutral, neutral, 255]).buffer)[0]!);
   const corner = Math.max(geometry.cornerRadius, bevel);
+  const smoothing = state.smoothing ?? 0;
+  const shapes = morphShapes(state);
 
   const rows = (from: number, to: number) => {
     for (let py = from; py < Math.min(to, height); py += 1) {
@@ -89,7 +92,7 @@ export function spectralRows(optics: VireGlassOptics, geometry: VireGlassGeometr
         const x = (px + 0.5) / density - halfW;
         if (Math.abs(x) <= plain) continue;
         const i = (py * width + px) * 4;
-        const sd = sdfRoundedRect(x, y, geometry.width, geometry.height, geometry.cornerRadius);
+        const sd = sceneDistance(x, y, geometry.width, geometry.height, geometry.cornerRadius, smoothing, ...shapes);
         const e = Math.max(-sd, 0);
         if (e >= bevel) continue;
         const u = Math.sqrt(e / bevel) * DEPTH_STEPS;
@@ -117,20 +120,21 @@ export function buildSpectralMap(
   optics: VireGlassOptics,
   geometry: VireGlassGeometry,
   dpr: number,
+  state: DisplacementState = {},
 ): SpectralMap {
   if (typeof document === 'undefined' || typeof document.createElement !== 'function') {
     throw new Error('vireglass/dom: buildSpectralMap requires a DOM (canvas)');
   }
-  const { data, width, height, headroom } = renderSpectralPixels(optics, geometry, dpr);
+  const { data, width, height, headroom } = renderSpectralPixels(optics, geometry, dpr, state);
   return { url: pngFromPixels(data, width, height), width, height, headroom };
 }
 
 /** `buildSpectralMap` spread over several tasks, none of them longer than a slice. */
-export async function buildSpectralMapInSlices(optics: VireGlassOptics, geometry: VireGlassGeometry, dpr: number): Promise<SpectralMap> {
+export async function buildSpectralMapInSlices(optics: VireGlassOptics, geometry: VireGlassGeometry, dpr: number, state: DisplacementState = {}): Promise<SpectralMap> {
   if (typeof document === 'undefined' || typeof document.createElement !== 'function') {
     throw new Error('vireglass/dom: buildSpectralMap requires a DOM (canvas)');
   }
-  const { data, width, height, headroom } = await renderInSlices(spectralRows(optics, geometry, dpr));
+  const { data, width, height, headroom } = await renderInSlices(spectralRows(optics, geometry, dpr, state));
   const url = pngFromPixels(data, width, height);
   await yieldTask();
   return { url, width, height, headroom };
