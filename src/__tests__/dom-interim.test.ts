@@ -24,10 +24,11 @@ describe('map keys', () => {
     expect(key(100, 50, 12, 'm', 2, { ...optics, blur: optics.blur + 3, ior: optics.ior + 0.1 })).toBe(key(100, 50, 12));
   });
 
-  it('tells filter structures apart', () => {
-    expect(filterSignature(2, 1.5, 0.1, true)).toBe(filterSignature(2, 1.5, 0.1, true));
-    expect(filterSignature(2, 1.5, 0.1, true)).not.toBe(filterSignature(2, 1.5, 0.1, false));
-    expect(filterSignature(2, 1.5, 0, false)).toBe(filterSignature(2, 1.5, 1e-6, false));
+  it('tells filter structures apart by dispersion and hue being on or off, and by nothing else', () => {
+    expect(filterSignature(0.1, true)).toBe(filterSignature(0.4, true));
+    expect(filterSignature(0.1, true)).not.toBe(filterSignature(0.1, false));
+    expect(filterSignature(0.1, false)).not.toBe(filterSignature(0, false));
+    expect(filterSignature(0, false)).toBe(filterSignature(1e-6, false));
   });
 });
 

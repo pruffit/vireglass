@@ -790,3 +790,40 @@ describe('geometry-only motion gets interim pairs', () => {
     expect(renderStats().mainThreadBakes).toBe(1);
   });
 });
+
+describe('a material step rewrites attributes and keeps the filter', () => {
+  const filter = () => document.querySelector('svg[data-vireglass-filters] filter')!;
+  const attrs = () => ({
+    blur: filter().querySelector('feGaussianBlur')!.getAttribute('stdDeviation'),
+    ratios: [...filter().querySelectorAll('feDisplacementMap')].map((p) => p.getAttribute('data-vireglass-ratio')),
+    scales: [...filter().querySelectorAll('feDisplacementMap')].map((p) => p.getAttribute('scale')),
+  });
+
+  it('changes blur, ior ratios and scales in place, with no swap and no bake, in interim and on leaving it', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'requestAnimationFrame', 'cancelAnimationFrame'] });
+    const material = { ...MATERIAL_PRESETS.glass };
+    const g = attach({ material });
+    g.setInterim(true);
+    const node = filter();
+    const before = attrs();
+    expect(before.ratios).toHaveLength(3);
+    resetRenderStats();
+    material.roughness = 0.9;
+    material.ior = 1.75;
+    g.update();
+    const during = attrs();
+    expect(during.blur).not.toBe(before.blur);
+    expect(during.ratios).not.toEqual(before.ratios);
+    expect(during.scales).not.toEqual(before.scales);
+    expect(filter()).toBe(node);
+    expect(renderStats()).toMatchObject({ filterSwaps: 0, fullBakes: 0 });
+
+    g.setInterim(false);
+    expect(renderStats()).toMatchObject({ filterSwaps: 0, fullBakes: 0, mainThreadBakes: 0 });
+    expect(filter()).toBe(node);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(renderStats().filterSwaps).toBe(0);
+    expect(filter()).toBe(node);
+    expect(attrs()).toEqual(during);
+  });
+});

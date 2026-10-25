@@ -28,11 +28,11 @@ export function mapKeyFor(snapped: VireGlassGeometry, morph: string, o: MapOptic
 }
 
 /**
- * What a filter's structure depends on. A filter with the same signature can take a new map in
- * place; a different one has to be rebuilt.
+ * What a filter's structure depends on: dispersion on or off, and the hue on or off. Blur, the ior ratios and the
+ * hue's weights are attributes, rewritten in place, so a filter with the same signature takes any material.
  */
-export function filterSignature(blur: number, ior: number, iorSpread: number, hasHue: boolean): string {
-  return `${blur}|${ior}|${iorSpread > 1e-4 ? iorSpread : 0}|${hasHue ? 'h' : '-'}`;
+export function filterSignature(iorSpread: number, hasHue: boolean): string {
+  return `${iorSpread > 1e-4 ? 'd' : '-'}${hasHue ? 'h' : '-'}`;
 }
 
 /** A small least-recently-used store, so a long morph cannot evict the resting maps. */

@@ -138,6 +138,16 @@ function writeAttr(node: Element, name: string, value: string): void {
   if (node.getAttribute(name) !== value) node.setAttribute(name, value);
 }
 
+type Channel = 'dR' | 'dG' | 'dB';
+
+/** A channel's share of the base displacement: its index shifts with the dispersion (docs/reference.md §1). */
+function channelRatio(optics: VireGlassOptics, channel: Channel): number {
+  if (channel === 'dG' || optics.iorSpread <= 1e-4) return 1;
+  const base = refractionStrength(optics.ior);
+  const shift = (channel === 'dR' ? DISPERSION.redShift : DISPERSION.blueShift) * optics.iorSpread;
+  return base > 0 ? refractionStrength(optics.ior + shift) / base : 1;
+}
+
 /**
  * Finding #1 (do not re-litigate): `objectBoundingBox` with an explicit unit box. `userSpaceOnUse`
  * measures from something other than the element's own box and the displacement smears across
@@ -183,12 +193,10 @@ function buildFilterElement(
   // for.
   const spread = optics.iorSpread;
   if (spread > 1e-4) {
-    const base = refractionStrength(optics.ior);
-    const ratio = (shift: number) => (base > 0 ? refractionStrength(optics.ior + shift) / base : 1);
-    const channels: Array<[string, number, string]> = [
-      ['dR', scale * ratio(DISPERSION.redShift * spread), '1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0'],
+    const channels: Array<[Channel, number, string]> = [
+      ['dR', scale * channelRatio(optics, 'dR'), '1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0'],
       ['dG', scale, '0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0'],
-      ['dB', scale * ratio(DISPERSION.blueShift * spread), '0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0'],
+      ['dB', scale * channelRatio(optics, 'dB'), '0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0'],
     ];
     for (const [name, chScale, matrix] of channels) {
       const pass = document.createElementNS(SVG_NS, 'feDisplacementMap');
@@ -202,6 +210,7 @@ function buildFilterElement(
       // element itself: under a press the scale is recomputed every frame, with nowhere else to
       // recover the shares from.
       pass.setAttribute('data-vireglass-ratio', String(scale > 0 ? chScale / scale : 1));
+      pass.setAttribute('data-vireglass-channel', name);
       const only = document.createElementNS(SVG_NS, 'feColorMatrix');
       only.setAttribute('in', `${name}raw`);
       only.setAttribute('type', 'matrix');
@@ -639,8 +648,11 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   function present(f: SVGFilterElement, live?: VireGlassGeometry): void {
     const o = optics();
     const scale = displacementScale(o, live ?? opts.geometry ?? measureGeometry(el));
+    const full = settledOptics();
     // EVERY pass, with its own share of the scale: see paintInteraction.
     for (const pass of f.querySelectorAll('feDisplacementMap')) {
+      const channel = pass.getAttribute('data-vireglass-channel') as Channel | null;
+      if (channel) writeAttr(pass, 'data-vireglass-ratio', String(channelRatio(full, channel)));
       const ratio = Number(pass.getAttribute('data-vireglass-ratio') ?? 1);
       writeAttr(pass, 'scale', String(scale * (Number.isFinite(ratio) ? ratio : 1)));
     }
@@ -811,7 +823,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
           const built = await buildSpectralMapInSlices(full, snapped, dpr, morphNow);
           return cached(`h|${key}`, () => (bump('fullBakes'), built));
         };
-        const signature = filterSignature(full.blur, full.ior, full.iorSpread, spectral);
+        const signature = filterSignature(full.iorSpread, spectral);
         if (settling && filterEl?.getAttribute('data-vireglass-signature') === signature) {
           settling = false;
           const forFilter = filterEl;
