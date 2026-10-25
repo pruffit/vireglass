@@ -14,7 +14,15 @@ export type WorkerLike = {
   onmessageerror?: ((event: unknown) => void) | null;
 };
 
-const JOB_TIMEOUT_MS = 2000;
+const JOB_TIMEOUT_FLOOR_MS = 2000;
+const TIMEOUT_MS_PER_MEGAPIXEL = 1500;
+const STRIKES_BEFORE_OFF = 2;
+
+/** A job's allowance grows with the pixels it renders (the hue doubles them), so a big sheet is not mistaken for a hang. */
+export function jobTimeoutMs(job: Pick<InterimJob, 'geometry' | 'dpr' | 'hue'>): number {
+  const pixels = Math.ceil(job.geometry.width * job.dpr) * Math.ceil(job.geometry.height * job.dpr) * (job.hue ? 2 : 1);
+  return Math.max(JOB_TIMEOUT_FLOOR_MS, Math.round((pixels / 1e6) * TIMEOUT_MS_PER_MEGAPIXEL));
+}
 
 export type InterimPair = { map: DisplacementMap; hue: SpectralMap | null };
 
@@ -25,7 +33,7 @@ export type BuildPriority = 'destination' | 'interim';
 export type PendingPair = Promise<InterimPair> & { cancel(): boolean };
 
 /** `silent`: the worker itself failed (a refused blob worker, a crash) rather than one job, which is not worth a report. */
-export type WorkerFailure = Error & { silent?: boolean; superseded?: boolean };
+export type WorkerFailure = Error & { silent?: boolean; superseded?: boolean; timedOut?: boolean };
 
 export function browserWorker(): WorkerLike | null {
   if (typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined') return null;
@@ -62,6 +70,8 @@ export function createInterimBuilder(make: () => WorkerLike | null) {
   // One job at a time reaches the worker, so a job's timeout counts the worker's own work and not the jobs queued ahead of it.
   const queue: number[] = [];
   let active: number | null = null;
+  // Consecutive jobs that hung: one falls back to the main thread on a fresh worker, a second turns the worker off.
+  let strikes = 0;
 
   function disable(error: WorkerFailure): void {
     off = true;
@@ -77,16 +87,35 @@ export function createInterimBuilder(make: () => WorkerLike | null) {
     }
   }
 
+  function timedOut(id: number): void {
+    strikes += 1;
+    if (strikes >= STRIKES_BEFORE_OFF) {
+      disable(silent('vireglass/dom: the interim worker did not answer'));
+      return;
+    }
+    const entry = waiting.get(id);
+    waiting.delete(id);
+    active = null;
+    worker?.terminate();
+    worker = null;
+    entry?.reject(Object.assign(silent('vireglass/dom: the interim worker did not answer'), { timedOut: true }));
+    dispatch();
+  }
+
   function dispatch(): void {
     if (active !== null) return;
     const first = queue.findIndex((queued) => waiting.get(queued)?.priority === 'destination');
     const id = queue.splice(first < 0 ? 0 : first, 1)[0];
     if (id === undefined) return;
     const entry = waiting.get(id);
-    const target = worker;
-    if (!entry || !target) return;
+    if (!entry) return;
+    const target = start();
+    if (!target) {
+      disable(silent('vireglass/dom: no interim worker'));
+      return;
+    }
     active = id;
-    entry.timer = setTimeout(() => disable(silent('vireglass/dom: the interim worker did not answer')), JOB_TIMEOUT_MS);
+    entry.timer = setTimeout(() => timedOut(id), jobTimeoutMs(entry.job));
     try {
       target.postMessage(entry.job);
     } catch (error) {
@@ -121,6 +150,7 @@ export function createInterimBuilder(make: () => WorkerLike | null) {
         disable(silent('vireglass/dom: the interim worker failed on another job'));
         return;
       }
+      strikes = 0;
       entry.resolve({
         map: { url: URL.createObjectURL(data.blob), width: data.width, height: data.height, scale: data.scale },
         hue: data.hue

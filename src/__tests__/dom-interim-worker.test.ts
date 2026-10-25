@@ -42,7 +42,7 @@ import { attachGlass, clearMapCache, renderStats, resetRenderStats, type GlassHa
 import { MATERIAL_PRESETS, resolveOptics } from '../index';
 import { resetSupportCache } from '../dom/support';
 import { displacementScale, renderDisplacementPixels } from '../dom/displacement';
-import { browserWorker, createInterimBuilder, setInterimWorker, type WorkerLike } from '../dom/interim-build';
+import { browserWorker, createInterimBuilder, jobTimeoutMs, setInterimWorker, type WorkerLike } from '../dom/interim-build';
 import { renderSpectralPixels } from '../dom/spectral-map';
 import { renderInterim, type InterimJob, type InterimResult } from '../dom/interim-render';
 
@@ -354,7 +354,7 @@ describe('two lenses share the worker', () => {
     expect(worker.terminated).toBe(true);
   });
 
-  it('gives both a map from the main thread when the worker stays silent past the timeout', async () => {
+  it('gives both a map from the main thread when the worker stays silent through two timeouts', async () => {
     vi.useFakeTimers();
     try {
       const lenses = both();
@@ -363,6 +363,8 @@ describe('two lenses share the worker', () => {
       for (const lens of lenses) lens.setInterim(true);
       await vi.advanceTimersByTimeAsync(1000);
       expect(worker.terminated).toBe(true);
+      expect(worker.jobs).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(2000);
       await decodeAll();
       expect(hrefOf(el)).toMatch(/^main:/);
       expect(hrefOf(el2)).toMatch(/^main:/);
@@ -636,7 +638,7 @@ describe('the worker timeout counts from the start of a job', () => {
     }
   });
 
-  it('fires for a job that started and hangs, and rejects the jobs behind it', async () => {
+  it('fires for a job that started and hangs: that job falls back and the next one goes to a fresh worker', async () => {
     vi.useFakeTimers();
     try {
       const builder = createInterimBuilder(() => worker);
@@ -646,8 +648,81 @@ describe('the worker timeout counts from the start of a job', () => {
       expect(worker.terminated).toBe(false);
       await vi.advanceTimersByTimeAsync(2);
       expect(worker.terminated).toBe(true);
-      expect(outcomes).toHaveLength(2);
-      expect(worker.jobs).toHaveLength(1);
+      expect(outcomes).toHaveLength(1);
+      expect(worker.jobs).toHaveLength(2);
+      worker.terminated = false;
+      await worker.answer(1);
+      expect(outcomes).toEqual([expect.stringContaining('did not answer'), 'done']);
+      expect(builder.ready()).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('turns the worker off for good on a second timeout in a row, and rejects the jobs behind it', async () => {
+    vi.useFakeTimers();
+    try {
+      const builder = createInterimBuilder(() => worker);
+      const outcomes: string[] = [];
+      for (let i = 0; i < 3; i += 1) ask(builder).then(() => outcomes.push('done'), (e: Error) => outcomes.push(e.message));
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(builder.ready()).toBe(true);
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(outcomes).toHaveLength(3);
+      expect(builder.ready()).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('bakes the job that timed out on the main thread, and the next one still goes to the worker', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'requestAnimationFrame', 'cancelAnimationFrame'] });
+    try {
+      const g = attach();
+      g.setInterim(true);
+      g.setMorph(shape(10));
+      await vi.advanceTimersByTimeAsync(1500);
+      g.setInterim(true);
+      await vi.advanceTimersByTimeAsync(600);
+      await decodeAll();
+      expect(href()).toMatch(/^main:/);
+      expect(renderStats().mainThreadBakes).toBe(1);
+      g.setMorph(shape(20));
+      expect(worker.jobs).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('forgets a timeout once a job is answered', async () => {
+    vi.useFakeTimers();
+    try {
+      const builder = createInterimBuilder(() => worker);
+      void ask(builder).catch(() => undefined);
+      await vi.advanceTimersByTimeAsync(2001);
+      const second = ask(builder);
+      await worker.answer(1);
+      await second;
+      void ask(builder).catch(() => undefined);
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(builder.ready()).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('gives a job more time as it grows: the allowance follows its pixels, with a floor', async () => {
+    expect(jobTimeoutMs({ geometry: box, dpr: 1, hue: false })).toBe(2000);
+    const big = { geometry: { width: 1600, height: 1200, cornerRadius: 20 }, dpr: 2, hue: true };
+    expect(jobTimeoutMs(big)).toBeGreaterThan(10_000);
+    vi.useFakeTimers();
+    try {
+      const builder = createInterimBuilder(() => worker);
+      void builder.build(optics, big.geometry, big.dpr, {}, true).catch(() => undefined);
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(worker.terminated).toBe(false);
+      await vi.advanceTimersByTimeAsync(jobTimeoutMs(big));
+      expect(worker.terminated).toBe(true);
     } finally {
       vi.useRealTimers();
     }

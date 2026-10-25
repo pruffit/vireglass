@@ -792,7 +792,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     }
   }
 
-  function requestInterimMap(measured?: VireGlassGeometry): void {
+  function requestInterimMap(measured?: VireGlassGeometry, onMainThread = false): void {
     if (!svgSupported || !filterEl || destroyed) return;
     const live = measured ?? opts.geometry ?? measureGeometry(el);
     if (isEmpty(live)) return;
@@ -804,7 +804,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     latestKey = key;
     const hue = hasSpectralEdge(full) && filterEl.querySelectorAll('feImage').length > 1;
     let rec = adoptable(key, hue) ?? cachedRec(key, full, geometry, dpr, morphState(), hue);
-    if (!rec && interimBuilder().ready()) {
+    if (!rec && !onMainThread && interimBuilder().ready()) {
       bump('reducedBakes');
       wanted = { key, mine: (seq += 1), forFilter: filterEl, optics: full, geometry, dpr, state: morphState(), hue };
       if (!building) pump();
@@ -857,7 +857,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
         (error: WorkerFailure) => {
           building = null;
           if (!error.silent) reportFailure(error);
-          recoverOnMainThread(job);
+          recoverOnMainThread(job, error.timedOut);
         },
       );
   }
@@ -873,12 +873,12 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     showInterim(job.mine, rec, job.forFilter);
   }
 
-  function recoverOnMainThread(job: PendingBuild): void {
+  function recoverOnMainThread(job: PendingBuild, onMainThread = false): void {
     wanted = null;
     if (destroyed || !interim || filterEl !== job.forFilter) return;
     latestKey = '';
     try {
-      requestInterimMap();
+      requestInterimMap(undefined, onMainThread);
     } catch (error) {
       reportFailure(error);
     }
