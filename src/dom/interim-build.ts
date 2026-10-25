@@ -18,8 +18,14 @@ const JOB_TIMEOUT_MS = 2000;
 
 export type InterimPair = { map: DisplacementMap; hue: SpectralMap | null };
 
+/** A destination ahead of its landing goes to the worker before an interim map of a motion in progress. */
+export type BuildPriority = 'destination' | 'interim';
+
+/** A build that can be taken back while it still waits for the worker: false once the worker has it. */
+export type PendingPair = Promise<InterimPair> & { cancel(): boolean };
+
 /** `silent`: the worker itself failed (a refused blob worker, a crash) rather than one job, which is not worth a report. */
-export type WorkerFailure = Error & { silent?: boolean };
+export type WorkerFailure = Error & { silent?: boolean; superseded?: boolean };
 
 export function browserWorker(): WorkerLike | null {
   if (typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined') return null;
@@ -47,6 +53,7 @@ export function createInterimBuilder(make: () => WorkerLike | null) {
   let nextId = 0;
   type Entry = {
     job: InterimJob;
+    priority: BuildPriority;
     resolve: (pair: InterimPair) => void;
     reject: (error: WorkerFailure) => void;
     timer?: ReturnType<typeof setTimeout>;
@@ -72,7 +79,8 @@ export function createInterimBuilder(make: () => WorkerLike | null) {
 
   function dispatch(): void {
     if (active !== null) return;
-    const id = queue.shift();
+    const first = queue.findIndex((queued) => waiting.get(queued)?.priority === 'destination');
+    const id = queue.splice(first < 0 ? 0 : first, 1)[0];
     if (id === undefined) return;
     const entry = waiting.get(id);
     const target = worker;
@@ -131,14 +139,30 @@ export function createInterimBuilder(make: () => WorkerLike | null) {
     ready(): boolean {
       return start() !== null;
     },
-    build(optics: VireGlassOptics, geometry: VireGlassGeometry, dpr: number, state: DisplacementState, hue: boolean): Promise<InterimPair> {
-      if (!start()) return Promise.reject(silent('vireglass/dom: no interim worker'));
+    build(
+      optics: VireGlassOptics,
+      geometry: VireGlassGeometry,
+      dpr: number,
+      state: DisplacementState,
+      hue: boolean,
+      priority: BuildPriority = 'interim',
+    ): PendingPair {
+      if (!start()) return Object.assign(Promise.reject(silent('vireglass/dom: no interim worker')), { cancel: () => false });
       const id = (nextId += 1);
-      return new Promise((resolve, reject) => {
-        waiting.set(id, { job: { id, optics, geometry, dpr, state, hue }, resolve, reject });
+      const pending = new Promise<InterimPair>((resolve, reject) => {
+        waiting.set(id, { job: { id, optics, geometry, dpr, state, hue }, priority, resolve, reject });
         queue.push(id);
         dispatch();
       });
+      const cancel = () => {
+        const entry = waiting.get(id);
+        if (!entry || active === id) return false;
+        waiting.delete(id);
+        queue.splice(queue.indexOf(id), 1);
+        entry.reject(Object.assign(silent('vireglass/dom: the build was taken back'), { superseded: true }));
+        return true;
+      };
+      return Object.assign(pending, { cancel });
     },
   };
 }

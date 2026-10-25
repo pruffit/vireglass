@@ -104,7 +104,7 @@ describe('a landing runs at most one slice of rows or one encode per task', () =
     g.update();
     log.events = [];
     const before = hrefs();
-    g.setInterim(false);
+    vi.advanceTimersByTime(2000);
     handle = g;
     await vi.advanceTimersByTimeAsync(100);
     expect(log.events.slice(log.events.indexOf('rows'))).toEqual(SHAPE);

@@ -11,7 +11,7 @@
 // coloured one.
 import { bevelDp, rimDp, thicknessDp, type VireGlassGeometry } from '../geometry';
 import type { VireGlassOptics } from '../material';
-import { pngFromPixels, renderInSlices, yieldTask, type Rows } from './bake';
+import { pngFromPixels, renderInSlices, yieldTask, type BakeControl, type Rows } from './bake';
 import { sceneDistance } from '../sdf';
 import { morphShapes, type DisplacementState } from './displacement';
 import { spectralHue } from '../spectral';
@@ -130,11 +130,11 @@ export function buildSpectralMap(
 }
 
 /** `buildSpectralMap` spread over several tasks, none of them longer than a slice. */
-export async function buildSpectralMapInSlices(optics: VireGlassOptics, geometry: VireGlassGeometry, dpr: number, state: DisplacementState = {}): Promise<SpectralMap> {
+export async function buildSpectralMapInSlices(optics: VireGlassOptics, geometry: VireGlassGeometry, dpr: number, state: DisplacementState = {}, control: BakeControl = {}): Promise<SpectralMap> {
   if (typeof document === 'undefined' || typeof document.createElement !== 'function') {
     throw new Error('vireglass/dom: buildSpectralMap requires a DOM (canvas)');
   }
-  const { data, width, height, headroom } = await renderInSlices(spectralRows(optics, geometry, dpr, state));
+  const { data, width, height, headroom } = await renderInSlices(spectralRows(optics, geometry, dpr, state), control.sliceMs, control.live);
   const url = pngFromPixels(data, width, height);
   await yieldTask();
   return { url, width, height, headroom };

@@ -63,7 +63,7 @@ describe('render counters', () => {
     bump('probes');
     bump('probes');
     bump('filterSwaps');
-    expect(renderStats()).toEqual({ probes: 2, fullBakes: 0, reducedBakes: 0, mainThreadBakes: 0, workerBakes: 0, filterSwaps: 1 });
+    expect(renderStats()).toEqual({ probes: 2, fullBakes: 0, reducedBakes: 0, mainThreadBakes: 0, workerBakes: 0, filterSwaps: 1, landedExact: 0, landedBlend: 0, probesAtLand: 0, syncSwaps: 0 });
     resetRenderStats();
     expect(renderStats().probes).toBe(0);
   });

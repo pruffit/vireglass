@@ -12,10 +12,22 @@ export function yieldTask(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+/** Thrown by a sliced bake whose result nobody wants any more. */
+export class Superseded extends Error {
+  readonly silent = true;
+  constructor() {
+    super('vireglass/dom: the bake was superseded');
+  }
+}
+
+/** `sliceMs`: the share of rows a task may take. `live`: asked before every slice; false ends the bake with `Superseded`. */
+export type BakeControl = { sliceMs?: number; live?: () => boolean };
+
 /** Renders every row, yielding to the event loop each time a slice has run for `SLICE_MS` and after the last, so the encode never shares a task with rows. */
-export async function renderInSlices<T>(map: Rows<T>, sliceMs = SLICE_MS): Promise<T> {
+export async function renderInSlices<T>(map: Rows<T>, sliceMs = SLICE_MS, live?: () => boolean): Promise<T> {
   let row = 0;
   while (row < map.height) {
+    if (live && !live()) throw new Superseded();
     const start = performance.now();
     do {
       map.rows(row, row + 1);
@@ -23,6 +35,7 @@ export async function renderInSlices<T>(map: Rows<T>, sliceMs = SLICE_MS): Promi
     } while (row < map.height && performance.now() - start < sliceMs);
     await yieldTask();
   }
+  if (live && !live()) throw new Superseded();
   return map.done();
 }
 

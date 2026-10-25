@@ -225,6 +225,8 @@ export type ProbeOptions = {
   /** Grid density override — wider for a hero element, narrower for a tight control. */
   cols?: number;
   rows?: number;
+  /** Probe this box (viewport coordinates) in place of the element's own, e.g. where it is going to be. */
+  rect?: { left: number; top: number; width: number; height: number };
 };
 
 /**
@@ -235,7 +237,7 @@ export type ProbeOptions = {
 export function probeBackdrop(el: HTMLElement, opts: ProbeOptions = {}): BackdropSample {
   const cols = opts.cols ?? GRID_COLS;
   const rows = opts.rows ?? GRID_ROWS;
-  const rect = el.getBoundingClientRect();
+  const rect = opts.rect ?? el.getBoundingClientRect();
   // A hidden or not-yet-laid-out element has no backdrop to speak of. Sampling it anyway collapses
   // the whole grid onto one corner point and reports whatever unrelated thing sits there as a
   // confident, perfectly flat reading.

@@ -1,3 +1,4 @@
+import type { BackdropSample } from '../adaptation';
 import type { VireGlassGeometry } from '../geometry';
 import type { VireGlassOptics } from '../material';
 
@@ -35,6 +36,17 @@ export function filterSignature(iorSpread: number, hasHue: boolean): string {
   return `${iorSpread > 1e-4 ? 'd' : '-'}${hasHue ? 'h' : '-'}`;
 }
 
+/** Whether a backdrop moved enough for the body to be worth easing to, rather than a probe's noise. */
+export function sampleMoved(a: BackdropSample, b: BackdropSample): boolean {
+  return (
+    Math.abs(a.luma - b.luma) > 0.02 ||
+    Math.abs(a.r - b.r) > 0.02 ||
+    Math.abs(a.g - b.g) > 0.02 ||
+    Math.abs(a.b - b.b) > 0.02 ||
+    Math.abs(a.busy - b.busy) > 0.05
+  );
+}
+
 /** A small least-recently-used store, so a long morph cannot evict the resting maps. */
 export function createLru<T>(limit: number, onEvict?: (value: T) => void) {
   const store = new Map<string, T>();
@@ -58,6 +70,12 @@ export function createLru<T>(limit: number, onEvict?: (value: T) => void) {
           onEvict?.(oldest.value[1]);
         }
       }
+    },
+    delete(key: string): void {
+      const old = store.get(key);
+      if (old === undefined) return;
+      store.delete(key);
+      onEvict?.(old);
     },
     clear(): void {
       const all = [...store.values()];

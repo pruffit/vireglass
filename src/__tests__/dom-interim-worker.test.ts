@@ -278,13 +278,14 @@ describe('a stale result never lands', () => {
       addEventListener: (_: string, h: () => void) => void handlers.push(h),
       removeEventListener: () => {},
     });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'requestAnimationFrame', 'cancelAnimationFrame'] });
     const g = attach();
     g.setInterim(true);
     g.setMorph(shape(10));
     g.setMorph(shape(20));
     transparent = true;
     for (const h of handlers) h();
-    g.setInterim(false);
+    vi.advanceTimersByTime(2000);
     g.setInterim(true);
     const posted = worker.jobs.length;
     await worker.answer(0);
@@ -703,19 +704,21 @@ describe('interim and settled maps are one family', () => {
     await vi.advanceTimersByTimeAsync(300);
     await decodeAll();
     expect([href(), hueHref()]).toEqual(shown);
-    expect(renderStats()).toMatchObject({ fullBakes: 0, filterSwaps: 0, probes: 1 });
+    expect(renderStats()).toMatchObject({ fullBakes: 0, filterSwaps: 0, probes: 0, landedExact: 1 });
     expect(revoked).toEqual([]);
   });
 
-  it('keeps it also when the pair is still decoding as the lens lands', async () => {
+  it('keeps it also when the pair is still decoding as the lens lands, by a blend that ends on it', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'requestAnimationFrame', 'cancelAnimationFrame'] });
     const g = attach();
     g.setInterim(true);
     g.setMorph(bridge);
     await worker.answer(0);
     resetRenderStats();
-    g.setInterim(false);
+    g.land();
     await decodeAll();
     await flush();
+    await vi.advanceTimersByTimeAsync(300);
     expect(href()).toBe(urls[0]);
     expect(renderStats().fullBakes).toBe(0);
   });

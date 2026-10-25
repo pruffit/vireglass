@@ -101,9 +101,10 @@ afterEach(() => {
 
 describe('a pending decode never lands on a filter it was not made for', () => {
   it('drops the decode of the map a later swap replaced', async () => {
+    vi.useFakeTimers();
     const g = attach();
     g.setInterim(true);
-    g.setInterim(false);
+    vi.advanceTimersByTime(2000);
     expect(decodes.length).toBeGreaterThan(0);
     box = { width: 260, height: 100 };
     g.update();
@@ -140,7 +141,7 @@ describe('a landing bakes its maps in tasks of their own, a frame apart, and lan
     g.setInterim(true);
     box = { width: 260, height: 100 };
     resetRenderStats();
-    g.setInterim(false);
+    vi.advanceTimersByTime(2000);
     return g;
   };
 
@@ -277,7 +278,7 @@ describe('a landing bakes its maps in tasks of their own, a frame apart, and lan
     await settle();
     expect(href()).toContain('w260');
     g.setInterim(true);
-    g.setInterim(false);
+    vi.advanceTimersByTime(2000);
     await vi.advanceTimersByTimeAsync(120);
     await settle();
     expect(href()).toContain('w260');
@@ -297,10 +298,8 @@ describe('a landing bakes its maps in tasks of their own, a frame apart, and lan
 
   it('lands a second landing of the same maps before the frame once', async () => {
     const g = land();
-    const waiting = vi.getTimerCount();
     g.setInterim(true);
-    g.setInterim(false);
-    expect(vi.getTimerCount()).toBe(waiting);
+    vi.advanceTimersByTime(2000);
     await vi.advanceTimersByTimeAsync(120);
     expect(renderStats().fullBakes).toBe(2);
     expect(decodes.filter((d) => d.url.startsWith('hue:'))).toHaveLength(1);
@@ -323,7 +322,7 @@ describe('a landing bakes its maps in tasks of their own, a frame apart, and lan
     await settle();
     g.setInterim(true);
     resetRenderStats();
-    g.setInterim(false);
+    vi.advanceTimersByTime(2000);
     expect(renderStats().fullBakes).toBe(0);
     expect(decodes.some((d) => d.url.startsWith('hue:'))).toBe(true);
   });
@@ -372,7 +371,7 @@ describe('appear is written in place, never baked', () => {
     box = { width: 260, height: 100 };
     g.update();
     expectStrength(0.4, 260);
-    g.setInterim(false);
+    vi.advanceTimersByTime(2000);
     await vi.advanceTimersByTimeAsync(120);
     await settle();
     expect(href()).toContain('w260');
