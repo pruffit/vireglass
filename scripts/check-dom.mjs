@@ -304,6 +304,52 @@ const FIXTURE = `<!doctype html>
     await new Promise((r) => setTimeout(r, 700));
     return { hrefs: feHrefs(), stats: renderStats() };
   };
+  // A morph with prepare at its start and land() in its last frame, or the same without prepare.
+  let prepLens = null;
+  globalThis.__prepRun = async (steps, prepare) => {
+    morphing?.destroy();
+    morphing = null;
+    live?.destroy();
+    live = null;
+    orb?.destroy();
+    orb = null;
+    document.body.classList.remove('flat', 'bright', 'colour');
+    document.getElementById('orb').style.display = 'none';
+    const glass = document.getElementById('glass');
+    glass.style.display = 'block';
+    glass.style.width = '${BOX.w}px';
+    const shapeAt = (t) => ({ smoothing: 24, shape: { offsetX: 150 * t, offsetY: -60 * t, width: 30 + 60 * t, height: 30 + 20 * t, cornerRadius: 15 + 5 * t } });
+    prepLens = attachGlass(glass, { material: MATERIAL_PRESETS.glass, interactive: false, shadow: false, sample });
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const finalWidth = ${BOX.w} + 2 * steps;
+    prepLens.setInterim(true);
+    if (prepare) prepLens.prepare({ geometry: { width: finalWidth, height: ${BOX.h}, cornerRadius: ${BOX.r} }, morph: shapeAt(1), sample });
+    resetRenderStats();
+    for (let i = 1; i < steps; i += 1) {
+      glass.style.width = (${BOX.w} + 2 * i) + 'px';
+      prepLens.setMorph(shapeAt(i / steps));
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+    const before = renderStats();
+    let landed = null;
+    await new Promise((r) =>
+      requestAnimationFrame(() => {
+        glass.style.width = finalWidth + 'px';
+        prepLens.setMorph(shapeAt(1));
+        landed = prepLens.land();
+        r();
+      }),
+    );
+    const stats = renderStats();
+    await new Promise((r) => requestAnimationFrame(r));
+    return { landed, stats, before };
+  };
+  globalThis.__prepSettle = (ms) => new Promise((r) => setTimeout(r, ms));
+  globalThis.__prepDone = () => {
+    prepLens?.destroy();
+    prepLens = null;
+    document.getElementById('glass').style.width = '${BOX.w}px';
+  };
   globalThis.__landDone = () => {
     landing?.destroy();
     landing = null;
@@ -875,7 +921,7 @@ try {
   if (iDuring.probes !== 0) fail(`interim probed the backdrop ${iDuring.probes} times`);
   if (iDuring.fullBakes !== 0) fail(`interim rebuilt the map at full resolution ${iDuring.fullBakes} times`);
   if (iDuring.filterSwaps !== 0) fail(`interim swapped the filter element ${iDuring.filterSwaps} times`);
-  if (iAfter.probes !== 1) fail(`ending interim should probe once, probed ${iAfter.probes}`);
+  if (iAfter.probes !== 0) fail(`landing should not probe, probed ${iAfter.probes}`);
   if (iAfter.fullBakes > MAPS) fail(`ending interim should bake at most once at full resolution (${MAPS} maps), baked ${iAfter.fullBakes}`);
   if (iAfter.filterSwaps !== 0) fail(`ending interim replaced the filter element (${iAfter.filterSwaps}); it should update in place`);
   if (!(cAfter.fullBakes >= MAPS * (FRAMES - 5) && cAfter.probes >= FRAMES - 5 && cAfter.filterSwaps >= FRAMES - 5)) {
@@ -953,14 +999,15 @@ try {
     const ended = await page.evaluate(() => globalThis.__landEnd());
     const after = await shotNow();
     await page.evaluate(() => globalThis.__landDone());
-    return { begun, ended, differing: await count(before, after) };
+    return { begun, ended, before, after, differing: await count(before, after) };
   };
   const landed = await landCase(false);
   const staleLanded = await landCase(true);
+  const staleCanary = await count(staleLanded.before, landed.after);
   console.log(
     `check-dom: ${STEPS} geometry-only frames in interim — ${landed.begun.stats.reducedBakes} pairs requested, ${landed.begun.stats.workerBakes} built in the worker, ` +
       `${landed.begun.stats.fullBakes} full bakes; landing: ${landed.ended.stats.fullBakes} bakes, ${landed.ended.stats.filterSwaps} swaps, ` +
-      `${landed.differing} pixels differ by more than 1 level from the last interim frame (canary with the first box's maps put back: ${staleLanded.differing})`,
+      `${landed.differing} pixels differ by more than 1 level from the last interim frame (canary with the first box's maps put back: ${staleCanary} pixels differ from the landed frame)`,
   );
   if (landed.begun.stats.workerBakes < 1) fail('a geometry-only motion in interim got no pair from the worker');
   if (landed.begun.stats.fullBakes !== 0) fail(`a geometry-only motion in interim did ${landed.begun.stats.fullBakes} full bakes`);
@@ -968,7 +1015,60 @@ try {
   if (landed.ended.stats.fullBakes !== 0 || landed.ended.stats.filterSwaps !== 0) fail(`the landing baked ${landed.ended.stats.fullBakes} maps and swapped ${landed.ended.stats.filterSwaps} filters although it landed on a pair it had shown`);
   if (landed.ended.hrefs.join('|') !== landed.begun.hrefs.join('|')) fail('the landing changed the maps of a lens that was already showing the pair for its box');
   if (landed.differing !== 0) fail(`the landed frame differs from the last interim frame in ${landed.differing} pixels`);
-  if (!(staleLanded.differing > 0)) fail('canary: replacing the shown maps with a stale stretched pair changed no pixel at the landing, so the comparison cannot fail');
+  if (!(staleCanary > 0)) fail('canary: the maps of the first box in place of the pair for the box changed no pixel, so the comparison cannot fail');
+
+  // 10c4. prepare at the start of a morph and land() in its last frame: nothing changes after the last motion frame, with the
+  //    worker and without it, and no main-thread task of the run is longer than a frame. The canary has no prepare.
+  const WHOLE = { x: 0, y: 0, w: 520, h: 340 };
+  const countWhole = (pg, a, b) => pg.evaluate(([x, y, r, t, fn]) => new Function(`return ${fn}`)()(x, y, r, t), [a, b, WHOLE, 1, COUNT]);
+  const frames = async (pg) => {
+    await pg.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const first = `data:image/png;base64,${(await pg.screenshot()).toString('base64')}`;
+    await pg.evaluate(() => globalThis.__prepSettle(700));
+    const later = `data:image/png;base64,${(await pg.screenshot()).toString('base64')}`;
+    return [first, later];
+  };
+  const longTasks = async (pg, prepare) => {
+    await browser.startTracing(pg, { categories: ['devtools.timeline', 'disabled-by-default-devtools.timeline', 'toplevel'] });
+    await pg.evaluate(([n, p]) => globalThis.__prepRun(n, p), [STEPS, prepare]);
+    await pg.evaluate(() => globalThis.__prepSettle(500));
+    const trace = JSON.parse((await browser.stopTracing()).toString());
+    await pg.evaluate(() => globalThis.__prepDone());
+    const main = new Set(trace.traceEvents.filter((e) => e.ph === 'M' && e.name === 'thread_name' && e.args?.name === 'CrRendererMain').map((e) => e.pid + ':' + e.tid));
+    const tasks = trace.traceEvents.filter((e) => e.name === 'RunTask' && e.ph === 'X' && main.has(e.pid + ':' + e.tid));
+    const over = tasks.filter((t) => t.dur > 16700).map((t) => Math.round(t.dur / 100) / 10);
+    return { tasks: tasks.length, over, max: Math.round(Math.max(0, ...tasks.map((t) => t.dur)) / 100) / 10 };
+  };
+  const noWorker = await browser.newPage({ viewport: { width: 520, height: 340 } });
+  await noWorker.addInitScript(() => {
+    delete window.Worker;
+  });
+  await noWorker.goto(`http://127.0.0.1:${port}/`);
+  await noWorker.waitForFunction('globalThis.__ready === true');
+  for (const [label, pg] of [['worker', page], ['no worker', noWorker]]) {
+    const run = await pg.evaluate(([n, p]) => globalThis.__prepRun(n, p), [STEPS, true]);
+    const [first, later] = await frames(pg);
+    await pg.evaluate(() => globalThis.__prepDone());
+    const moved = await countWhole(pg, first, later);
+    const tasks = await longTasks(pg, true);
+    console.log(
+      `check-dom: prepare + land (${label}) — ${run.landed}; at landing ${run.stats.fullBakes - run.before.fullBakes} bakes, ${run.stats.probes - run.before.probes} probes, ` +
+        `${run.stats.filterSwaps - run.before.filterSwaps} swaps; ${moved} pixels change after the last motion frame; ${tasks.tasks} main-thread tasks, longest ${tasks.max} ms`,
+    );
+    if (run.landed !== 'exact') fail(`prepare + land (${label}) landed ${run.landed}`);
+    if (run.stats.fullBakes !== run.before.fullBakes || run.stats.probes !== run.before.probes || run.stats.filterSwaps !== run.before.filterSwaps) fail(`prepare + land (${label}) baked, probed or swapped at the landing`);
+    if (moved !== 0) fail(`${moved} pixels change after the last motion frame (${label})`);
+    if (tasks.over.length) fail(`main-thread tasks over 16.7 ms in the run (${label}): ${tasks.over.join(', ')} ms`);
+  }
+  await noWorker.close();
+  {
+    const run = await page.evaluate(([n, p]) => globalThis.__prepRun(n, p), [STEPS, false]);
+    const [first, later] = await frames(page);
+    await page.evaluate(() => globalThis.__prepDone());
+    const moved = await countWhole(page, first, later);
+    console.log(`check-dom: canary without prepare — ${run.landed}, ${moved} pixels change after the last motion frame`);
+    if (run.landed === 'exact' && moved === 0) fail('canary: a morph with no prepare landed exactly and changed nothing, so the comparison cannot tell');
+  }
 
   // 10d. Appear is the lens's strength written in place (§1, materialise by bending light): thirty
   //    steps cost no bake and no swap, absent reads as the page, half as less than present. The canary
