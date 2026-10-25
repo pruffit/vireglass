@@ -15,9 +15,10 @@ scavenge of 0.9 to 2.2 ms in the same frames. The first frame of growth was a 17
   makes a blob URL, decodes it and retargets, as for any map.
 - Until the built map arrives the lens shows the map it has, stretched to the new box, as it does while a map decodes.
   The new map lands a frame or more after the one that asked for it.
-- One build in flight per lens. When it lands and a newer key was asked for meanwhile, the result is dropped and only
-  the newest key is built; the keys in between are never built.
-- A result lands nothing once the lens left interim, was destroyed, took another filter or another key.
+- One build in flight per lens. When it lands it is shown if it is newer than the map on screen, even when a newer key
+  was asked for meanwhile, so a motion faster than its builds still moves; then only the newest key is built, and the
+  keys in between are never built.
+- A result lands nothing once the lens left interim, was destroyed or took another filter.
 - A key still in the store of 8 is answered at once, with no build. A map the store drops, and every map of a
   destroyed lens, has its blob URL revoked.
 - Without `Worker`, `OffscreenCanvas` or `convertToBlob`, or when a CSP refuses the blob worker, or when the worker

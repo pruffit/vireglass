@@ -163,12 +163,27 @@ describe('one build in flight, the newest key wins', () => {
     await worker.answer(0);
     expect(worker.jobs).toHaveLength(2);
     expect(worker.jobs[1]!.state.morph?.offsetX).toBe(30);
-    expect(revoked).toEqual([urls[0]]);
-    expect(decodes).toHaveLength(0);
+    expect(revoked).toEqual([]);
+    await decodeAll();
+    expect(href()).toBe(urls[0]);
     await worker.answer(1);
     await decodeAll();
     expect(href()).toBe(urls[1]);
     expect(renderStats().reducedBakes).toBe(3);
+  });
+
+  it('shows a superseded key that is newer than the shown map, so a motion faster than its builds still moves', async () => {
+    const g = attach();
+    g.setInterim(true);
+    const before = href();
+    for (let x = 1; x <= 4; x += 1) {
+      g.setMorph(shape(x * 10));
+      g.setMorph(shape(x * 10 + 5));
+      await worker.answer(worker.jobs.length - 1);
+      await decodeAll();
+      expect(href()).not.toBe(before);
+      expect(href()).toBe(urls[urls.length - 1]);
+    }
   });
 });
 

@@ -679,6 +679,11 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     const job = wanted;
     wanted = null;
     if (!job || destroyed || !interim || job.key !== latestKey) return;
+    const hit = interimMaps.get(job.key);
+    if (hit) {
+      showInterim(job.mine, hit, job.forFilter);
+      return;
+    }
     building = job;
     interimBuilder()
       .build(job.optics, job.geometry, job.dpr, job.state)
@@ -698,7 +703,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   }
 
   function landBuilt(job: PendingBuild, map: DisplacementMap): void {
-    if (destroyed || filterEl !== job.forFilter || !interim || latestKey !== job.key || job.mine <= shownSeq) {
+    if (destroyed || filterEl !== job.forFilter || !interim || job.mine <= shownSeq) {
       releaseMap(map.url);
       return;
     }
