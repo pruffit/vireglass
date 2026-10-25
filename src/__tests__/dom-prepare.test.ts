@@ -362,3 +362,177 @@ describe('a hidden page', () => {
     expect(decodes.map((d) => d.url)).toEqual([urls[1]]);
   });
 });
+
+describe('a landing lands the lens as it is, never a pair for what it was', () => {
+  const shape = (x: number) => ({ smoothing: 10, shape: { offsetX: x, offsetY: 0, width: 40, height: 40, cornerRadius: 8 } });
+  const none = { fullBakes: 0, mainThreadBakes: 0, filterSwaps: 0, syncSwaps: 0 };
+
+  afterEach(() => {
+    Reflect.deleteProperty(window, 'devicePixelRatio');
+  });
+
+  it('a box a quarter pixel past the prepared one: the prepared pair is shown, the live one blended in', async () => {
+    timers();
+    const g = attach();
+    g.setInterim(true);
+    await ready(g, 260, 0);
+    box = { width: 260.25, height: 100 };
+    resetRenderStats();
+    expect(g.land()).toBe('blend');
+    expect(href()).toBe(urls[0]);
+    expect(worker.jobs).toHaveLength(2);
+    expect(worker.jobs[1]!.geometry.width).toBe(260.5);
+    await worker.answer(1);
+    await decodeAll();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(href()).toBe(urls[1]);
+    expect(renderStats()).toMatchObject({ ...none, landedExact: 0, landedBlend: 1 });
+  });
+
+  it('a material given to prepare and not applied is not landed as if it were', async () => {
+    timers();
+    const g = attach();
+    g.setInterim(true);
+    g.prepare({ ...dest(260), material: { thickness: 80 } });
+    await worker.answer(0);
+    await decodeAll();
+    box = { width: 260, height: 100 };
+    resetRenderStats();
+    expect(g.land()).toBe('blend');
+    expect(worker.jobs).toHaveLength(2);
+    expect(worker.jobs[1]!.optics.thicknessDp).not.toBe(worker.jobs[0]!.optics.thicknessDp);
+    expect(renderStats()).toMatchObject({ ...none, landedExact: 0 });
+  });
+
+  it('a material given to prepare and applied with setMaterial lands exactly', async () => {
+    const g = attach();
+    g.setInterim(true);
+    const material = { thickness: 80 };
+    g.prepare({ ...dest(260), material });
+    g.setMaterial(material);
+    await worker.answer(0);
+    await decodeAll();
+    box = { width: 260, height: 100 };
+    resetRenderStats();
+    expect(g.land()).toBe('exact');
+    expect(href()).toBe(urls[0]);
+    expect(renderStats()).toMatchObject({ ...none, landedExact: 1 });
+  });
+
+  it('a change of density after prepare', async () => {
+    timers();
+    const g = attach();
+    g.setInterim(true);
+    await ready(g, 260, 0);
+    Object.defineProperty(window, 'devicePixelRatio', { value: 2, configurable: true });
+    box = { width: 260, height: 100 };
+    resetRenderStats();
+    expect(g.land()).toBe('blend');
+    expect(worker.jobs[1]!.dpr).toBe(2);
+    expect(renderStats()).toMatchObject({ ...none, landedExact: 0 });
+  });
+
+  describe('during a blend', () => {
+    async function midBlend() {
+      timers();
+      const g = attach();
+      g.setInterim(true);
+      g.prepare(dest(260));
+      await worker.answer(0);
+      await decodeAll();
+      g.prepare(dest(300));
+      box = { width: 300, height: 100 };
+      expect(g.land()).toBe('blend');
+      await worker.answer(1);
+      await decodeAll();
+      await vi.advanceTimersByTimeAsync(40);
+      const node = filter();
+      const mix = node.querySelector('feComposite[result="map"]')!;
+      const at = Number(mix.getAttribute('k3'));
+      expect(at).toBeGreaterThan(0);
+      expect(at).toBeLessThan(1);
+      resetRenderStats();
+      return { g, node, mix, at };
+    }
+
+    it('a resize retargets the blend on the same filter and ends on the pair of the new box', async () => {
+      const { g, node, mix, at } = await midBlend();
+      box = { width: 340, height: 100 };
+      g.update();
+      expect(filter()).toBe(node);
+      expect(Number(mix.getAttribute('k3'))).toBe(at);
+      expect(worker.jobs[2]!.geometry.width).toBe(340);
+      await vi.advanceTimersByTimeAsync(300);
+      expect(filter()).toBe(node);
+      expect(href()).toBe(urls[1]);
+      await worker.answer(2);
+      await decodeAll();
+      await vi.advanceTimersByTimeAsync(300);
+      expect(filter()).toBe(node);
+      expect(node.querySelectorAll('feImage')).toHaveLength(1);
+      expect(href()).toBe(urls[2]);
+      expect(renderStats()).toMatchObject(none);
+    });
+
+    it('setInterim(true) leaves the mix where it is and lets it run out', async () => {
+      const { g, node, mix, at } = await midBlend();
+      g.setInterim(true);
+      expect(Number(mix.getAttribute('k3'))).toBe(at);
+      expect(node.querySelectorAll('feImage')).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(300);
+      expect(filter()).toBe(node);
+      expect(node.querySelectorAll('feImage')).toHaveLength(1);
+      expect(href()).toBe(urls[1]);
+      expect(renderStats()).toMatchObject(none);
+    });
+
+    it('setMorph continues the mix and ends on the pair of the new morph, without a bake', async () => {
+      const { g, node, mix, at } = await midBlend();
+      g.setMorph(shape(20));
+      expect(Number(mix.getAttribute('k3'))).toBe(at);
+      expect(node.querySelectorAll('feImage')).toHaveLength(2);
+      expect(worker.jobs).toHaveLength(3);
+      await worker.answer(2);
+      await decodeAll();
+      await vi.advanceTimersByTimeAsync(600);
+      expect(filter()).toBe(node);
+      expect(node.querySelectorAll('feImage')).toHaveLength(1);
+      expect(href()).toBe(urls[2]);
+      expect(renderStats()).toMatchObject(none);
+    });
+
+    it('destroy removes the blend with the filter and leaves no timer', async () => {
+      const { g } = await midBlend();
+      g.destroy();
+      expect(document.querySelectorAll('svg[data-vireglass-filters] filter')).toHaveLength(0);
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(300);
+    });
+  });
+
+  it('destroy while the pair is built: the answer is released and nothing is shown', async () => {
+    const g = attach();
+    g.setInterim(true);
+    g.prepare(dest(260));
+    g.destroy();
+    await worker.answer(0);
+    expect(revoked).toContain(urls[0]);
+    expect(document.querySelectorAll('svg[data-vireglass-filters] filter')).toHaveLength(0);
+  });
+
+  it('a worker that fails while a landing waits hands it to the main thread, and the landing blends to that pair', async () => {
+    timers();
+    const g = attach();
+    const first = href();
+    g.prepare(dest(260));
+    box = { width: 260, height: 100 };
+    expect(g.land()).toBe('blend');
+    worker.onerror?.({});
+    await vi.advanceTimersByTimeAsync(300);
+    await decodeAll();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(href()).toMatch(/^main:/);
+    expect(href()).not.toBe(first);
+    expect(filter().querySelectorAll('feImage')).toHaveLength(1);
+  });
+});

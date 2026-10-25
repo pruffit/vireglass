@@ -376,9 +376,12 @@ function releaseRecord(rec: InterimMap): void {
 }
 
 /** The destination of a motion: the pair of maps for it, and the sample the lens takes at landing. */
+type Shown = { map: DisplacementMap; hue: SpectralMap | null; key: string; rec: InterimMap | null };
+
 type Prepared = {
   token: number;
   key: string;
+  print: string;
   full: VireGlassOptics;
   geometry: VireGlassGeometry;
   dpr: number;
@@ -544,6 +547,8 @@ export type GlassHandle = {
   /** A glow that started on a neighbour, in page coordinates (§5). Null clears it. */
   setNeighbourGlow(glow: { pageX: number; pageY: number; strength: number } | null): void;
   setMorph(morph: GlassMorph | null): void;
+  /** Changes the material (a patch over the current one), the way a `prepare({ material })` expects its destination to be reached. */
+  setMaterial(material: Partial<VireGlassMaterial>): void;
   /**
    * While on, the element is changing shape every frame (a morph, a drag, a growth). It stops
    * probing the backdrop, stops baking on the main thread and keeps its filter. A change of the box,
@@ -599,6 +604,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   let destWanted: Prepared | null = null;
   let landing: Prepared | null = null;
   let blend: Blend | null = null;
+  let blendTarget: Shown | null = null;
   let landingNow = false;
   let waiters: (() => void)[] = [];
   let easeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -685,7 +691,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   const morphSignature = () => morphSignatureOf(morph);
 
   function isPinned(rec: InterimMap): boolean {
-    return rec === shownRec || rec === prepared?.rec || rec === landing?.rec;
+    return rec === shownRec || rec === prepared?.rec || rec === landing?.rec || rec === blendTarget?.rec;
   }
 
   function maybeRelease(rec: InterimMap | null | undefined): void {
@@ -756,6 +762,10 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     if (idleTimer !== null) clearTimeout(idleTimer);
     idleTimer = null;
     if (destroyed || !interim) return;
+    if (blend) {
+      land();
+      return;
+    }
     interim = false;
     latestKey = '';
     invalidate();
@@ -771,6 +781,12 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     setShown(rec);
     shownKey = hue || images.length < 2 ? key : '';
     present(f);
+  }
+
+  /** Puts a pair on the filter; while a blend runs the pair becomes where the blend is headed, so nothing snaps. */
+  function showPair(f: SVGFilterElement, map: DisplacementMap, hue: SpectralMap | null, rec: InterimMap | null, key: string): void {
+    if (blend && f === filterEl) blendTo({ map, hue, key, rec });
+    else retarget(f, map, hue, rec, key);
   }
 
   /**
@@ -852,7 +868,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     const show = () => {
       if (destroyed || filterEl !== forFilter || mine <= shownSeq || record.released) return;
       shownSeq = mine;
-      retarget(forFilter, record.map, record.hue, record, record.key);
+      showPair(forFilter, record.map, record.hue, record, record.key);
     };
     if (record.ready) {
       show();
@@ -916,6 +932,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     const dpr = devicePixelRatio();
     return {
       key: mapKeyFor(snapped, morphSignatureOf(m), full, dpr),
+      print: JSON.stringify(full),
       full,
       geometry: snapped,
       dpr,
@@ -1060,8 +1077,6 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   }
 
   function abandonLanding(): void {
-    blend?.stop();
-    blend = null;
     const old = landing;
     landing = null;
     if (old) {
@@ -1070,50 +1085,105 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     }
   }
 
-  function finishBlend(): void {
-    if (!blend) return;
-    blend.stop();
+  function stopBlend(): void {
+    blend?.stop();
     blend = null;
-    if (landing?.rec) installLanding(landing);
+    const target = blendTarget;
+    blendTarget = null;
+    maybeRelease(target?.rec);
+  }
+
+  const shownOf = (rec: InterimMap): Shown => ({ map: rec.map, hue: rec.hue, key: rec.key, rec });
+
+  /** Mixes the filter toward `target`; a blend already running keeps its weights and changes only where it is headed. */
+  function blendTo(target: Shown): void {
+    if (!filterEl) return;
+    const urls = { mapUrl: target.map.url, hueUrl: target.hue?.url ?? null };
+    blendTarget = target;
+    if (blend) {
+      blend.retarget(urls);
+      return;
+    }
+    let ran = false;
+    const started = startBlend(filterEl, urls, () => {
+      ran = true;
+      endBlend();
+    });
+    if (!ran) {
+      blend = started;
+      shownKey = '';
+    }
+  }
+
+  function endBlend(): void {
+    const target = blendTarget;
+    blend = null;
+    blendTarget = null;
+    if (!target || destroyed || !filterEl) return;
+    retarget(filterEl, target.map, target.hue, target.rec, target.key);
+    const p = landing;
+    if (!p?.rec) return;
+    if (p.rec === target.rec) finishLanding(p);
+    else if (p.rec.ready || document.hidden) beginLanding(p);
   }
 
   function beginLanding(p: Prepared): void {
     const rec = p.rec;
     if (!rec || !filterEl || landing !== p) return;
+    if (blend) {
+      blendTo(shownOf(rec));
+      return;
+    }
     const sameStructure = filterEl.getAttribute('data-vireglass-signature') === filterSignature(p.full.iorSpread, p.hue);
     if (document.hidden || !sameStructure) {
       installLanding(p);
       return;
     }
-    let ran = false;
-    const started = startBlend(filterEl, { mapUrl: rec.map.url, hueUrl: rec.hue?.url ?? null }, () => {
-      ran = true;
-      blend = null;
-      installLanding(p);
-    });
-    if (!ran) blend = started;
+    blendTo(shownOf(rec));
   }
 
   function landingFailed(): void {
     abandonLanding();
+    stopBlend();
     settling = true;
+    applyHeld();
+  }
+
+  /** `apply()` as a landing makes it: the sample the lens holds, no probe. */
+  function applyHeld(): void {
+    const was = landingNow;
     landingNow = true;
     try {
       apply();
     } finally {
-      landingNow = false;
+      landingNow = was;
     }
+  }
+
+  function liveDescribe() {
+    const g = opts.geometry ?? measureGeometry(el);
+    return isEmpty(g) ? null : describe(g, morph);
+  }
+
+  const differs = (p: Prepared, d: { key: string; print: string }) => p.key !== d.key || p.print !== d.print;
+
+  /** The lens changed under a landing: the destination becomes what it is now, and the pair on the filter stays until that one is ready. */
+  function relandOnLive(d: NonNullable<ReturnType<typeof liveDescribe>>, sample: BackdropSample | null, repaint = true): void {
+    const old = landing ?? prepared;
+    const p: Prepared = { token: (preparedToken += 1), ...d, sample, rec: null, failed: false };
+    prepared = landing = p;
+    mapKey = p.key;
+    settling = false;
+    maybeRelease(old?.rec);
+    startPrepared(p);
+    if (repaint) applyHeld();
   }
 
   /** Writes the destination pair: the hrefs and the presentation in this task. A filter of another structure is replaced. */
   function installLanding(p: Prepared): void {
     const rec = p.rec;
     if (!rec || destroyed) return;
-    blend?.stop();
-    blend = null;
-    if (landing === p) landing = null;
-    if (prepared === p) prepared = null;
-    invalidate();
+    stopBlend();
     if (filterEl) {
       const signature = filterSignature(p.full.iorSpread, p.hue);
       if (filterEl.getAttribute('data-vireglass-signature') === signature) {
@@ -1131,16 +1201,23 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
         setShown(rec);
       }
     }
+    finishLanding(p);
+  }
+
+  /** The destination pair is on the filter. If the lens moved on meanwhile, that pair is only the nearest one and the live state is landed next. */
+  function finishLanding(p: Prepared): void {
+    if (landing === p) landing = null;
+    if (prepared === p) prepared = null;
+    invalidate();
+    const d = liveDescribe();
+    if (d && differs(p, d)) {
+      relandOnLive(d, p.sample);
+      return;
+    }
     mapKey = p.key;
     settling = false;
-    const was = landingNow;
-    landingNow = true;
-    try {
-      apply();
-    } finally {
-      landingNow = was;
-    }
-    if (!rec.ready) verifyWhenVisible(rec);
+    applyHeld();
+    if (p.rec && !p.rec.ready) verifyWhenVisible(p.rec);
     settle();
   }
 
@@ -1166,7 +1243,6 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
 
   function land(): 'exact' | 'blend' {
     if (destroyed) return 'exact';
-    finishBlend();
     landingNow = true;
     try {
       return landOn();
@@ -1180,44 +1256,57 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       bump('landedExact');
       return 'exact';
     };
-    let p = prepared;
+    const structureHolds = (d: { full: VireGlassOptics; hue: boolean }) =>
+      filterEl?.getAttribute('data-vireglass-signature') === filterSignature(d.full.iorSpread, d.hue);
     if (!svgSupported || !filterEl) {
       endInterim();
       mapKey = '';
       apply();
       return exact();
     }
-    const current = opts.geometry ?? measureGeometry(el);
-    if (!p) {
-      if (isEmpty(current)) {
-        endInterim();
+    const live = liveDescribe();
+    if (!live) {
+      endInterim();
+      apply();
+      return exact();
+    }
+    let p = prepared;
+    let sample: BackdropSample | null = null;
+    let nearest: InterimMap | null = null;
+    if (p && differs(p, live)) {
+      sample = p.sample;
+      if (p.rec?.ready && !blend && structureHolds(p)) nearest = p.rec;
+      prepared = null;
+      if (p.rec !== nearest) maybeRelease(p.rec);
+      p = null;
+    }
+    endInterim();
+    if (p) {
+      if (p.sample) lastSample = p.sample;
+      if (p.key === shownKey && structureHolds(p)) {
+        prepared = null;
+        maybeRelease(p.rec);
+        mapKey = p.key;
+        settling = false;
         apply();
+        settle();
         return exact();
       }
-      const d = describe(current, morph);
-      if (d.key === shownKey) {
-        endInterim();
-        mapKey = d.key;
+    } else {
+      if (live.key === shownKey && structureHolds(live)) {
+        mapKey = live.key;
         settling = false;
         apply();
         return exact();
       }
-      p = prepared = { token: (preparedToken += 1), ...d, sample: null, rec: null, failed: false };
+      if (nearest) retarget(filterEl, nearest.map, nearest.hue, nearest, nearest.key);
+      p = prepared = { token: (preparedToken += 1), ...live, sample, rec: null, failed: false };
+      if (sample) lastSample = sample;
       startPrepared(p);
-    } else if (p.key === shownKey) {
-      endInterim();
-      if (p.sample) lastSample = p.sample;
-      prepared = null;
-      maybeRelease(p.rec);
-      mapKey = p.key;
-      settling = false;
-      apply();
-      settle();
-      return exact();
+      maybeRelease(nearest);
     }
-    endInterim();
-    if (p.sample) lastSample = p.sample;
-    if (p.rec && (p.rec.ready || document.hidden)) {
+    if (blend && landing === p) return 'blend';
+    if (!blend && p.rec && (p.rec.ready || document.hidden)) {
       installLanding(p);
       return exact();
     }
@@ -1225,6 +1314,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     mapKey = p.key;
     settling = false;
     bump('landedBlend');
+    if (blend && p.rec) beginLanding(p);
     apply();
     if (p.failed) landingFailed();
     return 'blend';
@@ -1308,6 +1398,10 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
         requestInterimMap(geometry);
       } else if (isEmpty(geometry)) {
         // Nothing to refract in a box of no size; the next resize bakes it.
+      } else if (filterEl && (landing || blend)) {
+        // A landing never bakes in the task that notices a change: the destination follows the lens.
+        const d = landing ? describe(geometry, morph) : null;
+        if (landing && d && differs(landing, d)) relandOnLive(d, landing.sample, false);
       } else if (key !== mapKey || !filterEl) {
         const morphNow = morphState();
         const spectral = hasSpectralEdge(full);
@@ -1347,13 +1441,13 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
               if (!current(mine)) return;
               shownSeq = mine;
               if (adopted) adopted.ready = true;
-              retarget(forFilter, map, hue, adopted ?? null, forKey);
+              showPair(forFilter, map, hue, adopted ?? null, forKey);
             });
           const mapCached = isCached(`d|${key}`);
           const hueCached = !spectral || isCached(`h|${key}`);
           if (adopted?.ready) {
             shownSeq = seq += 1;
-            retarget(forFilter, adopted.map, adopted.hue, adopted, forKey);
+            showPair(forFilter, adopted.map, adopted.hue, adopted, forKey);
           } else if (adopted || (mapCached && hueCached)) {
             const map = bakeMap();
             void land((seq += 1), map, decoded(map.url), bakeHue());
@@ -1500,6 +1594,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       },
     });
     invalidate();
+    stopBlend();
     if (filterEl) {
       const feImage = filterEl.querySelector('feImage');
       feImage?.setAttribute('href', map.url);
@@ -1639,6 +1734,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     destJob = null;
     blend?.stop();
     blend = null;
+    blendTarget = null;
     landing = null;
     prepared = null;
     settle();
@@ -1716,18 +1812,27 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     },
     setMorph(next) {
       morph = next && next.smoothing > 0 ? next : null;
-      if (landing) abandonLanding();
       if (interim) {
         apply();
+        return;
+      }
+      if (landing && filterEl) {
+        const d = liveDescribe();
+        if (d) relandOnLive(d, landing.sample);
+        else applyHeld();
         return;
       }
       mapKey = '';
       apply();
     },
+    setMaterial(material) {
+      if (destroyed) return;
+      opts = { ...opts, material: { ...opts.material, ...material } };
+      apply();
+    },
     setInterim(on) {
       if (destroyed) return;
       if (on) {
-        finishBlend();
         if (landing) abandonLanding();
         // A gesture held still sends no geometry, so a repeat is the host saying it is still moving.
         if (!interim) latestKey = shownKey;

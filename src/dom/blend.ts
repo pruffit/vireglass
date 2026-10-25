@@ -12,6 +12,8 @@ type Slot = { image: Element; incoming: Element; mix: Element; result: string };
 export type Blend = {
   /** Ends the blend where it is: the filter is back to its own structure and the host writes what stays. */
   stop(): void;
+  /** Mixes toward another pair from where the mix is now; the weights keep running. */
+  retarget(to: BlendTarget): void;
 };
 
 function open(image: Element | undefined, url: string | null, result: string): Slot | null {
@@ -59,13 +61,18 @@ export function startBlend(filter: SVGFilterElement, to: BlendTarget, done: () =
     if (frame !== null && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(frame);
     for (const slot of slots) close(slot);
   };
+  const retarget = (next: BlendTarget) => {
+    if (ended) return;
+    slots[0]?.incoming.setAttribute('href', next.mapUrl);
+    if (slots[1] && next.hueUrl) slots[1].incoming.setAttribute('href', next.hueUrl);
+  };
   const finish = () => {
     stop();
     done();
   };
   if (typeof requestAnimationFrame !== 'function' || document.hidden) {
     finish();
-    return { stop };
+    return { stop, retarget };
   }
   let began: number | null = null;
   const step = (now: number) => {
@@ -77,5 +84,5 @@ export function startBlend(filter: SVGFilterElement, to: BlendTarget, done: () =
     else frame = requestAnimationFrame(step);
   };
   frame = requestAnimationFrame(step);
-  return { stop };
+  return { stop, retarget };
 }
