@@ -1,6 +1,6 @@
 # Changelog
 
-## 3.5.0 (unreleased)
+## 3.5.0
 
 Interim maps are built in a worker. DOM target only. A morph in interim mode no longer renders rows or encodes a PNG on
 the main thread; the pixels are the same bytes as before.
