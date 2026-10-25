@@ -26,8 +26,9 @@ and a motion that only changes the box gets maps of its own.
 - The filter's structure depends only on dispersion being on or off and the hue being on or off. Blur, the ior ratios of
   the three dispersion passes and the hue's weights are attributes, rewritten in place, so a material step no longer
   forces a synchronous bake and a filter swap on landing.
-- The worker's 2 s timeout counts from the start of a job. Jobs from all lenses go to the worker one at a time, so a
-  queue of jobs no longer disables the worker for good; a job that started and hangs still does.
+- The worker's timeout counts from the start of a job and grows with the job's pixels (2 s at least). Jobs from all
+  lenses go to the worker one at a time, so a queue no longer disables it. A job that hangs falls back to the main
+  thread on a fresh worker; a second timeout in a row turns the worker off for the page.
 - `check:dom` grows a geometry-only resize in interim followed by the landing: the landed frame has no pixel that
   differs from the last interim frame by more than one level, and the same run with the first box's maps put back
   differs at 5308 pixels.
@@ -41,15 +42,26 @@ and a motion that only changes the box gets maps of its own.
 - `handle.land()` returns `'exact'` when the pair is decoded and writes it with the presentation in the same task: no
   timer, probe, bake or filter swap. Otherwise it returns `'blend'`: a 120 ms mix from the shown pair into the
   destination, written as attributes of two added `feImage`s and `feComposite`s, removed at the end.
-  `setInterim(false)` is `land()`, so it no longer probes: the held sample is kept (or the prepared one), and real
-  backdrop changes ease over 200 ms through registered `--vireglass-ink-color`, `-tint-color` and `-body-color`.
+  `setInterim(false)` is `land()`. With `prepare` the colours start easing to the destination sample when it is
+  called, over 200 ms through registered `--vireglass-ink-color`, `-tint-color`, `-body-color` and `box-shadow`, and
+  the landing changes none of them and does not probe. A landing with no `prepare` probes once and eases.
+- A landing lands the lens as it is: a prepared pair for another snapped box, density or material is replaced by the
+  live one (shown as the nearest ready pair, then blended), a resize, `setMorph`, `setMaterial` or `setInterim(true)`
+  during a blend continues the mix toward the newest pair, and nothing bakes synchronously in the landing task.
+- `handle.setMaterial(patch)` changes the material the way `prepare({ material })` expects.
+- Without a worker, an interim pair claims its key only once its hue is on the filter; the hue is built in 4 ms slices
+  when the key holds still, so landing on a key never keeps the previous box's hue.
 - A hidden page installs the pair undecoded and settles on `visibilitychange`.
 - The decoded pairs of all lenses stay under about 24 MB; lenses off screen go first, and a pair a filter shows or a
   landing holds is never released. The worker queue serves destinations before interim maps.
-- `renderStats()` gains `landedExact`, `landedBlend`, `probesAtLand` and `syncSwaps`.
+- `renderStats()` gains `landedExact`, `landedBlend`, `probesAtLand` and `syncSwaps`, and `GlassHandle` gains
+  `setMaterial`, `prepare`, `land` and `whenPrepared`: a type-level change for code that implements or constructs a
+  `GlassHandle` or a `RenderStats` (a test double, a wrapper, a literal).
 - `check:dom`: a morph with `prepare` at its start and `land()` in its last frame changes 0 pixels afterwards, with
-  the worker and without it, and no main-thread task of the run passes 16.7 ms (longest 5.2 ms with the worker, 6.7 ms
-  without); a morph without `prepare` lands as a blend and changes 650 pixels.
+  the worker and without it, and no main-thread task of the run passes 16.7 ms (longest 5.5 ms with the worker, 12.4 ms
+  without); a morph without `prepare` lands as a blend and changes 650 pixels. A lens with no worker and no `prepare`,
+  resized in interim and landed with `setInterim(false)`, differs from a lens settled on the final box at 0 pixels
+  (with the first box's hue put back, 106).
 
 ## 3.6.1
 
