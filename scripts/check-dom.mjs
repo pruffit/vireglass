@@ -69,8 +69,8 @@ const FIXTURE = `<!doctype html>
 <div id="proseCover"style="position:absolute;left:386px;top:64px;width:118px;height:68px;background-image:linear-gradient(#7a8ca0,#7a8ca0);display:none"></div>
 <div id="proseGlass" style="position:absolute;left:392px;top:70px;width:106px;height:56px;border-radius:28px;display:none"></div>
 <script type="module">
-  import { attachGlass, attachScrollEdge, probeBackdrop, renderStats, resetRenderStats } from '/dist/dom.js';
-  import { MATERIAL_PRESETS, VIREGLASS_CONTROL_MATERIAL, resolveOptics, REST_LIGHT } from '/dist/index.js';
+  import { attachGlass, attachScrollEdge, probeBackdrop, renderDisplacementPixels, renderStats, resetRenderStats, systemAccessibility } from '/dist/dom.js';
+  import { MATERIAL_PRESETS, VIREGLASS_CONTROL_MATERIAL, resolveOptics, REST_LIGHT, applyAccessibility, applyGlassScale, GLASS_SCALE_DEFAULT } from '/dist/index.js';
   import { rimGradientCss } from '/dist/dom.js';
 
   // The probe would read the striped page as busy and thicken the body — correct, but it hides the
@@ -204,6 +204,56 @@ const FIXTURE = `<!doctype html>
     if (interim) morphing.setInterim(false);
     await new Promise((r) => setTimeout(r, 300));
     return { during, after: renderStats() };
+  };
+  // Interim maps built by the worker against the same pixels built here: a lens with a fixed box and
+  // a morph that changes every frame, then the map its filter ended up with, decoded and compared.
+  globalThis.__workerInterim = async () => {
+    const geometry = { width: ${BOX.w}, height: ${BOX.h}, cornerRadius: ${BOX.r} };
+    const glass = document.getElementById('glass');
+    glass.style.display = 'block';
+    const lens = attachGlass(glass, { material: MATERIAL_PRESETS.glass, interactive: false, shadow: false, geometry, sample });
+    lens.setInterim(true);
+    resetRenderStats();
+    const href = () => document.querySelector('svg[data-vireglass-filters] filter feImage')?.getAttribute('href');
+    const shapeAt = (i) => ({ smoothing: 24, shape: { offsetX: 150 + 3 * i, offsetY: -60, width: 90, height: 50, cornerRadius: 20 } });
+    const before = href();
+    const FRAMES = 24;
+    for (let i = 0; i < FRAMES; i += 1) {
+      lens.setMorph(shapeAt(i));
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+    const started = performance.now();
+    let shown = href();
+    while ((!shown || !shown.startsWith('blob:') || shown === before) && performance.now() - started < 2000) {
+      await new Promise((r) => requestAnimationFrame(r));
+      shown = href();
+    }
+    await new Promise((r) => setTimeout(r, 300));
+    shown = href();
+    const stats = renderStats();
+    const decode = async (url) => {
+      const bitmap = await createImageBitmap(await (await fetch(url)).blob(), { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
+      const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(bitmap, 0, 0);
+      return ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+    };
+    const built = shown && shown.startsWith('blob:') ? await decode(shown) : null;
+    const settled = applyAccessibility(applyGlassScale(resolveOptics(MATERIAL_PRESETS.glass), GLASS_SCALE_DEFAULT), systemAccessibility());
+    const dpr = Math.min(1, devicePixelRatio);
+    const compare = (index) => {
+      const { smoothing, shape } = shapeAt(index);
+      const sync = renderDisplacementPixels(settled, geometry, dpr, { smoothing, morph: shape });
+      if (!built || built.width !== sync.width || built.height !== sync.height) return { differing: -1, width: sync.width, height: sync.height };
+      let differing = 0;
+      for (let i = 0; i < sync.data.length; i += 1) if (built.data[i] !== sync.data[i]) differing += 1;
+      return { differing, width: sync.width, height: sync.height };
+    };
+    const same = compare(FRAMES - 1);
+    const other = compare(0);
+    lens.destroy();
+    glass.style.display = 'none';
+    return { stats, shown, same, other, frames: FRAMES };
   };
   globalThis.__morphDone = () => {
     morphing?.destroy();
@@ -723,6 +773,20 @@ try {
   if (morphed.during.fullBakes !== 0 || morphed.during.filterSwaps !== 0 || morphed.during.probes !== 0) {
     fail('a morph change during interim did full-resolution work, swapped the filter or probed');
   }
+
+  // 10c2. The interim maps of a morph are built by the worker, not on the main thread, and are the pixels the
+  //    main thread would draw. The canary compares them with the first frame's map, which differs.
+  const worked = await page.evaluate(() => globalThis.__workerInterim());
+  console.log(
+    `check-dom: ${worked.frames} morph frames in interim — ${worked.stats.reducedBakes} interim maps requested, ${worked.stats.workerBakes} built in the worker, ` +
+      `${worked.stats.mainThreadBakes} on the main thread; the shown map has ${worked.same.differing} of ${worked.same.width * worked.same.height * 4} bytes unlike the main thread's, the first frame's map has ${worked.other.differing}`,
+  );
+  if (worked.stats.workerBakes < 1) fail('no interim map was built in the worker');
+  if (worked.stats.mainThreadBakes !== 0) fail(`${worked.stats.mainThreadBakes} interim maps were built on the main thread although the worker was available`);
+  if (worked.stats.workerBakes > worked.stats.reducedBakes) fail('the worker built more maps than were requested');
+  if (!worked.shown || !worked.shown.startsWith('blob:')) fail(`the filter ended on ${worked.shown}, not on a map the worker built`);
+  if (worked.same.differing !== 0) fail(`the worker's map differs from the main thread's in ${worked.same.differing} bytes`);
+  if (!(worked.other.differing > 0)) fail('canary: the first frame draws the same map as the last, so the comparison cannot tell maps apart');
 
   // 10d. Appear is the lens's strength written in place (§1, materialise by bending light): thirty
   //    steps cost no bake and no swap, absent reads as the page, half as less than present. The canary
