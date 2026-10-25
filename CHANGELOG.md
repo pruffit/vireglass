@@ -1,5 +1,37 @@
 # Changelog
 
+## 3.7.0 (unreleased)
+
+One family of maps. DOM target only. A lens that finished a motion used to change on screen: the interim map was a
+reduced, stretched one, the settled map a different image, and the two met in a visible step after a pause
+(pruffit/vireuikit#44). Interim and settled maps are now the same bytes for the same box, morph, optics and density,
+and a motion that only changes the box gets maps of its own.
+
+- An interim job is a pair: the worker builds the displacement map and the spectral hue map for one key. The main thread
+  never bakes while a lens is in interim when a worker is available; without one the displacement map is built on the
+  main thread as before and the hue keeps the settled one.
+- The hue is drawn on the same silhouette as the displacement map, with the morph shapes and their smoothing. A morph
+  used to refract along the bridge and take its colour from the plain rounded rect.
+- One key for both. The box is snapped to half a pixel (it was 2 px for interim and exact for settled), interim uses the
+  device pixel ratio the settled map uses (it was capped at 1), and the key lists exactly what the pixels depend on:
+  refraction, thickness, bevel, film, iridescence, diffraction. Blur and ior are no longer part of it. The settled
+  key also includes `shapes` now, which it ignored.
+- Landing on the key the lens showed in interim keeps that pair, its URLs included: no bake, no filter swap and no
+  change to the filter. A pair the settled cache already holds is shown in interim without a job.
+- A change of the box in interim (a resize, or a new measured box) requests a pair for the live box exactly as
+  `setMorph` does: one build in flight per lens, the newest wins, and a pair is shown when it is newer than the one
+  shown. It used to keep the old box's map stretched over the new box.
+- The refraction strength follows the live box, not the box the shown map was baked for, so the depth no longer jumps
+  when a map for the new size arrives.
+- The filter's structure depends only on dispersion being on or off and the hue being on or off. Blur, the ior ratios of
+  the three dispersion passes and the hue's weights are attributes, rewritten in place, so a material step no longer
+  forces a synchronous bake and a filter swap on landing.
+- The worker's 2 s timeout counts from the start of a job. Jobs from all lenses go to the worker one at a time, so a
+  queue of jobs no longer disables the worker for good; a job that started and hangs still does.
+- `check:dom` grows a geometry-only resize in interim followed by the landing: the landed frame has no pixel that
+  differs from the last interim frame by more than one level, and the same run with the first box's maps put back
+  differs at 5308 pixels.
+
 ## 3.6.1
 
 The deferred landing never puts rows and an encode in one task. DOM target only. A map whose rows fit in one slice went

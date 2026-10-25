@@ -170,12 +170,15 @@ glass.setInterim(false);  // when it lands
 A glass element that changes shape every frame used to re-run the whole pipeline every frame: a
 backdrop probe, a full-resolution displacement map (and spectral map) and a new filter element.
 That is the difference between 60 fps and 10 to 20. While interim, the element does none of it: it
-reuses its last sample, keeps its filter, and the browser stretches the existing map over the live
-box. The body, rim, shadow and custom properties still update every frame. A change of the morph
-shapes passed to `setMorph` or of the system accessibility settings rebuilds the map
-at reduced resolution and shows it in place, where the browser decodes lazily only once it has been
-decoded. `setInterim(false)` does one full-resolution rebuild and one probe (with a supplied
-`sample` it does not probe). Repeating `setInterim(false)` is a no-op.
+reuses its last sample and keeps its filter. The body, rim, shadow and custom properties still update
+every frame. A change of the box, of the morph shapes passed to `setMorph` or of the material asks a
+worker for a pair, the displacement map and the spectral hue map for that box, one build at a time and
+the newest wins. The pair is shown once both maps have decoded; until then the browser stretches the
+last one, and the refraction strength already follows the live box. Interim and settled maps share one
+key, so `setInterim(false)` on a lens that is showing the pair for its box changes nothing on screen,
+bakes nothing and, with a supplied `sample`, probes nothing; otherwise it does one full-resolution
+rebuild and one probe. Repeating `setInterim(false)` is a no-op. Without a worker the displacement map
+is built on the main thread, as before.
 
 Always pair `setInterim(true)` with `setInterim(false)`. As a safety net an element that gets no call
 at all for 2 seconds (no resize, morph, appear or update) leaves interim by itself, exactly as

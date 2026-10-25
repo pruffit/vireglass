@@ -492,10 +492,11 @@ export type GlassHandle = {
   setMorph(morph: GlassMorph | null): void;
   /**
    * While on, the element is changing shape every frame (a morph, a drag, a growth). It stops
-   * probing the backdrop, stops rebuilding its maps and keeps its filter: the existing map is
-   * stretched over the live box. A change of `setMorph` shapes still updates the map, at reduced
-   * resolution and only once the new image has decoded. Turning it off does one full-resolution
-   * rebuild and one probe. With no call for 2 s it turns itself off; calling it on again restarts
+   * probing the backdrop, stops baking on the main thread and keeps its filter. A change of the box,
+   * of `setMorph` shapes or of the material asks a worker for a pair of maps (displacement and
+   * hue), shown once both have decoded; the strength follows the live box meanwhile. Turning it
+   * off on a lens that shows the pair for its box changes nothing; otherwise it does one
+   * full-resolution rebuild and one probe. With no call for 2 s it turns itself off; calling it on again restarts
    * the 2 s, which is how a host keeps a gesture held still interim. Turning it off twice does nothing.
    */
   setInterim(on: boolean): void;
