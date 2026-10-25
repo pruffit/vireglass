@@ -316,4 +316,21 @@ describe('a hidden page', () => {
     await decodeAll();
     expect(href()).toBe(urls[0]);
   });
+
+  it('verifies the latest of two landings made while hidden, not the first', async () => {
+    const g = attach();
+    hidden = true;
+    for (const width of [260, 300]) {
+      g.setInterim(true);
+      g.prepare(dest(width));
+      await worker.answer(width === 260 ? 0 : 1);
+      box = { width, height: 100 };
+      g.land();
+    }
+    decodes = [];
+    hidden = false;
+    document.dispatchEvent(new Event('visibilitychange'));
+    await flush();
+    expect(decodes.map((d) => d.url)).toEqual([urls[1]]);
+  });
 });

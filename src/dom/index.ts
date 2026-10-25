@@ -601,6 +601,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   let waiters: (() => void)[] = [];
   let easeTimer: ReturnType<typeof setTimeout> | null = null;
   let onVisible: (() => void) | null = null;
+  let verifying: InterimMap | null = null;
   let mapKey = '';
   // The key of the pair on the filter, and the interim record it came from, if it did.
   let shownKey = '';
@@ -1120,12 +1121,13 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
 
   /** A page that was hidden drew no frame and decoded nothing: when it is shown again, decode, and land the lens properly if it moved meanwhile. */
   function verifyWhenVisible(rec: InterimMap): void {
+    verifying = rec;
     if (onVisible || typeof document === 'undefined') return;
     onVisible = () => {
       if (document.hidden) return;
       document.removeEventListener('visibilitychange', onVisible!);
       onVisible = null;
-      void decodeRec(rec).then(() => {
+      void decodeRec(verifying!).then(() => {
         if (destroyed || interim) return;
         const g = opts.geometry ?? measureGeometry(el);
         if (isEmpty(g) || describe(g, morph).key === shownKey) return;
