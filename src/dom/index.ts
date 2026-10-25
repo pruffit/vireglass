@@ -31,7 +31,7 @@ import { applyAppear } from '../appear';
 import { accentAmount, accentTone } from '../accent';
 import type { VireGlassAccent } from '../adapters';
 import { concentricRadius } from '../concentric';
-import { RIM_WIDTH_PX, contrastRimCss, rimGradientCss } from './rim';
+import { RIM_WIDTH_PX, contrastRimCss, rimGradientCss, rimLayerCss } from './rim';
 import { GLASS_ATTR, warnIfNested } from './nesting';
 import { holdProperty } from './style-hold';
 import { REST_LIGHT } from '../adapters';
@@ -110,7 +110,7 @@ function ensureRimStyles(host: Document | ShadowRoot): void {
   const style = document.createElement('style');
   style.setAttribute(STYLE_ATTR, '');
   style.textContent =
-    `[${GLASS_ATTR}]::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;padding:var(--vireglass-rim-width,1px);background:var(--vireglass-rim,none);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);mask-composite:exclude}` +
+    rimLayerCss(`[${GLASS_ATTR}]`) +
     // The touch glow (§5) lights the material from the point of contact. Below the content, above
     // the refraction — it is light inside the glass, not a film over the label.
     `[${GLASS_ATTR}]::before{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--vireglass-glow,none);opacity:var(--vireglass-glow-opacity,0)}`;

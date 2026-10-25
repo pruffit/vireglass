@@ -121,6 +121,20 @@ export function rimGradientCss(
 export const RIM_WIDTH_PX = RIM.widthPx;
 
 /**
+ * The rule that draws the hairline on `selector::after`. The ring is the border area of the layer:
+ * `background-clip: border-area` clips the paint to it and follows the box and its radii on its
+ * own, with no mask and so no offscreen layer the size of the box. Where that is not supported the
+ * ring is cut by a pair of masks, which is the same ring.
+ */
+export function rimLayerCss(selector: string): string {
+  const base = `${selector}::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--vireglass-rim,none)}`;
+  const clipped = `${selector}::after{border:var(--vireglass-rim-width,1px) solid transparent;background-origin:border-box;background-clip:border-area}`;
+  const masked =
+    `${selector}::after{padding:var(--vireglass-rim-width,1px);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);mask-composite:exclude}`;
+  return `${base}@supports (background-clip:border-area){${clipped}}@supports not (background-clip:border-area){${masked}}`;
+}
+
+/**
  * The border for increased contrast (§9: elements become "predominantly black or white" and are
  * highlighted "with a contrasting border").
  *
