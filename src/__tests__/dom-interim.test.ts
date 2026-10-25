@@ -32,6 +32,18 @@ describe('the interim store', () => {
     expect(lru.get('a')).toBe(1);
     expect(lru.size).toBe(2);
   });
+
+  it('hands an evicted or cleared value to the hook', () => {
+    const gone: number[] = [];
+    const lru = createLru<number>(2, (v) => gone.push(v));
+    lru.set('a', 1);
+    lru.set('b', 2);
+    lru.set('c', 3);
+    expect(gone).toEqual([1]);
+    lru.clear();
+    expect(gone).toEqual([1, 2, 3]);
+    expect(lru.size).toBe(0);
+  });
 });
 
 describe('render counters', () => {
