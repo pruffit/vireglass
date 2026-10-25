@@ -182,6 +182,22 @@ describe('prepare and land', () => {
   });
 });
 
+describe('superseded destinations', () => {
+  it('builds only the newest of three prepares: the older queued jobs are taken back one by one', async () => {
+    const g = attach();
+    g.setInterim(true);
+    g.setMorph({ smoothing: 10, shape: { offsetX: 10, offsetY: 0, width: 40, height: 40, cornerRadius: 8 } });
+    expect(worker.jobs).toHaveLength(1);
+    g.prepare(dest(111));
+    g.prepare(dest(222));
+    await flush();
+    g.prepare(dest(333));
+    await flush();
+    await worker.answer(0);
+    expect(worker.jobs.map((j) => j.geometry.width)).toEqual([200, 333]);
+  });
+});
+
 describe('a landing that is not ready', () => {
   it('returns blend after a retarget, mixes through attributes and ends on the destination', async () => {
     timers();

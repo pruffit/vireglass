@@ -956,13 +956,13 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     destJob = { p, cancel: job.cancel };
     job.then(
       (pair) => {
-        destJob = null;
+        if (destJob?.p === p) destJob = null;
         bump('workerBakes');
         takePair(p, pair);
         nextDestination();
       },
       (error: WorkerFailure) => {
-        destJob = null;
+        if (destJob?.p === p) destJob = null;
         if (!error.silent) reportFailure(error);
         if (!error.superseded && wants(p) && !p.rec) buildOnMainThread(p);
         nextDestination();
