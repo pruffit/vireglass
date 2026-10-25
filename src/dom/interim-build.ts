@@ -33,6 +33,8 @@ export function browserWorker(): WorkerLike | null {
   }
 }
 
+const silent = (message: string): WorkerFailure => Object.assign(new Error(message), { silent: true });
+
 export function createInterimBuilder(make: () => WorkerLike | null) {
   let worker: WorkerLike | null = null;
   let off = false;
@@ -66,12 +68,12 @@ export function createInterimBuilder(make: () => WorkerLike | null) {
       waiting.delete(data.id);
       if ('error' in data) {
         entry.reject(new Error(data.error));
-        disable(new Error(data.error));
+        disable(silent('vireglass/dom: the interim worker failed on another job'));
         return;
       }
       entry.resolve({ url: URL.createObjectURL(data.blob), width: data.width, height: data.height, scale: data.scale });
     };
-    worker.onerror = () => disable(Object.assign(new Error('vireglass/dom: the interim worker failed'), { silent: true }));
+    worker.onerror = () => disable(silent('vireglass/dom: the interim worker failed'));
     return worker;
   }
 
@@ -82,7 +84,7 @@ export function createInterimBuilder(make: () => WorkerLike | null) {
     },
     build(optics: VireGlassOptics, geometry: VireGlassGeometry, dpr: number, state: DisplacementState): Promise<DisplacementMap> {
       const target = start();
-      if (!target) return Promise.reject(Object.assign(new Error('vireglass/dom: no interim worker'), { silent: true }));
+      if (!target) return Promise.reject(silent('vireglass/dom: no interim worker'));
       const id = (nextId += 1);
       return new Promise((resolve, reject) => {
         waiting.set(id, { resolve, reject });
@@ -91,7 +93,7 @@ export function createInterimBuilder(make: () => WorkerLike | null) {
         } catch (error) {
           waiting.delete(id);
           reject(error instanceof Error ? error : new Error(String(error)));
-          disable(Object.assign(new Error('vireglass/dom: the interim worker refused a job'), { silent: true }));
+          disable(silent('vireglass/dom: the interim worker refused a job'));
         }
       });
     },

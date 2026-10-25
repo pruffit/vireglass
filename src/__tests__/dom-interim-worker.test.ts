@@ -112,7 +112,21 @@ beforeEach(() => {
   };
 });
 
+let second: GlassHandle | null = null;
+let el2: HTMLElement;
+const hrefOf = (target: HTMLElement) =>
+  document.querySelectorAll('svg[data-vireglass-filters] filter')[target === el ? 0 : 1]?.querySelector('feImage')?.getAttribute('href');
+function attachSecond(): GlassHandle {
+  document.body.insertAdjacentHTML('beforeend', '<div id="g2"></div>');
+  el2 = document.getElementById('g2') as HTMLElement;
+  el2.getBoundingClientRect = el.getBoundingClientRect;
+  second = attachGlass(el2, { material: MATERIAL_PRESETS.glass, shadow: false });
+  return second;
+}
+
 afterEach(() => {
+  second?.destroy();
+  second = null;
   handle?.destroy();
   handle = null;
   delete (globalThis as { matchMedia?: unknown }).matchMedia;
@@ -268,6 +282,60 @@ describe('a stale result never lands', () => {
     first.resolve();
     await flush();
     expect(href()).toBe(urls[1]);
+  });
+});
+
+describe('two lenses share the worker', () => {
+  function both(): [GlassHandle, GlassHandle] {
+    const a = attach();
+    const b = attachSecond();
+    a.setInterim(true);
+    b.setInterim(true);
+    a.setMorph(shape(10));
+    b.setMorph(shape(10));
+    expect(worker.jobs).toHaveLength(2);
+    return [a, b];
+  }
+
+  it('lands each answer on the lens that asked, whatever the order', async () => {
+    both();
+    await worker.answer(1);
+    await worker.answer(0);
+    await decodeAll();
+    expect(hrefOf(el2)).toBe(urls[0]);
+    expect(hrefOf(el)).toBe(urls[1]);
+  });
+
+  it('drops the answer of a lens destroyed mid-build and leaves the other alone', async () => {
+    const [a] = both();
+    a.destroy();
+    await worker.answer(0);
+    expect(revoked).toEqual([urls[0]]);
+    await worker.answer(1);
+    await decodeAll();
+    expect(href()).toBe(urls[1]);
+    expect(reported).toHaveLength(0);
+  });
+
+  it('gives both a map from the main thread when the worker errors, and reports nothing', async () => {
+    both();
+    worker.onerror?.({});
+    await flush();
+    await decodeAll();
+    expect(hrefOf(el)).toMatch(/^main:/);
+    expect(hrefOf(el2)).toMatch(/^main:/);
+    expect(reported).toHaveLength(0);
+    expect(worker.terminated).toBe(true);
+  });
+
+  it('reports a failed job once, by the lens whose job it was, and the other falls back silently', async () => {
+    both();
+    worker.onmessage?.({ data: { id: 1, error: 'convertToBlob failed' } });
+    await flush();
+    await decodeAll();
+    expect(reported).toHaveLength(1);
+    expect(hrefOf(el)).toMatch(/^main:/);
+    expect(hrefOf(el2)).toMatch(/^main:/);
   });
 });
 
