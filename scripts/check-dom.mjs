@@ -428,7 +428,7 @@ const FIXTURE = `<!doctype html>
       return Number(css.slice(at + 5, css.indexOf(')', at)).split(',')[3]);
     };
     const alpha = alphaOf(lens.style.backgroundColor);
-    const shadow = alphaOf(lens.style.boxShadow);
+    const shadow = alphaOf(lens.style.getPropertyValue('--vireglass-shadow-color'));
     glass.destroy();
     return { busy: sample.busy, luma: sample.luma, alpha, shadow };
   };

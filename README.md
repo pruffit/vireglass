@@ -203,7 +203,7 @@ timing it: drive a morph, then assert the counters stayed at zero.
 | `--vireglass-body-color` | the glass body: density from the model, hue from the surroundings |
 | `--vireglass-tint-color` | ambient colour alone |
 | `--vireglass-rim`, `--vireglass-rim-width` | the hairline's gradient, applied for you |
-| `--vireglass-shadow` | the adaptive shadow, also written to `box-shadow` unless you opt out |
+| `--vireglass-shadow` | the adaptive shadow, also written to `box-shadow` unless you opt out; its colour is `--vireglass-shadow-color` |
 | `--vireglass-radius`, `--vireglass-radius-min` | for concentric children (§11) |
 | `--vireglass-ink`, `--vireglass-tint`, `--vireglass-body-density` | the model's raw numbers |
 

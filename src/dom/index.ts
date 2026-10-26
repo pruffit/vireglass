@@ -25,7 +25,7 @@ import { Superseded, yieldTask } from './bake';
 import { startBlend, type Blend } from './blend';
 import { pairBytes, touch, track, untrack, type BudgetEntry } from './pair-budget';
 import { supportsSvgBackdropFilter } from './support';
-import { boxShadowCss } from './shadow';
+import { shadowParts } from './shadow';
 import { bodyLayer, resolveBody, withPresence } from './body';
 import { systemAccessibility, watchAccessibility } from './preferences';
 import { applyAccessibility, contrastRimLuma, elasticAllowed, type VireGlassAccessibility } from '../accessibility';
@@ -116,7 +116,7 @@ function ensureRimStyles(host: Document | ShadowRoot): void {
   ensureColourProperties();
   style.textContent =
     rimLayerCss(`[${GLASS_ATTR}]`) +
-    `:where([data-vireglass-ease]){transition:--vireglass-ink-color ${EASE_MS}ms,--vireglass-tint-color ${EASE_MS}ms,--vireglass-body-color ${EASE_MS}ms,background-color ${EASE_MS}ms,box-shadow ${EASE_MS}ms}` +
+    `:where([data-vireglass-ease]){transition:--vireglass-ink-color ${EASE_MS}ms,--vireglass-tint-color ${EASE_MS}ms,--vireglass-body-color ${EASE_MS}ms,--vireglass-shadow-color ${EASE_MS}ms,background-color ${EASE_MS}ms}` +
     // The touch glow (§5) lights the material from the point of contact. Below the content, above
     // the refraction — it is light inside the glass, not a film over the label.
     `[${GLASS_ATTR}]::before{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--vireglass-glow,none);opacity:var(--vireglass-glow-opacity,0)}`;
@@ -322,7 +322,7 @@ function ensureColourProperties(): void {
   if (document.head.querySelector(`style[${PROPERTIES_ATTR}]`)) return;
   const style = document.createElement('style');
   style.setAttribute(PROPERTIES_ATTR, '');
-  style.textContent = ['ink', 'tint', 'body']
+  style.textContent = ['ink', 'tint', 'body', 'shadow']
     .map((name) => `@property --vireglass-${name}-color{syntax:'<color>';inherits:true;initial-value:transparent}`)
     .join('');
   document.head.appendChild(style);
@@ -1563,7 +1563,9 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     el.style.setProperty('--vireglass-radius', `${geometry.cornerRadius}px`);
     el.style.setProperty('--vireglass-radius-min', `${concentricRadius(geometry.cornerRadius, geometry.cornerRadius, 0)}px`);
 
-    const shadow = boxShadowCss(geometry, sample, appear);
+    const { reachPx, colour } = shadowParts(geometry, sample, appear);
+    const shadow = `0 0 ${reachPx} var(--vireglass-shadow-color)`;
+    el.style.setProperty('--vireglass-shadow-color', colour);
     el.style.setProperty('--vireglass-shadow', shadow);
     if (opts.shadow !== false) el.style.setProperty('box-shadow', shadow);
   }
@@ -1793,6 +1795,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     el.style.removeProperty('--vireglass-rim');
     el.style.removeProperty('--vireglass-rim-width');
     el.style.removeProperty('--vireglass-shadow');
+    el.style.removeProperty('--vireglass-shadow-color');
     el.style.removeProperty('--vireglass-radius');
     el.style.removeProperty('--vireglass-radius-min');
     el.style.removeProperty('box-shadow');

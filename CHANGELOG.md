@@ -43,7 +43,7 @@ and a motion that only changes the box gets maps of its own.
   timer, probe, bake or filter swap. Otherwise it returns `'blend'`: a 120 ms mix from the shown pair into the
   destination, written as attributes of two added `feImage`s and `feComposite`s, removed at the end.
   `setInterim(false)` is `land()`. With `prepare` the colours start easing to the destination sample when it is
-  called, over 200 ms through registered `--vireglass-ink-color`, `-tint-color`, `-body-color` and `box-shadow`, and
+  called, over 200 ms through registered `--vireglass-ink-color`, `-tint-color`, `-body-color` and `-shadow-color` (the shadow's geometry follows each frame), and
   the landing changes none of them and does not probe. A landing with no `prepare` probes once and eases.
 - A landing lands the lens as it is: a prepared pair for another snapped box, density or material is replaced by the
   live one (shown as the nearest ready pair, then blended), a resize, `setMorph`, `setMaterial` or `setInterim(true)`
