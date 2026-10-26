@@ -51,7 +51,7 @@ and a motion that only changes the box gets maps of its own.
 - `handle.setMaterial(patch)` changes the material the way `prepare({ material })` expects.
 - Without a worker, an interim pair claims its key only once its hue is on the filter; the hue is built in 4 ms slices
   when the key holds still, so landing on a key never keeps the previous box's hue.
-- Without a worker, an interim map is also rendered in 4 ms slices, one build at a time with the newest key waiting; the longest main-thread task of a no-worker morph falls from 10.7-14.2 ms to about 6 ms.
+- Without a worker, an interim map is also rendered in 4 ms slices, one build at a time with the newest key waiting; the longest main-thread task of a no-worker morph falls from 10.7-14.2 ms to 5-6 ms.
 - A hidden page installs the pair undecoded and settles on `visibilitychange`.
 - The decoded pairs of all lenses stay under about 24 MB; lenses off screen go first, and a pair a filter shows or a
   landing holds is never released. The worker queue serves destinations before interim maps.
@@ -59,10 +59,11 @@ and a motion that only changes the box gets maps of its own.
   `setMaterial`, `prepare`, `land` and `whenPrepared`: a type-level change for code that implements or constructs a
   `GlassHandle` or a `RenderStats` (a test double, a wrapper, a literal).
 - `check:dom`: a morph with `prepare` at its start and `land()` in its last frame changes 0 pixels afterwards, with
-  the worker and without it, and no main-thread task of the run passes 16.7 ms (longest 5.5 ms with the worker, 12.4 ms
+  the worker and without it, and no main-thread task of the run passes 16.7 ms (longest 4-6 ms with the worker, 5-6 ms
   without); a morph without `prepare` lands as a blend and changes 650 pixels. A lens with no worker and no `prepare`,
   resized in interim and landed with `setInterim(false)`, differs from a lens settled on the final box at 0 pixels
-  (with the first box's hue put back, 106).
+  (with the first box's hue put back, 106). A resize during a blend, at five moments of it, moves the displayed map by
+  at most one ramp step between two frames, read off the pixels of the maps the filter shows.
 
 ## 3.6.1
 

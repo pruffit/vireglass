@@ -186,7 +186,9 @@ const how = lens.land(); // 'exact' | 'blend'
 - If the pair is not ready (a retarget in the last 100 ms, a cold cache, a slow fallback) the lens blends: two
   `feImage`s and an `feComposite` are added to the filter, mixed over 120 ms by attributes, and removed, ending on the
   destination. It returns `'blend'` and counts `landedBlend`. A resize, `setMorph`, `setMaterial` or `setInterim(true)`
-  during a blend keeps the mix where it is and changes only the pair it is headed for. A different filter structure (dispersion or hue turned
+  during a blend continues from what is shown: the current mix becomes the outgoing input of a new stage that ramps from 0
+  to the new pair, up to three images in the filter. At that cap a newer pair replaces the newest one while it is within
+  0.1 of its start (a jump of at most 0.1 of the distance), and otherwise waits for the stage to end. A different filter structure (dispersion or hue turned
   on or off) is replaced in the task and counted in `syncSwaps`. `setInterim(false)` is `land()`.
 - A hidden page draws no frame and clamps timers: `land()` installs the pair undecoded and settles on `visibilitychange`.
 - Without a worker (`Worker`, `OffscreenCanvas` or blob workers missing, e.g. under a CSP), `prepare` bakes on the main
