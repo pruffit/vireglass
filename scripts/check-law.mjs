@@ -131,6 +131,8 @@ const NOT_CALIBRATION = new Map([
   ['JOB_TIMEOUT_MS', 'how long the page waits for a worker before it builds on the main thread, not a property of the material'],
   ['EASE_MS', 'how long the page eases a colour to a changed backdrop, a host-interface timing, not a property of the material'],
   ['BLEND_MS', 'how long a landing mixes two pairs of maps, a host-interface timing, not a property of the material'],
+  ['MAX_STAGES', 'how many images a retargeted blend may hold in the filter, traded against its cost'],
+  ['SWAP_BELOW', 'how far into its ramp a blend stage may still be swapped for a newer target, a host-interface bound, not a property of the material'],
   ['JOB_TIMEOUT_FLOOR_MS', 'the least time the page waits for a worker job, not a property of the material'],
   ['TIMEOUT_MS_PER_MEGAPIXEL', 'how much longer the page waits per megapixel a worker job renders, not a property of the material'],
   ['STRIKES_BEFORE_OFF', 'how many worker timeouts in a row turn the worker off, not a property of the material'],
