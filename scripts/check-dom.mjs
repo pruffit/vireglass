@@ -393,6 +393,95 @@ const FIXTURE = `<!doctype html>
     hostLens = null;
     document.getElementById('glass').style.width = '${BOX.w}px';
   };
+  // A resize delay ms into a blend, recorded frame by frame as the maps and weights the filter shows; the effective map is
+  // read off real pixels, so a jump on the retarget shows as a step between two frames.
+  const mapBlobs = new Map();
+  const makeUrl = URL.createObjectURL.bind(URL);
+  URL.createObjectURL = (blob) => {
+    const url = makeUrl(blob);
+    mapBlobs.set(url, blob);
+    return url;
+  };
+  let blendLens = null;
+  const snapFilter = () => {
+    const all = document.querySelectorAll('svg[data-vireglass-filters] filter');
+    return [...all[all.length - 1].children]
+      .filter((n) => n.localName === 'feImage' || n.localName === 'feComposite')
+      .map((n) => ({ tag: n.localName, result: n.getAttribute('result') || '', a: n.getAttribute('in'), b: n.getAttribute('in2'), k2: Number(n.getAttribute('k2')), k3: Number(n.getAttribute('k3')), href: n.getAttribute('href') }));
+  };
+  globalThis.__blendRun = async (delay) => {
+    const glass = hostReset();
+    glass.style.width = '${BOX.w}px';
+    blendLens = attachGlass(glass, { material: MATERIAL_PRESETS.glass, interactive: false, shadow: false, sample });
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    blendLens.setInterim(true);
+    const to = ${BOX.w} + 60;
+    blendLens.prepare({ geometry: { width: to, height: ${BOX.h}, cornerRadius: ${BOX.r} } });
+    glass.style.width = to + 'px';
+    const landed = blendLens.land();
+    const frames = [];
+    let began = null;
+    let resized = false;
+    let quiet = 0;
+    const t0 = performance.now();
+    while (performance.now() - t0 < 4000 && quiet < 10) {
+      const now = await new Promise((r) => requestAnimationFrame(r));
+      await new Promise((r) => setTimeout(r, 0));
+      const snap = snapFilter();
+      frames.push({ now, snap });
+      const inBlend = snap.some((n) => n.tag === 'feComposite' && n.result.startsWith('map'));
+      if (inBlend && began === null) began = now;
+      if (began !== null && !resized && now - began >= delay) {
+        glass.style.width = (to + 40) + 'px';
+        blendLens.update();
+        resized = true;
+      }
+      quiet = resized && !inBlend ? quiet + 1 : 0;
+    }
+    const pixels = new Map();
+    for (const f of frames) {
+      for (const n of f.snap) {
+        if (n.tag !== 'feImage' || !n.result.startsWith('map') || pixels.has(n.href)) continue;
+        const bitmap = await createImageBitmap(mapBlobs.get(n.href) ?? (await (await fetch(n.href)).blob()));
+        const canvas = new OffscreenCanvas(32, 16);
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(bitmap, 0, 0, 32, 16);
+        pixels.set(n.href, Float32Array.from(ctx.getImageData(0, 0, 32, 16).data));
+      }
+    }
+    const dist = (a, b) => a.reduce((m, v, i) => Math.max(m, Math.abs(v - b[i])), 0);
+    const all = [...pixels.values()];
+    let spread = 0;
+    for (const a of all) for (const b of all) spread = Math.max(spread, dist(a, b));
+    const at = (snap, name) => {
+      const n = snap.find((m) => m.result === name);
+      if (n.tag === 'feImage') return pixels.get(n.href);
+      const x = at(snap, n.a);
+      const y = at(snap, n.b);
+      return x.map((v, i) => n.k2 * v + n.k3 * y[i]);
+    };
+    let worst = 0;
+    let retargetWeight = null;
+    let longest = 1;
+    for (let i = 1; i < frames.length; i += 1) {
+      const was = frames[i - 1].snap;
+      const now = frames[i].snap;
+      const chain = (snap) => snap.some((n) => n.tag === 'feComposite' && n.result.startsWith('map'));
+      const images = (snap) => snap.filter((n) => n.tag === 'feImage' && n.result.startsWith('map')).length;
+      longest = Math.max(longest, images(now));
+      if (images(was) === 2 && images(now) === 3) retargetWeight = was.find((n) => n.result === 'map').k3;
+      if (!chain(was) && !chain(now)) continue;
+      const step = ((frames[i].now - frames[i - 1].now) / 120) * spread + 2;
+      worst = Math.max(worst, dist(at(was, 'map'), at(now, 'map')) / step);
+    }
+    const last = frames[frames.length - 1].snap;
+    return { landed, frames: frames.length, resized, spread, worst, retargetWeight, longest, collapsed: !last.some((n) => n.tag === 'feComposite' && n.result.startsWith('map')) };
+  };
+  globalThis.__blendDone = () => {
+    blendLens?.destroy();
+    blendLens = null;
+    document.getElementById('glass').style.width = '${BOX.w}px';
+  };
   globalThis.__prepSettle = (ms) => new Promise((r) => setTimeout(r, ms));
   globalThis.__prepDone = () => {
     prepLens?.destroy();
@@ -1136,6 +1225,30 @@ try {
     const moved = await countWhole(page, first, later);
     console.log(`check-dom: canary without prepare — ${run.landed}, ${moved} pixels change after the last motion frame`);
     if (run.landed === 'exact' && moved === 0) fail('canary: a morph with no prepare landed exactly and changed nothing, so the comparison cannot tell');
+  }
+
+  // 10c5. A resize at any moment of a blend continues the mix: no frame differs from the one before by more than one
+  //    ramp step of the distance between the maps. A blend that swapped the incoming image and kept its weight jumps by
+  //    the weight times the distance when the new pair arrives, so some run has to retarget late enough to tell.
+  {
+    const runs = [];
+    for (const delay of [10, 30, 50, 70, 90]) {
+      runs.push(await page.evaluate((d) => globalThis.__blendRun(d), delay));
+      await page.evaluate(() => globalThis.__blendDone());
+    }
+    const worst = Math.max(...runs.map((r) => r.worst));
+    const late = Math.max(0, ...runs.map((r) => r.retargetWeight ?? 0));
+    console.log(
+      `check-dom: a resize during a blend, at 5 moments — ${runs.filter((r) => r.retargetWeight !== null).length} retargeted (latest at weight ${late.toFixed(2)}), ` +
+        `largest frame-to-frame step ${worst.toFixed(2)} of one ramp step, up to ${Math.max(...runs.map((r) => r.longest))} maps in the filter`,
+    );
+    for (const r of runs) {
+      if (r.landed !== 'blend') fail(`the blend case landed ${r.landed}, so it measures no blend`);
+      if (!r.collapsed) fail('a blend that was resized left its extra maps in the filter');
+      if (r.longest > 3) fail(`a retargeted blend held ${r.longest} maps`);
+    }
+    if (worst > 1) fail(`a resize during a blend moved the map by ${worst.toFixed(2)} ramp steps in one frame`);
+    if (late < 0.4) fail(`canary: no resize retargeted a blend past weight 0.4 (latest ${late.toFixed(2)}), so a jump on the retarget could not show`);
   }
 
   // 10d. Appear is the lens's strength written in place (§1, materialise by bending light): thirty
