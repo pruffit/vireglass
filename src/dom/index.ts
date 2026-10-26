@@ -607,6 +607,8 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   let lastSample: BackdropSample | null = null;
   // A backdrop the colours move to in the next apply, eased, instead of one that is probed or held.
   let toSample: BackdropSample | null = null;
+  // Where the lens and the page were at its last probe: a landing that finds both unmoved has nothing new to read.
+  let probedAt = '';
   let seq = 0;
   let shownSeq = 0;
   // A landing whose maps wait for the next frame; a second landing of the same maps joins it.
@@ -696,6 +698,16 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     const prev = hueRec;
     hueRec = rec;
     if (prev && prev !== rec) maybeRelease(prev);
+  }
+
+  function whereAmI(): string {
+    const r = el.getBoundingClientRect();
+    return `${r.left},${r.top},${r.width},${r.height}|${window.scrollX},${window.scrollY}`;
+  }
+
+  function probeSelf(): BackdropSample {
+    probedAt = whereAmI();
+    return probe(el);
   }
 
   function offscreen(): boolean {
@@ -1310,9 +1322,9 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     let p = prepared;
     let sample: BackdropSample | null = null;
     let nearest: InterimMap | null = null;
-    if (!p && !supplied) {
+    if (!p && !supplied && whereAmI() !== probedAt) {
       bump('probesAtLand');
-      toSample = probe(el);
+      toSample = probeSelf();
     }
     if (p && landingDiffers(p, live)) {
       sample = p.sample;
@@ -1428,7 +1440,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     toSample = null;
     const held = (interim || landingNow) && lastSample;
     if (landingNow && !supplied && !held && !incoming) bump('probesAtLand');
-    const sample = supplied ?? incoming ?? (held ? lastSample! : probe(el));
+    const sample = supplied ?? incoming ?? (held ? lastSample! : probeSelf());
     lastSample = sample;
     const moved = before && sampleMoved(before, sample);
     if (incoming ? moved : !interim && !landingNow && appear === lastAppear && moved) easeTo();
@@ -1692,7 +1704,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       el.style.setProperty('--vireglass-glow-opacity', '0');
       return;
     }
-    const [gr, gg, gb] = ambientFrom(supplied ?? (interim && lastSample ? lastSample : probe(el)));
+    const [gr, gg, gb] = ambientFrom(supplied ?? (interim && lastSample ? lastSample : probeSelf()));
     const cx = ((x + geometry.width / 2) / geometry.width) * 100;
     const cy = ((y + geometry.height / 2) / geometry.height) * 100;
     const reach = halfMinDp(geometry) * TOUCH_RADIUS_FRACTION;

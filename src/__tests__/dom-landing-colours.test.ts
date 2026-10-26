@@ -52,6 +52,7 @@ let decodes: { resolve: () => void }[] = [];
 let handle: GlassHandle | null = null;
 let el: HTMLElement;
 let box = { width: 200, height: 100 };
+let left = 0;
 
 const flush = async () => {
   for (let i = 0; i < 6; i += 1) await Promise.resolve();
@@ -67,6 +68,7 @@ const dest = { geometry: { width: 260, height: 100, cornerRadius: 0 } };
 beforeEach(() => {
   decodes = [];
   box = { width: 200, height: 100 };
+  left = 0;
   backdrop.sample = DARK;
   backdrop.rects = [];
   worker = new FakeWorker();
@@ -75,7 +77,7 @@ beforeEach(() => {
   (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = () => undefined;
   document.body.innerHTML = '<div id="g"></div>';
   el = document.getElementById('g') as HTMLElement;
-  el.getBoundingClientRect = () => ({ left: 0, top: 0, right: box.width, bottom: box.height, x: 0, y: 0, ...box, toJSON() {} }) as DOMRect;
+  el.getBoundingClientRect = () => ({ left, top: 0, right: left + box.width, bottom: box.height, x: left, y: 0, ...box, toJSON() {} }) as DOMRect;
   (globalThis as { CSS?: unknown }).CSS = { supports: () => true };
   resetSupportCache();
   clearMapCache();
@@ -156,6 +158,7 @@ describe('the colours of a lens that crossed from a dark backdrop to a light one
     setInterimWorker(() => null);
     const dark = colours();
     handle!.setInterim(true);
+    left = 300;
     backdrop.sample = LIGHT;
     resetRenderStats();
     handle!.setInterim(false);
@@ -168,9 +171,23 @@ describe('the colours of a lens that crossed from a dark backdrop to a light one
 
   it('are not eased at the landing of a host that never prepared when the backdrop is the same', () => {
     handle!.setInterim(true);
+    left = 300;
     resetRenderStats();
     handle!.setInterim(false);
     expect(renderStats().probes).toBe(1);
     expect(eased()).toBe(false);
+  });
+
+  it('are not probed at a landing that finds the lens and the page where the last probe left them', () => {
+    handle!.setInterim(true);
+    resetRenderStats();
+    handle!.setInterim(false);
+    expect(renderStats()).toMatchObject({ probes: 0, probesAtLand: 0 });
+    handle!.setInterim(true);
+    Object.defineProperty(window, 'scrollY', { value: 120, configurable: true });
+    resetRenderStats();
+    handle!.setInterim(false);
+    expect(renderStats()).toMatchObject({ probes: 1, probesAtLand: 1 });
+    Object.defineProperty(window, 'scrollY', { value: 0, configurable: true });
   });
 });
