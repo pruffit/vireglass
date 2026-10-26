@@ -58,6 +58,20 @@ describe('the baked map', () => {
   const geometry = roundedRectGeometry(200, 120, 30);
   const optics = resolveOptics(MATERIAL_PRESETS.iridescent);
 
+  it('follows the morph silhouette the displacement map follows, not the plain rounded rect', () => {
+    const morph = { smoothing: 14, morph: { offsetX: 0, offsetY: 70, width: 60, height: 60, cornerRadius: 30 } };
+    const plain = renderSpectralPixels(optics, geometry, 1);
+    const merged = renderSpectralPixels(optics, geometry, 1, morph);
+    expect(merged.width).toBe(plain.width);
+    expect(Array.from(merged.data)).not.toEqual(Array.from(plain.data));
+    expect(Array.from(renderSpectralPixels(optics, geometry, 1, {}).data)).toEqual(Array.from(plain.data));
+    // Beside the bridge the silhouette moved, so the pixel just outside the plain rim is on the bevel.
+    const row = Math.floor(plain.height - 3);
+    const i = (row * plain.width + Math.floor(plain.width / 2)) * 4;
+    expect(merged.data[i + 3]).toBe(255);
+    expect(Array.from(merged.data.slice(i, i + 3))).not.toEqual(Array.from(plain.data.slice(i, i + 3)));
+  });
+
   it('leaves the flat middle neutral once the headroom is undone', () => {
     const { data, width, height, headroom } = renderSpectralPixels(optics, geometry, 1);
     const i = (Math.floor(height / 2) * width + Math.floor(width / 2)) * 4;

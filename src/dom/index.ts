@@ -19,10 +19,13 @@ import { roundedRectGeometry, type VireGlassGeometry } from '../geometry';
 import { resolveOptics, VIREGLASS_MATERIAL, type VireGlassMaterial, type VireGlassOptics } from '../material';
 import { probeBackdrop } from './probe';
 import { bump } from './stats';
-import { createLru, filterSignature, interimKey, quantise } from './interim';
-import { interimBuilder, releaseMap, type WorkerFailure } from './interim-build';
+import { createLru, filterSignature, landingDiffers, mapKeyFor, quantise, sampleMoved, snapGeometry } from './interim';
+import { interimBuilder, releaseMap, type InterimPair, type WorkerFailure } from './interim-build';
+import { Superseded, yieldTask } from './bake';
+import { startBlend, type Blend } from './blend';
+import { pairBytes, touch, track, untrack, type BudgetEntry } from './pair-budget';
 import { supportsSvgBackdropFilter } from './support';
-import { boxShadowCss } from './shadow';
+import { shadowParts } from './shadow';
 import { bodyLayer, resolveBody, withPresence } from './body';
 import { systemAccessibility, watchAccessibility } from './preferences';
 import { applyAccessibility, contrastRimLuma, elasticAllowed, type VireGlassAccessibility } from '../accessibility';
@@ -53,6 +56,7 @@ export * from './group';
 export * from './spectral-map';
 export * from './map-cache';
 export { renderStats, resetRenderStats, type RenderStats } from './stats';
+export { PAIR_BUDGET_BYTES } from './pair-budget';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const FILTER_HOST_ATTR = 'data-vireglass-filters';
@@ -109,8 +113,10 @@ function ensureRimStyles(host: Document | ShadowRoot): void {
   if (host.querySelector(`style[${STYLE_ATTR}]`)) return;
   const style = document.createElement('style');
   style.setAttribute(STYLE_ATTR, '');
+  ensureColourProperties();
   style.textContent =
     rimLayerCss(`[${GLASS_ATTR}]`) +
+    `:where([data-vireglass-ease]){transition:--vireglass-ink-color ${EASE_MS}ms,--vireglass-tint-color ${EASE_MS}ms,--vireglass-body-color ${EASE_MS}ms,--vireglass-shadow-color ${EASE_MS}ms,background-color ${EASE_MS}ms}` +
     // The touch glow (§5) lights the material from the point of contact. Below the content, above
     // the refraction — it is light inside the glass, not a film over the label.
     `[${GLASS_ATTR}]::before{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--vireglass-glow,none);opacity:var(--vireglass-glow-opacity,0)}`;
@@ -136,6 +142,16 @@ function getFilterHost(host: Document | ShadowRoot): SVGSVGElement {
 /** Every apply writes the presence, and most applies do not change it. */
 function writeAttr(node: Element, name: string, value: string): void {
   if (node.getAttribute(name) !== value) node.setAttribute(name, value);
+}
+
+type Channel = 'dR' | 'dG' | 'dB';
+
+/** A channel's share of the base displacement: its index shifts with the dispersion (docs/reference.md §1). */
+function channelRatio(optics: VireGlassOptics, channel: Channel): number {
+  if (channel === 'dG' || optics.iorSpread <= 1e-4) return 1;
+  const base = refractionStrength(optics.ior);
+  const shift = (channel === 'dR' ? DISPERSION.redShift : DISPERSION.blueShift) * optics.iorSpread;
+  return base > 0 ? refractionStrength(optics.ior + shift) / base : 1;
 }
 
 /**
@@ -183,12 +199,10 @@ function buildFilterElement(
   // for.
   const spread = optics.iorSpread;
   if (spread > 1e-4) {
-    const base = refractionStrength(optics.ior);
-    const ratio = (shift: number) => (base > 0 ? refractionStrength(optics.ior + shift) / base : 1);
-    const channels: Array<[string, number, string]> = [
-      ['dR', scale * ratio(DISPERSION.redShift * spread), '1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0'],
+    const channels: Array<[Channel, number, string]> = [
+      ['dR', scale * channelRatio(optics, 'dR'), '1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0'],
       ['dG', scale, '0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0'],
-      ['dB', scale * ratio(DISPERSION.blueShift * spread), '0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0'],
+      ['dB', scale * channelRatio(optics, 'dB'), '0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0'],
     ];
     for (const [name, chScale, matrix] of channels) {
       const pass = document.createElementNS(SVG_NS, 'feDisplacementMap');
@@ -202,6 +216,7 @@ function buildFilterElement(
       // element itself: under a press the scale is recomputed every frame, with nowhere else to
       // recover the shares from.
       pass.setAttribute('data-vireglass-ratio', String(scale > 0 ? chScale / scale : 1));
+      pass.setAttribute('data-vireglass-channel', name);
       const only = document.createElementNS(SVG_NS, 'feColorMatrix');
       only.setAttribute('in', `${name}raw`);
       only.setAttribute('type', 'matrix');
@@ -292,9 +307,25 @@ function fallbackFilterCss(optics: VireGlassOptics): string {
   return `blur(${blurPx}px) saturate(${saturate})`;
 }
 
-function probe(el: HTMLElement): BackdropSample {
+function probe(el: HTMLElement, rect?: ProbeRect): BackdropSample {
   bump('probes');
-  return probeBackdrop(el);
+  return probeBackdrop(el, rect ? { rect } : {});
+}
+
+type ProbeRect = { left: number; top: number; width: number; height: number };
+
+const PROPERTIES_ATTR = 'data-vireglass-properties';
+const EASE_MS = 200;
+
+/** Registered, so a colour custom property can transition: an unregistered one jumps. Document-wide, even for a shadow root. */
+function ensureColourProperties(): void {
+  if (document.head.querySelector(`style[${PROPERTIES_ATTR}]`)) return;
+  const style = document.createElement('style');
+  style.setAttribute(PROPERTIES_ATTR, '');
+  style.textContent = ['ink', 'tint', 'body', 'shadow']
+    .map((name) => `@property --vireglass-${name}-color{syntax:'<color>';inherits:true;initial-value:transparent}`)
+    .join('');
+  document.head.appendChild(style);
 }
 
 /** A map that is still decoding draws the backdrop displaced by the wrong amount, so a new one is
@@ -325,7 +356,41 @@ function afterNextFrame(): Promise<void> {
   });
 }
 
-type InterimMap = { map: DisplacementMap; ready: boolean; geometry: VireGlassGeometry };
+type InterimMap = {
+  key: string;
+  map: DisplacementMap;
+  hue: SpectralMap | null;
+  ready: boolean;
+  geometry: VireGlassGeometry;
+  /** Dropped from the store while its maps are on screen or held: released when nothing uses it. */
+  evicted?: boolean;
+  released?: boolean;
+  budget?: BudgetEntry;
+};
+
+function releaseRecord(rec: InterimMap): void {
+  rec.released = true;
+  if (rec.budget) untrack(rec.budget);
+  releaseMap(rec.map.url);
+  if (rec.hue) releaseMap(rec.hue.url);
+}
+
+/** The destination of a motion: the pair of maps for it, and the sample the lens takes at landing. */
+type Shown = { map: DisplacementMap; hue: SpectralMap | null; key: string; rec: InterimMap | null };
+
+type Prepared = {
+  token: number;
+  key: string;
+  print: string;
+  full: VireGlassOptics;
+  geometry: VireGlassGeometry;
+  dpr: number;
+  state: DisplacementState;
+  hue: boolean;
+  sample: BackdropSample | null;
+  rec: InterimMap | null;
+  failed: boolean;
+};
 
 type PendingBuild = {
   key: string;
@@ -335,6 +400,8 @@ type PendingBuild = {
   geometry: VireGlassGeometry;
   dpr: number;
   state: DisplacementState;
+  hue: boolean;
+  onMain: boolean;
 };
 
 /** Interim with no call for this long ends itself: a morph that never reported landing must not
@@ -453,6 +520,20 @@ export type GlassMorph = {
   shapes?: readonly MorphShape[];
 };
 
+/** Where a motion ends, announced when it starts. */
+export type PrepareTarget = {
+  /** The final box. */
+  geometry: VireGlassGeometry;
+  /** The final morph; absent keeps the current one, `null` means none. */
+  morph?: GlassMorph | null;
+  /** The final material, over the one the lens was attached with. */
+  material?: Partial<VireGlassMaterial>;
+  /** The backdrop of the destination: the colours start easing to it at `prepare`, and `land()` does not probe. */
+  sample?: BackdropSample;
+  /** The destination's box in the viewport: with no `sample`, the lens probes there once, after a frame. */
+  rect?: { left: number; top: number; width: number; height: number };
+};
+
 export type GlassHandle = {
   update(): void;
   /**
@@ -467,15 +548,16 @@ export type GlassHandle = {
   /** A glow that started on a neighbour, in page coordinates (§5). Null clears it. */
   setNeighbourGlow(glow: { pageX: number; pageY: number; strength: number } | null): void;
   setMorph(morph: GlassMorph | null): void;
-  /**
-   * While on, the element is changing shape every frame (a morph, a drag, a growth). It stops
-   * probing the backdrop, stops rebuilding its maps and keeps its filter: the existing map is
-   * stretched over the live box. A change of `setMorph` shapes still updates the map, at reduced
-   * resolution and only once the new image has decoded. Turning it off does one full-resolution
-   * rebuild and one probe. With no call for 2 s it turns itself off; calling it on again restarts
-   * the 2 s, which is how a host keeps a gesture held still interim. Turning it off twice does nothing.
-   */
+  /** Changes the material (a patch over the current one), the way a `prepare({ material })` expects its destination to be reached. */
+  setMaterial(material: Partial<VireGlassMaterial>): void;
+  /** While on, the lens changes shape every frame: no probe, no main-thread bake, the same filter. With no call for 2 s it ends itself; `setInterim(false)` is `land()`. */
   setInterim(on: boolean): void;
+  /** Announces where the motion ends, so its pair of maps and colours are ready by `land()`. The newest call wins; `null` forgets it. */
+  prepare(target: PrepareTarget | null): void;
+  /** Ends interim on the prepared destination, or on the current box: `'exact'` in this task when its pair is decoded, otherwise `'blend'`. */
+  land(): 'exact' | 'blend';
+  /** Resolves when the prepared pair is decoded, or has failed, or nothing is prepared. */
+  whenPrepared(): Promise<void>;
   /**
    * Replaces the backdrop the glass adapts to, without re-attaching, and repaints. The same
    * object as `sample` in the options; `null` goes back to probing declared backgrounds.
@@ -499,18 +581,43 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   let wasLight = (opts.material?.ink ?? VIREGLASS_MATERIAL.ink) > 0.5;
   let filterEl: SVGFilterElement | null = null;
   let destroyed = false;
+  let prepared: Prepared | null = null;
+  let preparedToken = 0;
+  let destJob: { p: Prepared; cancel(): boolean } | null = null;
+  let destWanted: Prepared | null = null;
+  let landing: Prepared | null = null;
+  let blend: Blend | null = null;
+  let blendTarget: Shown | null = null;
+  let blendRecs: InterimMap[] = [];
+  let landingNow = false;
+  let waiters: (() => void)[] = [];
+  let easeTimer: ReturnType<typeof setTimeout> | null = null;
+  let onVisible: (() => void) | null = null;
+  let verifying: InterimMap | null = null;
+  // The pair being stored: not for the budget to take back in the very call that adds it.
+  let born: InterimMap | null = null;
   let mapKey = '';
-  // The box the shown map was baked for: its strength belongs to that map, also while interim stretches it.
-  let shownGeometry: VireGlassGeometry | null = null;
+  // The key of the pair on the filter, and the interim record it came from, if it did.
+  let shownKey = '';
+  let shownRec: InterimMap | null = null;
+  // The record whose hue is on the filter: a main-thread pair shows its map before its hue, so it may not be the shown one.
+  let hueRec: InterimMap | null = null;
   let interim = false;
   let settling = false;
   let lastSample: BackdropSample | null = null;
+  // A backdrop the colours move to in the next apply, eased, instead of one that is probed or held.
+  let toSample: BackdropSample | null = null;
+  // Where the lens and the page were at its last probe: a landing that finds both unmoved has nothing new to read.
+  let probedAt = '';
   let seq = 0;
   let shownSeq = 0;
   // A landing whose maps wait for the next frame; a second landing of the same maps joins it.
   let deferred: { key: string; filter: SVGFilterElement; mine: number } | null = null;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
-  const interimMaps = createLru<InterimMap>(8, (rec) => releaseMap(rec.map.url));
+  const interimMaps = createLru<InterimMap>(8, (rec) => {
+    if (isPinned(rec)) rec.evicted = true;
+    else releaseRecord(rec);
+  });
   // The newest interim key asked for, the worker build in flight, and the one to build when it lands.
   let latestKey = '';
   let building: PendingBuild | null = null;
@@ -518,6 +625,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   let morph: GlassMorph | null = null;
   const onlyWhenTouched = opts.variant === 'interactive';
   let appear = onlyWhenTouched ? 0 : (opts.appear ?? 1);
+  let lastAppear = appear;
   let accent = opts.accent;
   let supplied = opts.sample;
   // Read once at attach, then followed: a setting turned on while the page is open has to reach
@@ -528,7 +636,6 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     mapKey = '';
     deform.setElastic(elasticAllowed(opts.accessibility ?? a11y));
     apply();
-    if (interim) requestInterimMap();
   });
 
   warnIfNested(el);
@@ -561,16 +668,89 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     return applyAppear(settledOptics(patch), appear);
   }
 
-  function morphState() {
-    if (!morph) return {};
-    return { smoothing: morph.smoothing, morph: morph.shape, morph2: morph.shape2, morphs: morph.shapes };
+  function morphStateOf(m: GlassMorph | null) {
+    if (!m) return {};
+    return { smoothing: m.smoothing, morph: m.shape, morph2: m.shape2, morphs: m.shapes };
   }
 
-  function morphKey(): string {
-    if (!morph) return '0';
-    const part = (s?: MorphShape) =>
-      s ? `${s.offsetX},${s.offsetY},${s.width},${s.height},${s.cornerRadius}` : '-';
-    return `${morph.smoothing}/${part(morph.shape)}/${part(morph.shape2)}`;
+  function morphSignatureOf(m: GlassMorph | null): string {
+    return m ? JSON.stringify([m.smoothing, m.shape, m.shape2, m.shapes]) : '0';
+  }
+
+  const morphState = () => morphStateOf(morph);
+  const morphSignature = () => morphSignatureOf(morph);
+
+  function isPinned(rec: InterimMap): boolean {
+    return rec === shownRec || rec === prepared?.rec || rec === hueRec || rec === landing?.rec || rec === blendTarget?.rec || blendRecs.includes(rec);
+  }
+
+  function maybeRelease(rec: InterimMap | null | undefined): void {
+    if (rec && rec.evicted && !isPinned(rec)) releaseRecord(rec);
+  }
+
+  function setShown(rec: InterimMap | null): void {
+    const prev = shownRec;
+    shownRec = rec;
+    if (prev && prev !== rec) maybeRelease(prev);
+  }
+
+  function setHueRec(rec: InterimMap | null): void {
+    const prev = hueRec;
+    hueRec = rec;
+    if (prev && prev !== rec) maybeRelease(prev);
+  }
+
+  function whereAmI(): string {
+    const r = el.getBoundingClientRect();
+    return `${r.left},${r.top},${r.width},${r.height}|${window.scrollX},${window.scrollY}`;
+  }
+
+  function probeSelf(): BackdropSample {
+    probedAt = whereAmI();
+    return probe(el);
+  }
+
+  function offscreen(): boolean {
+    if (!el.isConnected) return true;
+    const r = el.getBoundingClientRect();
+    return r.bottom < 0 || r.right < 0 || r.top > window.innerHeight || r.left > window.innerWidth;
+  }
+
+  /** Keeps a pair in the lens's store and under the byte budget. */
+  function remember(rec: InterimMap): void {
+    interimMaps.set(rec.key, rec);
+    rec.budget = { bytes: pairBytes(rec.map, rec.hue), offscreen, pinned: () => rec === born || isPinned(rec), evict: () => interimMaps.delete(rec.key, rec) };
+    born = rec;
+    track(rec.budget);
+    born = null;
+  }
+
+  function decodeRec(rec: InterimMap, then?: () => void): Promise<void> {
+    return Promise.all([decoded(rec.map.url), rec.hue ? decoded(rec.hue.url) : undefined]).then(() => {
+      rec.ready = true;
+      then?.();
+    });
+  }
+
+  /** The interim pair of this key, if it has everything the filter shows. */
+  function adoptable(key: string, spectral: boolean): InterimMap | undefined {
+    const rec = interimMaps.get(key);
+    if (rec?.budget) touch(rec.budget);
+    return rec && (!spectral || rec.hue) ? rec : undefined;
+  }
+
+  /** A pair the settled cache already holds, as a record of this lens. */
+  function cachedRec(key: string, full: VireGlassOptics, geometry: VireGlassGeometry, dpr: number, state: DisplacementState, hue: boolean): InterimMap | undefined {
+    if (!isCached(`d|${key}`) || (hue && !isCached(`h|${key}`))) return undefined;
+    const rec: InterimMap = {
+      key,
+      map: cached(`d|${key}`, () => buildDisplacementMap(full, geometry, dpr, state)),
+      hue: hue ? cached(`h|${key}`, () => buildSpectralMap(full, geometry, dpr, state)) : null,
+      ready: false,
+      geometry,
+    };
+    remember(rec);
+    return rec;
   }
 
   /** Drops every pending decode: whatever installs a map synchronously supersedes them. */
@@ -588,31 +768,44 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     if (idleTimer !== null) clearTimeout(idleTimer);
     idleTimer = null;
     if (destroyed || !interim) return;
+    if (blend) {
+      land();
+      return;
+    }
     interim = false;
+    latestKey = '';
     invalidate();
     mapKey = '';
     settling = true;
     apply();
   }
 
-  function retarget(f: SVGFilterElement, map: DisplacementMap, hue: SpectralMap | null, geometry: VireGlassGeometry): void {
+  function retarget(f: SVGFilterElement, map: DisplacementMap, hue: SpectralMap | null, rec: InterimMap | null, key: string): void {
     const images = f.querySelectorAll('feImage');
-    images[0]?.setAttribute('href', map.url);
-    if (hue) images[1]?.setAttribute('href', hue.url);
-    shownGeometry = geometry;
+    if (images[0]) writeAttr(images[0], 'href', map.url);
+    if (hue && images[1]) writeAttr(images[1], 'href', hue.url);
+    setShown(rec);
+    if (!images[1]) setHueRec(null);
+    else if (hue) setHueRec(rec);
+    shownKey = hue || images.length < 2 ? key : '';
     present(f);
   }
 
-  /**
-   * The maps are baked at full presence and appear is these attributes. The spectral hue is
-   * `1 + appear * (hue - 1)`, so mixing the full one in is the same picture.
-   */
-  function present(f: SVGFilterElement): void {
-    if (!shownGeometry) return;
+  /** Puts a pair on the filter; while a blend runs the pair becomes where the blend is headed, so nothing snaps. */
+  function showPair(f: SVGFilterElement, map: DisplacementMap, hue: SpectralMap | null, rec: InterimMap | null, key: string): void {
+    if (blend && f === filterEl) blendTo({ map, hue, key, rec });
+    else retarget(f, map, hue, rec, key);
+  }
+
+  /** Maps are baked at full presence and appear is these attributes; the strength follows the live box, not the box the shown map was baked for. */
+  function present(f: SVGFilterElement, live?: VireGlassGeometry): void {
     const o = optics();
-    const scale = displacementScale(o, shownGeometry);
+    const scale = displacementScale(o, live ?? opts.geometry ?? measureGeometry(el));
+    const full = settledOptics();
     // EVERY pass, with its own share of the scale: see paintInteraction.
     for (const pass of f.querySelectorAll('feDisplacementMap')) {
+      const channel = pass.getAttribute('data-vireglass-channel') as Channel | null;
+      if (channel) writeAttr(pass, 'data-vireglass-ratio', String(channelRatio(full, channel)));
       const ratio = Number(pass.getAttribute('data-vireglass-ratio') ?? 1);
       writeAttr(pass, 'scale', String(scale * (Number.isFinite(ratio) ? ratio : 1)));
     }
@@ -626,53 +819,60 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     }
   }
 
-  function requestInterimMap(): void {
+  function requestInterimMap(measured?: VireGlassGeometry, onMainThread = false): void {
     if (!svgSupported || !filterEl || destroyed) return;
-    const geometry = opts.geometry ?? measureGeometry(el);
-    if (isEmpty(geometry)) return;
+    const live = measured ?? opts.geometry ?? measureGeometry(el);
+    if (isEmpty(live)) return;
     const full = settledOptics();
-    const key = interimKey(
-      geometry.width,
-      geometry.height,
-      geometry.cornerRadius,
-      JSON.stringify([morph?.smoothing, morph?.shape, morph?.shape2, morph?.shapes]),
-      `${full.refraction}:${full.refractionScale}:${full.bevelDp}`,
-    );
+    const dpr = devicePixelRatio();
+    const geometry = snapGeometry(live);
+    const key = mapKeyFor(geometry, morphSignature(), full, dpr);
+    if (key === latestKey) return;
     latestKey = key;
-    const dpr = Math.min(1, devicePixelRatio());
-    const rec = interimMaps.get(key);
-    if (!rec && interimBuilder().ready()) {
-      bump('reducedBakes');
-      wanted = { key, mine: (seq += 1), forFilter: filterEl, optics: full, geometry, dpr, state: morphState() };
-      if (!building) pump();
-      return;
-    }
+    const hue = hasSpectralEdge(full) && filterEl.querySelectorAll('feImage').length > 1;
+    let rec = adoptable(key, hue) ?? cachedRec(key, full, geometry, dpr, morphState(), hue);
     if (!rec) {
+      const onMain = onMainThread || !interimBuilder().ready();
       bump('reducedBakes');
-      bump('mainThreadBakes');
-      const built = { map: buildDisplacementMap(full, geometry, dpr, morphState()), ready: false, geometry };
-      interimMaps.set(key, built);
-      showInterim((seq += 1), built, filterEl);
+      if (onMain) bump('mainThreadBakes');
+      wanted = { key, mine: (seq += 1), forFilter: filterEl, optics: full, geometry, dpr, state: morphState(), hue, onMain };
+      if (!building) pump();
       return;
     }
     wanted = null;
     showInterim((seq += 1), rec, filterEl);
   }
 
+  /** The main-thread pair has its map first; the hue follows in slices once the key holds still, and only then is the key claimed as shown. */
+  async function buildHueInSlices(rec: InterimMap, forFilter: SVGFilterElement, full: VireGlassOptics, dpr: number): Promise<void> {
+    const live = () => !destroyed && interim && !rec.released && latestKey === rec.key && filterEl === forFilter;
+    try {
+      const hue = await buildSpectralMapInSlices(full, rec.geometry, dpr, morphState(), { sliceMs: 4, live });
+      if (!live()) return;
+      rec.hue = hue;
+      if (rec.budget) rec.budget.bytes = pairBytes(rec.map, hue);
+      await decoded(hue.url);
+      if (!live() || shownRec !== rec || blend) return;
+      const image = forFilter.querySelectorAll('feImage')[1];
+      if (image) writeAttr(image, 'href', hue.url);
+      setHueRec(rec);
+      shownKey = rec.key;
+    } catch (error) {
+      if (!(error instanceof Superseded)) reportFailure(error);
+    }
+  }
+
   function showInterim(mine: number, record: InterimMap, forFilter: SVGFilterElement): void {
     const show = () => {
-      if (destroyed || filterEl !== forFilter || mine <= shownSeq) return;
+      if (destroyed || filterEl !== forFilter || mine <= shownSeq || record.released) return;
       shownSeq = mine;
-      retarget(forFilter, record.map, null, record.geometry);
+      showPair(forFilter, record.map, record.hue, record, record.key);
     };
     if (record.ready) {
       show();
       return;
     }
-    void decoded(record.map.url).then(() => {
-      record.ready = true;
-      show();
-    });
+    void decodeRec(record, show);
   }
 
   function pump(): void {
@@ -685,41 +885,549 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       return;
     }
     building = job;
+    if (job.onMain) {
+      void buildHere(job);
+      return;
+    }
     interimBuilder()
-      .build(job.optics, job.geometry, job.dpr, job.state)
+      .build(job.optics, job.geometry, job.dpr, job.state, job.hue)
       .then(
-        (map) => {
+        (pair) => {
           building = null;
           bump('workerBakes');
-          landBuilt(job, map);
+          landBuilt(job, pair);
           pump();
         },
         (error: WorkerFailure) => {
           building = null;
           if (!error.silent) reportFailure(error);
-          recoverOnMainThread(job);
+          recoverOnMainThread(job, error.timedOut);
         },
       );
   }
 
-  function landBuilt(job: PendingBuild, map: DisplacementMap): void {
+  /** Without a worker the map is rendered in slices of 4 ms; a newer key waits for the build in flight, so the filter keeps moving. */
+  async function buildHere(job: PendingBuild): Promise<void> {
+    const live = () => !destroyed && interim && filterEl === job.forFilter;
+    try {
+      await yieldTask();
+      const map = await buildDisplacementMapInSlices(job.optics, job.geometry, job.dpr, job.state, { sliceMs: 4, live });
+      building = null;
+      if (live() && job.mine > shownSeq) {
+        const rec: InterimMap = { key: job.key, map, hue: null, ready: false, geometry: job.geometry };
+        remember(rec);
+        showInterim(job.mine, rec, job.forFilter);
+        if (job.hue) void buildHueInSlices(rec, job.forFilter, job.optics, job.dpr);
+      }
+    } catch (error) {
+      building = null;
+      if (!(error instanceof Superseded)) reportFailure(error);
+    }
+    pump();
+  }
+
+  function landBuilt(job: PendingBuild, pair: InterimPair): void {
     if (destroyed || filterEl !== job.forFilter || !interim || job.mine <= shownSeq) {
-      releaseMap(map.url);
+      releaseMap(pair.map.url);
+      if (pair.hue) releaseMap(pair.hue.url);
       return;
     }
-    const rec: InterimMap = { map, ready: false, geometry: job.geometry };
-    interimMaps.set(job.key, rec);
+    const rec: InterimMap = { ...pair, key: job.key, ready: false, geometry: job.geometry };
+    remember(rec);
     showInterim(job.mine, rec, job.forFilter);
   }
 
-  function recoverOnMainThread(job: PendingBuild): void {
+  function recoverOnMainThread(job: PendingBuild, onMainThread = false): void {
     wanted = null;
     if (destroyed || !interim || filterEl !== job.forFilter) return;
+    latestKey = '';
     try {
-      requestInterimMap();
+      requestInterimMap(undefined, onMainThread);
     } catch (error) {
       reportFailure(error);
     }
+  }
+
+  function describe(geometry: VireGlassGeometry, m: GlassMorph | null, material?: Partial<VireGlassMaterial>) {
+    const full = settledOptics(material ? { ...opts.material, ...material } : undefined);
+    const snapped = snapGeometry(geometry);
+    const dpr = devicePixelRatio();
+    return {
+      key: mapKeyFor(snapped, morphSignatureOf(m), full, dpr),
+      print: JSON.stringify(full),
+      full,
+      geometry: snapped,
+      dpr,
+      state: morphStateOf(m),
+      hue: hasSpectralEdge(full),
+    };
+  }
+
+  const wants = (p: Prepared) => !destroyed && (prepared === p || landing === p);
+
+  function settle(): void {
+    if (prepared && !prepared.failed && !prepared.rec?.ready) return;
+    const all = waiters;
+    waiters = [];
+    for (const resolve of all) resolve();
+  }
+
+  function holdRec(p: Prepared, rec: InterimMap): void {
+    p.rec = rec;
+    if (landing === p && document.hidden) {
+      installLanding(p);
+      return;
+    }
+    if (rec.ready) {
+      pairReady(p);
+      return;
+    }
+    void decodeRec(rec, () => pairReady(p));
+  }
+
+  function pairReady(p: Prepared): void {
+    if (!wants(p)) return;
+    if (landing === p) beginLanding(p);
+    settle();
+  }
+
+  function failPrepared(p: Prepared): void {
+    p.failed = true;
+    if (landing === p) landingFailed();
+    settle();
+  }
+
+  function takePair(p: Prepared, pair: InterimPair): void {
+    const existing = adoptable(p.key, p.hue);
+    if (existing || destroyed) {
+      releaseMap(pair.map.url);
+      if (pair.hue) releaseMap(pair.hue.url);
+      if (existing && wants(p)) holdRec(p, existing);
+      return;
+    }
+    const rec: InterimMap = { ...pair, key: p.key, ready: false, geometry: p.geometry };
+    remember(rec);
+    if (wants(p)) holdRec(p, rec);
+  }
+
+  function nextDestination(): void {
+    const next = destWanted;
+    destWanted = null;
+    if (next && wants(next) && !next.rec) startPrepared(next);
+  }
+
+  function buildOnWorker(p: Prepared): void {
+    const job = interimBuilder().build(p.full, p.geometry, p.dpr, p.state, p.hue, 'destination');
+    destJob = { p, cancel: job.cancel };
+    job.then(
+      (pair) => {
+        if (destJob?.p === p) destJob = null;
+        bump('workerBakes');
+        takePair(p, pair);
+        nextDestination();
+      },
+      (error: WorkerFailure) => {
+        if (destJob?.p === p) destJob = null;
+        if (!error.silent) reportFailure(error);
+        if (!error.superseded && wants(p) && !p.rec) buildOnMainThread(p);
+        nextDestination();
+      },
+    );
+  }
+
+  /** Slices of 4 ms after a frame, each checking that anyone still wants the result; the encode is a task of its own. */
+  function buildOnMainThread(p: Prepared): void {
+    void (async () => {
+      try {
+        await afterNextFrame();
+        const control = { sliceMs: 4, live: () => wants(p) && !p.rec };
+        if (!control.live()) return;
+        const dKey = `d|${p.key}`;
+        const hKey = `h|${p.key}`;
+        const map = isCached(dKey)
+          ? cached(dKey, () => buildDisplacementMap(p.full, p.geometry, p.dpr, p.state))
+          : await buildDisplacementMapInSlices(p.full, p.geometry, p.dpr, p.state, control);
+        cached(dKey, () => map);
+        let hue: SpectralMap | null = null;
+        if (p.hue) {
+          hue = isCached(hKey)
+            ? cached(hKey, () => buildSpectralMap(p.full, p.geometry, p.dpr, p.state))
+            : await buildSpectralMapInSlices(p.full, p.geometry, p.dpr, p.state, control);
+          const built = hue;
+          cached(hKey, () => built);
+        }
+        if (!control.live()) return;
+        bump('mainThreadBakes');
+        const rec: InterimMap = { key: p.key, map, hue, ready: false, geometry: p.geometry };
+        remember(rec);
+        holdRec(p, rec);
+      } catch (error) {
+        if (error instanceof Superseded) return;
+        reportFailure(error);
+        if (wants(p)) failPrepared(p);
+      }
+    })();
+  }
+
+  /** A destination job still queued for the worker is taken back, unless a landing waits for it. */
+  function takeBackDestination(): void {
+    if (destJob && destJob.p !== landing && destJob.cancel()) destJob = null;
+  }
+
+  function startPrepared(p: Prepared): void {
+    const hit = adoptable(p.key, p.hue) ?? cachedRec(p.key, p.full, p.geometry, p.dpr, p.state, p.hue);
+    if (hit) {
+      holdRec(p, hit);
+      return;
+    }
+    takeBackDestination();
+    if (destJob) {
+      destWanted = p;
+      return;
+    }
+    if (interimBuilder().ready()) buildOnWorker(p);
+    else buildOnMainThread(p);
+  }
+
+  function endInterim(): void {
+    if (idleTimer !== null) clearTimeout(idleTimer);
+    idleTimer = null;
+    interim = false;
+    latestKey = '';
+    wanted = null;
+    invalidate();
+  }
+
+  function abandonLanding(): void {
+    const old = landing;
+    landing = null;
+    if (old) {
+      mapKey = '';
+      maybeRelease(old.rec);
+    }
+  }
+
+  function stopBlend(): void {
+    blend?.stop();
+    blend = null;
+    blendTarget = null;
+    releaseBlendRecs();
+  }
+
+  function releaseBlendRecs(): void {
+    const recs = blendRecs;
+    blendRecs = [];
+    for (const rec of recs) maybeRelease(rec);
+  }
+
+  /** A pair the blend no longer shows or heads for is let go of, so a retarget storm does not pin the budget. */
+  function pruneBlendRecs(): void {
+    if (!blend) return;
+    const kept: InterimMap[] = [];
+    const dropped: InterimMap[] = [];
+    for (const rec of blendRecs) {
+      const used = rec === blendTarget?.rec || blend.shows(rec.map.url) || (!!rec.hue && blend.shows(rec.hue.url));
+      (used ? kept : dropped).push(rec);
+    }
+    blendRecs = kept;
+    for (const rec of dropped) maybeRelease(rec);
+  }
+
+  const shownOf = (rec: InterimMap): Shown => ({ map: rec.map, hue: rec.hue, key: rec.key, rec });
+
+  /** Mixes the filter toward `target`; a blend already running continues from what it shows now. */
+  function blendTo(target: Shown): void {
+    if (!filterEl) return;
+    const urls = { mapUrl: target.map.url, hueUrl: target.hue?.url ?? null };
+    blendTarget = target;
+    if (target.rec && !blendRecs.includes(target.rec)) blendRecs.push(target.rec);
+    if (blend) {
+      blend.retarget(urls);
+      pruneBlendRecs();
+      return;
+    }
+    let ran = false;
+    const started = startBlend(filterEl, urls, () => {
+      ran = true;
+      endBlend();
+    });
+    if (!ran) {
+      blend = started;
+      shownKey = '';
+    }
+  }
+
+  function endBlend(): void {
+    const target = blendTarget;
+    blend = null;
+    blendTarget = null;
+    if (!target || destroyed || !filterEl) {
+      releaseBlendRecs();
+      return;
+    }
+    retarget(filterEl, target.map, target.hue, target.rec, target.key);
+    releaseBlendRecs();
+    const p = landing;
+    if (!p?.rec) return;
+    if (p.rec === target.rec) finishLanding(p);
+    else if (p.rec.ready || document.hidden) beginLanding(p);
+  }
+
+  function beginLanding(p: Prepared): void {
+    const rec = p.rec;
+    if (!rec || !filterEl || landing !== p) return;
+    if (blend) {
+      blendTo(shownOf(rec));
+      return;
+    }
+    const sameStructure = filterEl.getAttribute('data-vireglass-signature') === filterSignature(p.full.iorSpread, p.hue);
+    if (document.hidden || !sameStructure) {
+      installLanding(p);
+      return;
+    }
+    blendTo(shownOf(rec));
+  }
+
+  function landingFailed(): void {
+    abandonLanding();
+    stopBlend();
+    settling = true;
+    applyHeld();
+  }
+
+  /** `apply()` as a landing makes it: the sample the lens holds, no probe. */
+  function applyHeld(): void {
+    const was = landingNow;
+    landingNow = true;
+    try {
+      apply();
+    } finally {
+      landingNow = was;
+    }
+  }
+
+  function liveDescribe() {
+    const g = opts.geometry ?? measureGeometry(el);
+    return isEmpty(g) ? null : describe(g, morph);
+  }
+
+  function adoptSample(sample: BackdropSample | null): void {
+    if (sample && sample !== lastSample && !toSample) toSample = sample;
+  }
+
+  /** The lens changed under a landing: the destination becomes what it is now, and the pair on the filter stays until that one is ready. */
+  function relandOnLive(d: NonNullable<ReturnType<typeof liveDescribe>>, sample: BackdropSample | null, repaint = true): void {
+    const old = landing ?? prepared;
+    const p: Prepared = { token: (preparedToken += 1), ...d, sample, rec: null, failed: false };
+    prepared = landing = p;
+    mapKey = p.key;
+    settling = false;
+    maybeRelease(old?.rec);
+    startPrepared(p);
+    if (repaint) applyHeld();
+  }
+
+  /** Writes the destination pair: the hrefs and the presentation in this task. A filter of another structure is replaced. */
+  function installLanding(p: Prepared): void {
+    const rec = p.rec;
+    if (!rec || destroyed) return;
+    stopBlend();
+    if (filterEl) {
+      const signature = filterSignature(p.full.iorSpread, p.hue);
+      if (filterEl.getAttribute('data-vireglass-signature') === signature) {
+        retarget(filterEl, rec.map, rec.hue, rec, p.key);
+      } else {
+        const defs = getFilterHost(host).querySelector('defs') as SVGDefsElement;
+        const next = buildFilterElement(id, rec.map.url, p.full, rec.map.scale, rec.hue);
+        next.setAttribute('data-vireglass-signature', signature);
+        if (filterEl.parentNode) defs.replaceChild(next, filterEl);
+        else defs.appendChild(next);
+        bump('filterSwaps');
+        bump('syncSwaps');
+        filterEl = next;
+        shownKey = p.key;
+        setShown(rec);
+        setHueRec(rec.hue ? rec : null);
+      }
+    }
+    finishLanding(p);
+  }
+
+  /** The destination pair is on the filter. If the lens moved on meanwhile, that pair is only the nearest one and the live state is landed next. */
+  function finishLanding(p: Prepared): void {
+    if (landing === p) landing = null;
+    if (prepared === p) prepared = null;
+    invalidate();
+    const d = liveDescribe();
+    if (d && landingDiffers(p, d)) {
+      relandOnLive(d, p.sample);
+      return;
+    }
+    mapKey = p.key;
+    settling = false;
+    applyHeld();
+    if (p.rec && !p.rec.ready) verifyWhenVisible(p.rec);
+    settle();
+  }
+
+  /** A page that was hidden drew no frame and decoded nothing: when it is shown again, decode, and land the lens properly if it moved meanwhile. */
+  function verifyWhenVisible(rec: InterimMap): void {
+    verifying = rec;
+    if (onVisible || typeof document === 'undefined') return;
+    onVisible = () => {
+      if (document.hidden) return;
+      document.removeEventListener('visibilitychange', onVisible!);
+      onVisible = null;
+      void decodeRec(verifying!).then(() => {
+        if (destroyed || interim) return;
+        const g = opts.geometry ?? measureGeometry(el);
+        if (isEmpty(g) || describe(g, morph).key === shownKey) return;
+        mapKey = '';
+        settling = true;
+        apply();
+      });
+    };
+    document.addEventListener('visibilitychange', onVisible);
+  }
+
+  function land(): 'exact' | 'blend' {
+    if (destroyed) return 'exact';
+    landingNow = true;
+    try {
+      return landOn();
+    } finally {
+      landingNow = false;
+    }
+  }
+
+  function landOn(): 'exact' | 'blend' {
+    const exact = (): 'exact' => {
+      bump('landedExact');
+      return 'exact';
+    };
+    const structureHolds = (d: { full: VireGlassOptics; hue: boolean }) =>
+      filterEl?.getAttribute('data-vireglass-signature') === filterSignature(d.full.iorSpread, d.hue);
+    if (!svgSupported || !filterEl) {
+      endInterim();
+      mapKey = '';
+      apply();
+      return exact();
+    }
+    const live = liveDescribe();
+    if (!live) {
+      endInterim();
+      apply();
+      return exact();
+    }
+    let p = prepared;
+    let sample: BackdropSample | null = null;
+    let nearest: InterimMap | null = null;
+    if (!p && !supplied && whereAmI() !== probedAt) {
+      bump('probesAtLand');
+      toSample = probeSelf();
+    }
+    if (p && landingDiffers(p, live)) {
+      sample = p.sample;
+      if (p.rec?.ready && !blend && structureHolds(p)) nearest = p.rec;
+      prepared = null;
+      if (p.rec !== nearest) maybeRelease(p.rec);
+      p = null;
+    }
+    endInterim();
+    if (p) {
+      adoptSample(p.sample);
+      if (p.key === shownKey && structureHolds(p)) {
+        prepared = null;
+        maybeRelease(p.rec);
+        mapKey = p.key;
+        settling = false;
+        apply();
+        settle();
+        return exact();
+      }
+    } else {
+      if (live.key === shownKey && structureHolds(live)) {
+        mapKey = live.key;
+        settling = false;
+        apply();
+        return exact();
+      }
+      if (nearest) retarget(filterEl, nearest.map, nearest.hue, nearest, nearest.key);
+      p = prepared = { token: (preparedToken += 1), ...live, sample, rec: null, failed: false };
+      adoptSample(sample);
+      startPrepared(p);
+      maybeRelease(nearest);
+    }
+    if (blend && landing === p) return 'blend';
+    if (!blend && p.rec && (p.rec.ready || document.hidden)) {
+      installLanding(p);
+      return exact();
+    }
+    landing = p;
+    mapKey = p.key;
+    settling = false;
+    bump('landedBlend');
+    if (blend && p.rec) beginLanding(p);
+    apply();
+    if (p.failed) landingFailed();
+    return 'blend';
+  }
+
+  function prepare(target: PrepareTarget | null): void {
+    if (destroyed) return;
+    const old = prepared;
+    if (!target) {
+      prepared = null;
+      destWanted = null;
+      takeBackDestination();
+      maybeRelease(old?.rec);
+      settle();
+      return;
+    }
+    if (!svgSupported || isEmpty(target.geometry)) return;
+    const m = target.morph === undefined ? morph : target.morph && target.morph.smoothing > 0 ? target.morph : null;
+    const p: Prepared = {
+      token: (preparedToken += 1),
+      ...describe(target.geometry, m, target.material),
+      sample: target.sample ?? null,
+      rec: null,
+      failed: false,
+    };
+    prepared = p;
+    maybeRelease(old?.rec);
+    startPrepared(p);
+    if (p.sample && interim) retint(p.sample);
+    const rect = target.rect;
+    if (rect && !p.sample) {
+      void afterNextFrame().then(() => {
+        if (destroyed || prepared !== p || p.sample) return;
+        p.sample = probe(el, rect);
+        if (interim || landing === p) retint(p.sample);
+      });
+    }
+  }
+
+  function whenPrepared(): Promise<void> {
+    return new Promise((resolve) => {
+      waiters.push(resolve);
+      settle();
+    });
+  }
+
+  /** Moves the colours to `sample` over `EASE_MS`, for a destination whose backdrop is known before the lens gets there. */
+  function retint(sample: BackdropSample): void {
+    toSample = sample;
+    apply();
+  }
+
+  /** Eases the colours to a backdrop that really changed: not on a landing, a motion or a change of presence. */
+  function easeTo(): void {
+    el.setAttribute('data-vireglass-ease', '');
+    if (easeTimer !== null) clearTimeout(easeTimer);
+    easeTimer = setTimeout(() => {
+      easeTimer = null;
+      el.removeAttribute('data-vireglass-ease');
+    }, EASE_MS + 60);
   }
 
   function apply(): void {
@@ -727,8 +1435,16 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     if (interim) keepInterim();
     const geometry = opts.geometry ?? measureGeometry(el);
     const opticsNow = optics();
-    const sample = supplied ?? (interim && lastSample ? lastSample : probe(el));
+    const before = lastSample;
+    const incoming = toSample;
+    toSample = null;
+    const held = (interim || landingNow) && lastSample;
+    if (landingNow && !supplied && !held && !incoming) bump('probesAtLand');
+    const sample = supplied ?? incoming ?? (held ? lastSample! : probeSelf());
     lastSample = sample;
+    const moved = before && sampleMoved(before, sample);
+    if (incoming ? moved : !interim && !landingNow && appear === lastAppear && moved) easeTo();
+    lastAppear = appear;
     const light = shouldInkBeLight(sample, wasLight);
     wasLight = light;
     const body = opts.body === false ? null : bodyCss(settledOptics(), sample, light ? 1 : 0, accent, appear);
@@ -739,38 +1455,46 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       // not change; the refraction itself updates in the compositor with no JS at all.
       const full = settledOptics();
       const dpr = devicePixelRatio();
-      const key = `m${morphKey()}|${geometry.width}x${geometry.height}r${geometry.cornerRadius}@${dpr}:${full.refraction}:${full.refractionScale}:${full.bevelDp}:${full.blur}:${full.thicknessDp}:${full.film}:${full.iridescence}:${full.diffraction}`;
+      const snapped = snapGeometry(geometry);
+      // The same key the interim pairs are made under, so a lens that lands on a pair it showed keeps it.
+      const key = mapKeyFor(snapped, morphSignature(), full, dpr);
       if (interim && filterEl) {
-        // The filter keeps its map; feImage stretches it over the live box.
+        requestInterimMap(geometry);
       } else if (isEmpty(geometry)) {
         // Nothing to refract in a box of no size; the next resize bakes it.
+      } else if (filterEl && (landing || blend)) {
+        // A landing never bakes in the task that notices a change: the destination follows the lens.
+        const d = landing ? describe(geometry, morph) : null;
+        if (landing && d && landingDiffers(landing, d)) relandOnLive(d, landing.sample, false);
       } else if (key !== mapKey || !filterEl) {
-        // Keyed by exactly what the maps are functions of, which is exactly the cache key above.
         const morphNow = morphState();
+        const spectral = hasSpectralEdge(full);
+        const adopted = adoptable(key, spectral);
         const bakeMap = () =>
+          adopted?.map ??
           cached(`d|${key}`, () => {
             bump('fullBakes');
-            return buildDisplacementMap(full, geometry, dpr, morphNow);
+            return buildDisplacementMap(full, snapped, dpr, morphNow);
           });
-        const spectral = hasSpectralEdge(full);
         const bakeHue = () =>
           spectral
-            ? cached(`h|${key}`, () => {
+            ? (adopted?.hue ??
+              cached(`h|${key}`, () => {
                 bump('fullBakes');
-                return buildSpectralMap(full, geometry, dpr);
-              })
+                return buildSpectralMap(full, snapped, dpr, morphNow);
+              }))
             : null;
         const bakeMapInSlices = async () => {
-          if (isCached(`d|${key}`)) return bakeMap();
-          const built = await buildDisplacementMapInSlices(full, geometry, dpr, morphNow);
+          if (adopted || isCached(`d|${key}`)) return bakeMap();
+          const built = await buildDisplacementMapInSlices(full, snapped, dpr, morphNow);
           return cached(`d|${key}`, () => (bump('fullBakes'), built));
         };
         const bakeHueInSlices = async () => {
-          if (!spectral || isCached(`h|${key}`)) return bakeHue();
-          const built = await buildSpectralMapInSlices(full, geometry, dpr);
+          if (!spectral || adopted || isCached(`h|${key}`)) return bakeHue();
+          const built = await buildSpectralMapInSlices(full, snapped, dpr, morphNow);
           return cached(`h|${key}`, () => (bump('fullBakes'), built));
         };
-        const signature = filterSignature(full.blur, full.ior, full.iorSpread, spectral);
+        const signature = filterSignature(full.iorSpread, spectral);
         if (settling && filterEl?.getAttribute('data-vireglass-signature') === signature) {
           settling = false;
           const forFilter = filterEl;
@@ -780,11 +1504,15 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
             Promise.all([mapReady, hue ? decoded(hue.url) : undefined]).then(() => {
               if (!current(mine)) return;
               shownSeq = mine;
-              retarget(forFilter, map, hue, geometry);
+              if (adopted) adopted.ready = true;
+              showPair(forFilter, map, hue, adopted ?? null, forKey);
             });
           const mapCached = isCached(`d|${key}`);
           const hueCached = !spectral || isCached(`h|${key}`);
-          if (mapCached && hueCached) {
+          if (adopted?.ready) {
+            shownSeq = seq += 1;
+            showPair(forFilter, adopted.map, adopted.hue, adopted, forKey);
+          } else if (adopted || (mapCached && hueCached)) {
             const map = bakeMap();
             void land((seq += 1), map, decoded(map.url), bakeHue());
           } else if (deferred && deferred.key === key && deferred.filter === forFilter) {
@@ -832,11 +1560,13 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
           else defs.appendChild(next);
           bump('filterSwaps');
           filterEl = next;
-          shownGeometry = geometry;
+          shownKey = key;
+          setShown(adopted ?? null);
+          setHueRec(adopted?.hue ? adopted : null);
         }
         mapKey = key;
       }
-      if (filterEl) present(filterEl);
+      if (filterEl) present(filterEl, geometry);
       el.style.setProperty('backdrop-filter', `url(#${id})`);
       el.style.setProperty('-webkit-backdrop-filter', `url(#${id})`);
     } else {
@@ -881,7 +1611,9 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     el.style.setProperty('--vireglass-radius', `${geometry.cornerRadius}px`);
     el.style.setProperty('--vireglass-radius-min', `${concentricRadius(geometry.cornerRadius, geometry.cornerRadius, 0)}px`);
 
-    const shadow = boxShadowCss(geometry, sample, appear);
+    const { reachPx, colour } = shadowParts(geometry, sample, appear);
+    const shadow = `0 0 ${reachPx} var(--vireglass-shadow-color)`;
+    el.style.setProperty('--vireglass-shadow-color', colour);
     el.style.setProperty('--vireglass-shadow', shadow);
     if (opts.shadow !== false) el.style.setProperty('box-shadow', shadow);
   }
@@ -929,6 +1661,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       },
     });
     invalidate();
+    stopBlend();
     if (filterEl) {
       const feImage = filterEl.querySelector('feImage');
       feImage?.setAttribute('href', map.url);
@@ -941,6 +1674,10 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       }
     }
     mapKey = '';
+    shownKey = '';
+    latestKey = '';
+    setShown(null);
+    setHueRec(null);
 
     paintGlow(sampleOut.touchX, sampleOut.touchY, sampleOut.active * base.edgeLight, geometry);
 
@@ -967,7 +1704,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       el.style.setProperty('--vireglass-glow-opacity', '0');
       return;
     }
-    const [gr, gg, gb] = ambientFrom(supplied ?? (interim && lastSample ? lastSample : probe(el)));
+    const [gr, gg, gb] = ambientFrom(supplied ?? (interim && lastSample ? lastSample : probeSelf()));
     const cx = ((x + geometry.width / 2) / geometry.width) * 100;
     const cy = ((y + geometry.height / 2) / geometry.height) * 100;
     const reach = halfMinDp(geometry) * TOUCH_RADIUS_FRACTION;
@@ -998,7 +1735,6 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       opts.onGlow?.(null);
       settling = !interim;
       apply();
-      if (interim) requestInterimMap();
       return;
     }
     frame = requestAnimationFrame(tick);
@@ -1061,7 +1797,23 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   function destroy(): void {
     destroyed = true;
     wanted = null;
+    destWanted = null;
+    destJob?.cancel();
+    destJob = null;
+    blend?.stop();
+    blend = null;
+    blendTarget = null;
+    landing = null;
+    prepared = null;
+    settle();
+    if (onVisible) document.removeEventListener('visibilitychange', onVisible);
+    onVisible = null;
+    if (easeTimer !== null) clearTimeout(easeTimer);
+    easeTimer = null;
+    el.removeAttribute('data-vireglass-ease');
     interimMaps.clear();
+    setShown(null);
+    setHueRec(null);
     invalidate();
     if (idleTimer !== null) clearTimeout(idleTimer);
     idleTimer = null;
@@ -1093,6 +1845,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     el.style.removeProperty('--vireglass-rim');
     el.style.removeProperty('--vireglass-rim-width');
     el.style.removeProperty('--vireglass-shadow');
+    el.style.removeProperty('--vireglass-shadow-color');
     el.style.removeProperty('--vireglass-radius');
     el.style.removeProperty('--vireglass-radius-min');
     el.style.removeProperty('box-shadow');
@@ -1131,22 +1884,37 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       morph = next && next.smoothing > 0 ? next : null;
       if (interim) {
         apply();
-        requestInterimMap();
+        return;
+      }
+      if (landing && filterEl) {
+        const d = liveDescribe();
+        if (d) relandOnLive(d, landing.sample);
+        else applyHeld();
         return;
       }
       mapKey = '';
       apply();
     },
+    setMaterial(material) {
+      if (destroyed) return;
+      opts = { ...opts, material: { ...opts.material, ...material } };
+      apply();
+    },
     setInterim(on) {
       if (destroyed) return;
       if (on) {
+        if (landing) abandonLanding();
         // A gesture held still sends no geometry, so a repeat is the host saying it is still moving.
+        if (!interim) latestKey = shownKey;
         interim = true;
         keepInterim();
         return;
       }
-      if (interim) leaveInterim();
+      if (interim) land();
     },
+    prepare,
+    land,
+    whenPrepared,
     setSample(next) {
       supplied = next ?? undefined;
       apply();

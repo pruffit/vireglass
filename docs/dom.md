@@ -149,6 +149,59 @@ shape costs under 1.5 ms.
 A scroll costs `update`, which is the probe and the CSS writes — the map is untouched because the
 backdrop is not one of its inputs.
 
+## Interim, prepare and landing
+
+A lens that changes shape every frame is `setInterim(true)`: no probe, no main-thread bake, the same filter. The
+maps it shows are pairs (displacement and spectral hue, on the morph's silhouette) built by one worker, one job
+per lens at a time. Interim and settled maps are one family: the same box on a half-pixel grid, morph, optics and
+density give the same key and the same bytes, so a pair built during a motion is the pair the lens rests on.
+
+How a host drives it:
+
+```ts
+lens.setInterim(true);
+lens.prepare({ geometry: endBox, morph: endMorph, material: endMaterial, sample: endSample }); // at the start
+// each frame: set the box, `setMorph` the shapes
+// last frame, after the final box and `setMorph` are set:
+const how = lens.land(); // 'exact' | 'blend'
+```
+
+- `prepare` takes the final geometry, morph (absent keeps the current one, `null` means none), material (a patch over
+  the attached one), and the destination's backdrop as `sample`. With no `sample` but a `rect`, the lens probes
+  that rect once, after a frame. During a motion the tint, ink, body and shadow start easing to the sample at
+  `prepare` (200 ms, through registered `--vireglass-*-color` properties), so `land()` changes none of them; the rim
+  switches at that moment. The newest call wins by token; a pair built for a superseded call goes to the cache and
+  is never shown. `prepare(null)` forgets it; `whenPrepared()` resolves when
+  the pair is decoded, failed or nothing is prepared. It may be called while idle for a destination that may be reached.
+- `land` is synchronous. A decoded prepared pair (or a decoded pair for the current key) is written with the
+  presentation in the same task: no timer, no probe, no bake, no filter swap; it returns `'exact'`. Several lenses
+  landing in one frame all land in it. With a prepared destination the lens keeps the sample it holds and never
+  probes at the landing; with none (a host that only calls `setInterim`) it probes once at the landing and eases to
+  the result over 200 ms. Later real changes of the backdrop (`update()`, `setSample`) ease the same way, not during
+  a motion or an appear change.
+- A prepared pair is landed only if it is the pair of the lens as it is at `land()`: the same snapped box, morph,
+  density and material. If the box moved by a quarter pixel across a snap boundary, the density changed, or a
+  prepared `material` was never applied (`setMaterial(material)` applies it), the lens shows the nearest ready pair
+  and blends to the live one when it is built, with priority. It never bakes in the landing task.
+- If the pair is not ready (a retarget in the last 100 ms, a cold cache, a slow fallback) the lens blends: two
+  `feImage`s and an `feComposite` are added to the filter, mixed over 120 ms by attributes, and removed, ending on the
+  destination. It returns `'blend'` and counts `landedBlend`. A resize, `setMorph`, `setMaterial` or `setInterim(true)`
+  during a blend continues from what is shown: the current mix becomes the outgoing input of a new stage that ramps from 0
+  to the new pair, up to three images in the filter. At that cap a newer pair replaces the newest one while it is within
+  0.1 of its start (a jump of at most 0.1 of the distance), and otherwise waits for the stage to end. A different filter structure (dispersion or hue turned
+  on or off) is replaced in the task and counted in `syncSwaps`. `setInterim(false)` is `land()`.
+- A hidden page draws no frame and clamps timers: `land()` installs the pair undecoded and settles on `visibilitychange`.
+- Without a worker (`Worker`, `OffscreenCanvas` or blob workers missing, e.g. under a CSP), `prepare` bakes on the main
+  thread after a frame in slices of 4 ms, the encode in a task of its own, checking each slice that the call is still
+  the newest.
+- Decoded pairs are kept under a budget of about 24 MB (four bytes a pixel); pairs of lenses off screen go first, and a
+  pair on a filter, held for a landing or under a blend is never released.
+- The worker answers each job within a time that grows with its pixels (2 s at least). A job that does not falls back to
+  the main thread and the worker is replaced; a second timeout in a row turns the worker off for the page.
+- Work is counted: `renderStats()` has `landedExact`, `landedBlend`, `probesAtLand` and `syncSwaps`. `check:dom` runs
+  a morph with `prepare` at its start and `land()` in its last frame, with the worker and without, and requires that no
+  pixel changes after the last motion frame and no main-thread task passes 16.7 ms; a morph without `prepare` is its canary.
+
 ## Glass that is not there until you touch it
 
 `variant: 'interactive'` attaches the material and leaves the element alone until a finger

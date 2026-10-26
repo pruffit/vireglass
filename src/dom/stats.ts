@@ -11,9 +11,17 @@ export type RenderStats = {
   workerBakes: number;
   /** Filter elements put into the shared `<defs>`, replacing or adding. */
   filterSwaps: number;
+  /** `land()` calls that wrote a decoded pair in their own task. */
+  landedExact: number;
+  /** `land()` calls that blended from the shown pair to a destination that was not ready. */
+  landedBlend: number;
+  /** Backdrop probes made inside a landing. */
+  probesAtLand: number;
+  /** Filters replaced in the task that changed their key, while the lens already had one. */
+  syncSwaps: number;
 };
 
-const counts: RenderStats = { probes: 0, fullBakes: 0, reducedBakes: 0, mainThreadBakes: 0, workerBakes: 0, filterSwaps: 0 };
+const counts: RenderStats = { probes: 0, fullBakes: 0, reducedBakes: 0, mainThreadBakes: 0, workerBakes: 0, filterSwaps: 0, landedExact: 0, landedBlend: 0, probesAtLand: 0, syncSwaps: 0 };
 
 /** The work the renderer has done since the last reset; the hook for a consumer's performance gate. */
 export function renderStats(): RenderStats {
@@ -21,12 +29,7 @@ export function renderStats(): RenderStats {
 }
 
 export function resetRenderStats(): void {
-  counts.probes = 0;
-  counts.fullBakes = 0;
-  counts.reducedBakes = 0;
-  counts.mainThreadBakes = 0;
-  counts.workerBakes = 0;
-  counts.filterSwaps = 0;
+  for (const key of Object.keys(counts) as (keyof RenderStats)[]) counts[key] = 0;
 }
 
 export function bump(key: keyof RenderStats): void {

@@ -4,7 +4,7 @@
 import { bevelDp, thicknessDp, type VireGlassGeometry } from '../geometry';
 import { BEVEL } from '../law';
 import type { VireGlassOptics } from '../material';
-import { pngFromPixels, renderInSlices, yieldTask, type Rows } from './bake';
+import { pngFromPixels, renderInSlices, yieldTask, type BakeControl, type Rows } from './bake';
 import {
   sceneDistance,
   sceneGradient,
@@ -79,6 +79,11 @@ export type DisplacementState = {
   morphs?: readonly MorphShape[];
 };
 
+/** One list, whichever way the caller expressed the shapes. */
+export function morphShapes(state: DisplacementState): (MorphShape | undefined)[] {
+  return [state.morph, state.morph2, ...(state.morphs ?? [])];
+}
+
 /**
  * The `feDisplacementMap` scale for these optics. The map's pixels are a fraction of it and do not
  * depend on it, so a change of strength alone, such as appear, is this attribute and not a bake.
@@ -117,8 +122,7 @@ export function displacementRows(optics: VireGlassOptics, geometry: VireGlassGeo
   const height = Math.max(1, Math.round(geometry.height * density));
   const scale = displacementScale(optics, geometry);
   const smoothing = state.smoothing ?? 0;
-  // One list, whichever way the caller expressed it.
-  const shapes: (MorphShape | undefined)[] = [state.morph, state.morph2, ...(state.morphs ?? [])];
+  const shapes = morphShapes(state);
 
   const data = new Uint8ClampedArray(width * height * 4);
   const halfW = geometry.width / 2;
@@ -184,11 +188,12 @@ export async function buildDisplacementMapInSlices(
   geometry: VireGlassGeometry,
   dpr: number,
   state: DisplacementState = {},
+  control: BakeControl = {},
 ): Promise<DisplacementMap> {
   if (!hasCanvasSupport()) {
     throw new Error('vireglass/dom: buildDisplacementMap requires a DOM (canvas)');
   }
-  const { data, width, height, scale } = await renderInSlices(displacementRows(optics, geometry, dpr, state));
+  const { data, width, height, scale } = await renderInSlices(displacementRows(optics, geometry, dpr, state), control.sliceMs, control.live);
   const url = pngFromPixels(data, width, height);
   await yieldTask();
   return { url, width, height, scale };

@@ -240,7 +240,7 @@ const FIXTURE = `<!doctype html>
     };
     const built = shown && shown.startsWith('blob:') ? await decode(shown) : null;
     const settled = applyAccessibility(applyGlassScale(resolveOptics(MATERIAL_PRESETS.glass), GLASS_SCALE_DEFAULT), systemAccessibility());
-    const dpr = Math.min(1, devicePixelRatio);
+    const dpr = devicePixelRatio;
     const compare = (index) => {
       const { smoothing, shape } = shapeAt(index);
       const sync = renderDisplacementPixels(settled, geometry, dpr, { smoothing, morph: shape });
@@ -254,6 +254,244 @@ const FIXTURE = `<!doctype html>
     lens.destroy();
     glass.style.display = 'none';
     return { stats, shown, same, other, frames: FRAMES };
+  };
+  // A geometry-only motion in interim and the landing after it. Nothing but the box moves, and the backdrop is stated,
+  // so the lens at the end of the motion has to look like the lens at the end of the landing.
+  let landing = null;
+  let landStart = null;
+  const feHrefs = () => [...document.querySelectorAll('svg[data-vireglass-filters] filter feImage')].map((n) => n.getAttribute('href'));
+  globalThis.__landBegin = async (steps) => {
+    morphing?.destroy();
+    morphing = null;
+    live?.destroy();
+    live = null;
+    orb?.destroy();
+    orb = null;
+    document.body.classList.remove('flat', 'bright', 'colour');
+    document.getElementById('orb').style.display = 'none';
+    const glass = document.getElementById('glass');
+    glass.style.display = 'block';
+    glass.style.width = '${BOX.w}px';
+    landing = attachGlass(glass, { material: MATERIAL_PRESETS.glass, interactive: false, shadow: false, sample });
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    landStart = feHrefs();
+    landing.setInterim(true);
+    resetRenderStats();
+    for (let i = 1; i <= steps; i += 1) {
+      glass.style.width = (${BOX.w} + 2 * i) + 'px';
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+    let last = feHrefs().join('|');
+    let since = performance.now();
+    const started = since;
+    while (performance.now() - since < 300 && performance.now() - started < 4000) {
+      await new Promise((r) => setTimeout(r, 25));
+      const now = feHrefs().join('|');
+      if (now !== last) {
+        last = now;
+        since = performance.now();
+      }
+    }
+    return { hrefs: feHrefs(), start: landStart, stats: renderStats() };
+  };
+  globalThis.__landStale = () => {
+    const images = document.querySelectorAll('svg[data-vireglass-filters] filter feImage');
+    landStart.forEach((href, i) => images[i]?.setAttribute('href', href));
+  };
+  globalThis.__landEnd = async () => {
+    resetRenderStats();
+    landing.setInterim(false);
+    await new Promise((r) => setTimeout(r, 700));
+    return { hrefs: feHrefs(), stats: renderStats() };
+  };
+  // A morph with prepare at its start and land() in its last frame, or the same without prepare.
+  let prepLens = null;
+  globalThis.__prepRun = async (steps, prepare) => {
+    morphing?.destroy();
+    morphing = null;
+    live?.destroy();
+    live = null;
+    orb?.destroy();
+    orb = null;
+    document.body.classList.remove('flat', 'bright', 'colour');
+    document.getElementById('orb').style.display = 'none';
+    const glass = document.getElementById('glass');
+    glass.style.display = 'block';
+    glass.style.width = '${BOX.w}px';
+    const shapeAt = (t) => ({ smoothing: 24, shape: { offsetX: 150 * t, offsetY: -60 * t, width: 30 + 60 * t, height: 30 + 20 * t, cornerRadius: 15 + 5 * t } });
+    prepLens = attachGlass(glass, { material: MATERIAL_PRESETS.glass, interactive: false, shadow: false, sample });
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const finalWidth = ${BOX.w} + 2 * steps;
+    prepLens.setInterim(true);
+    if (prepare) prepLens.prepare({ geometry: { width: finalWidth, height: ${BOX.h}, cornerRadius: ${BOX.r} }, morph: shapeAt(1), sample });
+    resetRenderStats();
+    for (let i = 1; i < steps; i += 1) {
+      glass.style.width = (${BOX.w} + 2 * i) + 'px';
+      prepLens.setMorph(shapeAt(i / steps));
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+    const before = renderStats();
+    let landed = null;
+    await new Promise((r) =>
+      requestAnimationFrame(() => {
+        glass.style.width = finalWidth + 'px';
+        prepLens.setMorph(shapeAt(1));
+        landed = prepLens.land();
+        r();
+      }),
+    );
+    const stats = renderStats();
+    await new Promise((r) => requestAnimationFrame(r));
+    return { landed, stats, before };
+  };
+  // The host path with no prepare: a resize in interim and setInterim(false), on a page with no worker.
+  let hostLens = null;
+  let hostStart = [];
+  const hostReset = () => {
+    morphing?.destroy();
+    morphing = null;
+    live?.destroy();
+    live = null;
+    orb?.destroy();
+    orb = null;
+    hostLens?.destroy();
+    hostLens = null;
+    document.body.classList.remove('flat', 'bright', 'colour');
+    document.getElementById('orb').style.display = 'none';
+    const glass = document.getElementById('glass');
+    glass.style.display = 'block';
+    return glass;
+  };
+  globalThis.__hostRun = async (steps) => {
+    const glass = hostReset();
+    glass.style.width = '${BOX.w}px';
+    hostLens = attachGlass(glass, { material: MATERIAL_PRESETS.glass, interactive: false, shadow: false, sample });
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    hostStart = feHrefs();
+    hostLens.setInterim(true);
+    for (let i = 1; i <= steps; i += 1) {
+      glass.style.width = (${BOX.w} + 2 * i) + 'px';
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+    resetRenderStats();
+    hostLens.setInterim(false);
+    await new Promise((r) => setTimeout(r, 1200));
+    return { stats: renderStats(), hrefs: feHrefs(), start: hostStart };
+  };
+  globalThis.__hostStale = async () => {
+    const images = document.querySelectorAll('svg[data-vireglass-filters] filter feImage');
+    images[1]?.setAttribute('href', hostStart[1]);
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  };
+  globalThis.__hostSettled = async () => {
+    const glass = hostReset();
+    hostLens = attachGlass(glass, { material: MATERIAL_PRESETS.glass, interactive: false, shadow: false, sample });
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  };
+  globalThis.__hostDone = () => {
+    hostLens?.destroy();
+    hostLens = null;
+    document.getElementById('glass').style.width = '${BOX.w}px';
+  };
+  // A resize delay ms into a blend, recorded frame by frame as the maps and weights the filter shows; the effective map is
+  // read off real pixels, so a jump on the retarget shows as a step between two frames.
+  const mapBlobs = new Map();
+  const makeUrl = URL.createObjectURL.bind(URL);
+  URL.createObjectURL = (blob) => {
+    const url = makeUrl(blob);
+    mapBlobs.set(url, blob);
+    return url;
+  };
+  let blendLens = null;
+  const snapFilter = () => {
+    const all = document.querySelectorAll('svg[data-vireglass-filters] filter');
+    return [...all[all.length - 1].children]
+      .filter((n) => n.localName === 'feImage' || n.localName === 'feComposite')
+      .map((n) => ({ tag: n.localName, result: n.getAttribute('result') || '', a: n.getAttribute('in'), b: n.getAttribute('in2'), k2: Number(n.getAttribute('k2')), k3: Number(n.getAttribute('k3')), href: n.getAttribute('href') }));
+  };
+  globalThis.__blendRun = async (delay) => {
+    const glass = hostReset();
+    glass.style.width = '${BOX.w}px';
+    blendLens = attachGlass(glass, { material: MATERIAL_PRESETS.glass, interactive: false, shadow: false, sample });
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    blendLens.setInterim(true);
+    const to = ${BOX.w} + 60;
+    blendLens.prepare({ geometry: { width: to, height: ${BOX.h}, cornerRadius: ${BOX.r} } });
+    glass.style.width = to + 'px';
+    const landed = blendLens.land();
+    const frames = [];
+    let began = null;
+    let resized = false;
+    let quiet = 0;
+    const t0 = performance.now();
+    while (performance.now() - t0 < 4000 && quiet < 10) {
+      const now = await new Promise((r) => requestAnimationFrame(r));
+      await new Promise((r) => setTimeout(r, 0));
+      const snap = snapFilter();
+      frames.push({ now, snap });
+      const inBlend = snap.some((n) => n.tag === 'feComposite' && n.result.startsWith('map'));
+      if (inBlend && began === null) began = now;
+      if (began !== null && !resized && now - began >= delay) {
+        glass.style.width = (to + 40) + 'px';
+        blendLens.update();
+        resized = true;
+      }
+      quiet = resized && !inBlend ? quiet + 1 : 0;
+    }
+    const pixels = new Map();
+    for (const f of frames) {
+      for (const n of f.snap) {
+        if (n.tag !== 'feImage' || !n.result.startsWith('map') || pixels.has(n.href)) continue;
+        const bitmap = await createImageBitmap(mapBlobs.get(n.href) ?? (await (await fetch(n.href)).blob()));
+        const canvas = new OffscreenCanvas(32, 16);
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(bitmap, 0, 0, 32, 16);
+        pixels.set(n.href, Float32Array.from(ctx.getImageData(0, 0, 32, 16).data));
+      }
+    }
+    const dist = (a, b) => a.reduce((m, v, i) => Math.max(m, Math.abs(v - b[i])), 0);
+    const all = [...pixels.values()];
+    let spread = 0;
+    for (const a of all) for (const b of all) spread = Math.max(spread, dist(a, b));
+    const at = (snap, name) => {
+      const n = snap.find((m) => m.result === name);
+      if (n.tag === 'feImage') return pixels.get(n.href);
+      const x = at(snap, n.a);
+      const y = at(snap, n.b);
+      return x.map((v, i) => n.k2 * v + n.k3 * y[i]);
+    };
+    let worst = 0;
+    let retargetWeight = null;
+    let longest = 1;
+    for (let i = 1; i < frames.length; i += 1) {
+      const was = frames[i - 1].snap;
+      const now = frames[i].snap;
+      const chain = (snap) => snap.some((n) => n.tag === 'feComposite' && n.result.startsWith('map'));
+      const images = (snap) => snap.filter((n) => n.tag === 'feImage' && n.result.startsWith('map')).length;
+      longest = Math.max(longest, images(now));
+      if (images(was) === 2 && images(now) === 3) retargetWeight = was.find((n) => n.result === 'map').k3;
+      if (!chain(was) && !chain(now)) continue;
+      const step = ((frames[i].now - frames[i - 1].now) / 120) * spread + 2;
+      worst = Math.max(worst, dist(at(was, 'map'), at(now, 'map')) / step);
+    }
+    const last = frames[frames.length - 1].snap;
+    return { landed, frames: frames.length, resized, spread, worst, retargetWeight, longest, collapsed: !last.some((n) => n.tag === 'feComposite' && n.result.startsWith('map')) };
+  };
+  globalThis.__blendDone = () => {
+    blendLens?.destroy();
+    blendLens = null;
+    document.getElementById('glass').style.width = '${BOX.w}px';
+  };
+  globalThis.__prepSettle = (ms) => new Promise((r) => setTimeout(r, ms));
+  globalThis.__prepDone = () => {
+    prepLens?.destroy();
+    prepLens = null;
+    document.getElementById('glass').style.width = '${BOX.w}px';
+  };
+  globalThis.__landDone = () => {
+    landing?.destroy();
+    landing = null;
+    document.getElementById('glass').style.width = '${BOX.w}px';
   };
   globalThis.__morphDone = () => {
     morphing?.destroy();
@@ -279,7 +517,7 @@ const FIXTURE = `<!doctype html>
       return Number(css.slice(at + 5, css.indexOf(')', at)).split(',')[3]);
     };
     const alpha = alphaOf(lens.style.backgroundColor);
-    const shadow = alphaOf(lens.style.boxShadow);
+    const shadow = alphaOf(lens.style.getPropertyValue('--vireglass-shadow-color'));
     glass.destroy();
     return { busy: sample.busy, luma: sample.luma, alpha, shadow };
   };
@@ -404,6 +642,31 @@ const DIFF = `(a, b, rect) => {
     let sum = 0;
     for (let i = 0; i < pa.length; i += 4) sum += Math.abs(pa[i] - pb[i]);
     return sum / (pa.length / 4);
+  });
+}`;
+
+/** How many pixels of a rectangle differ by more than `tolerance` levels in any channel between two frames. */
+const COUNT = `(a, b, rect, tolerance) => {
+  const load = (src) => new Promise((res, rej) => {
+    const img = new Image();
+    img.onload = () => res(img);
+    img.onerror = rej;
+    img.src = src;
+  });
+  return Promise.all([load(a), load(b)]).then(([ia, ib]) => {
+    const c = document.createElement('canvas');
+    c.width = rect.w; c.height = rect.h;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(ia, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.h);
+    const pa = ctx.getImageData(0, 0, rect.w, rect.h).data;
+    ctx.clearRect(0, 0, rect.w, rect.h);
+    ctx.drawImage(ib, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.h);
+    const pb = ctx.getImageData(0, 0, rect.w, rect.h).data;
+    let count = 0;
+    for (let i = 0; i < pa.length; i += 4) {
+      if (Math.abs(pa[i] - pb[i]) > tolerance || Math.abs(pa[i + 1] - pb[i + 1]) > tolerance || Math.abs(pa[i + 2] - pb[i + 2]) > tolerance) count += 1;
+    }
+    return count;
   });
 }`;
 
@@ -796,8 +1059,8 @@ try {
   if (iDuring.probes !== 0) fail(`interim probed the backdrop ${iDuring.probes} times`);
   if (iDuring.fullBakes !== 0) fail(`interim rebuilt the map at full resolution ${iDuring.fullBakes} times`);
   if (iDuring.filterSwaps !== 0) fail(`interim swapped the filter element ${iDuring.filterSwaps} times`);
-  if (iAfter.probes !== 1) fail(`ending interim should probe once, probed ${iAfter.probes}`);
-  if (iAfter.fullBakes !== MAPS) fail(`ending interim should bake once at full resolution (${MAPS} maps), baked ${iAfter.fullBakes}`);
+  if (iAfter.probes !== 1) fail(`a landing with no prepare should probe once, probed ${iAfter.probes}`);
+  if (iAfter.fullBakes > MAPS) fail(`ending interim should bake at most once at full resolution (${MAPS} maps), baked ${iAfter.fullBakes}`);
   if (iAfter.filterSwaps !== 0) fail(`ending interim replaced the filter element (${iAfter.filterSwaps}); it should update in place`);
   if (!(cAfter.fullBakes >= MAPS * (FRAMES - 5) && cAfter.probes >= FRAMES - 5 && cAfter.filterSwaps >= FRAMES - 5)) {
     fail(`canary: sixty frames without interim counted ${cAfter.probes} probes, ${cAfter.fullBakes} bakes, ${cAfter.filterSwaps} swaps — the gate cannot fail`);
@@ -858,6 +1121,135 @@ try {
   if (!worked.shown || !worked.shown.startsWith('blob:')) fail(`the filter ended on ${worked.shown}, not on a map the worker built`);
   if (worked.same.differing !== 0) fail(`the worker's map differs from the main thread's in ${worked.same.differing} bytes`);
   if (!(worked.other.differing > 0)) fail('canary: the first frame draws the same map as the last, so the comparison cannot tell maps apart');
+
+  // 10c3. A geometry-only motion in interim gets pairs for the live box, so the landing has nothing left to change: the
+  //    frame after the landing is the last interim frame, pixel for pixel. The canary puts the stretched maps of the
+  //    first box back before the last interim frame, which the landing then has to replace.
+  const STEPS = 30;
+  const GROWN = { x: BOX.x, y: BOX.y, w: BOX.w + 2 * STEPS, h: BOX.h };
+  const count = (a, b) => page.evaluate(([x, y, r, t, fn]) => new Function(`return ${fn}`)()(x, y, r, t), [a, b, GROWN, 1, COUNT]);
+  const shotNow = async () => `data:image/png;base64,${(await page.screenshot()).toString('base64')}`;
+  const landCase = async (stale) => {
+    const begun = await page.evaluate((n) => globalThis.__landBegin(n), STEPS);
+    if (stale) await page.evaluate(() => globalThis.__landStale());
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const before = await shotNow();
+    const ended = await page.evaluate(() => globalThis.__landEnd());
+    const after = await shotNow();
+    await page.evaluate(() => globalThis.__landDone());
+    return { begun, ended, before, after, differing: await count(before, after) };
+  };
+  const landed = await landCase(false);
+  const staleLanded = await landCase(true);
+  const staleCanary = await count(staleLanded.before, landed.after);
+  console.log(
+    `check-dom: ${STEPS} geometry-only frames in interim — ${landed.begun.stats.reducedBakes} pairs requested, ${landed.begun.stats.workerBakes} built in the worker, ` +
+      `${landed.begun.stats.fullBakes} full bakes; landing: ${landed.ended.stats.fullBakes} bakes, ${landed.ended.stats.filterSwaps} swaps, ` +
+      `${landed.differing} pixels differ by more than 1 level from the last interim frame (canary with the first box's maps put back: ${staleCanary} pixels differ from the landed frame)`,
+  );
+  if (landed.begun.stats.workerBakes < 1) fail('a geometry-only motion in interim got no pair from the worker');
+  if (landed.begun.stats.fullBakes !== 0) fail(`a geometry-only motion in interim did ${landed.begun.stats.fullBakes} full bakes`);
+  if (landed.begun.hrefs.join('|') === landed.begun.start.join('|')) fail("the filter still showed the first box's maps at the end of a geometry-only motion");
+  if (landed.ended.stats.fullBakes !== 0 || landed.ended.stats.filterSwaps !== 0) fail(`the landing baked ${landed.ended.stats.fullBakes} maps and swapped ${landed.ended.stats.filterSwaps} filters although it landed on a pair it had shown`);
+  if (landed.ended.hrefs.join('|') !== landed.begun.hrefs.join('|')) fail('the landing changed the maps of a lens that was already showing the pair for its box');
+  if (landed.differing !== 0) fail(`the landed frame differs from the last interim frame in ${landed.differing} pixels`);
+  if (!(staleCanary > 0)) fail('canary: the maps of the first box in place of the pair for the box changed no pixel, so the comparison cannot fail');
+
+  // 10c4. prepare at the start of a morph and land() in its last frame: nothing changes after the last motion frame, with the
+  //    worker and without it, and no main-thread task of the run is longer than a frame (measured: 4-6 ms with the worker, 5-6 ms without). The canary has no prepare.
+  const WHOLE = { x: 0, y: 0, w: 520, h: 340 };
+  const countWhole = (pg, a, b) => pg.evaluate(([x, y, r, t, fn]) => new Function(`return ${fn}`)()(x, y, r, t), [a, b, WHOLE, 1, COUNT]);
+  const frames = async (pg) => {
+    await pg.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const first = `data:image/png;base64,${(await pg.screenshot()).toString('base64')}`;
+    await pg.evaluate(() => globalThis.__prepSettle(700));
+    const later = `data:image/png;base64,${(await pg.screenshot()).toString('base64')}`;
+    return [first, later];
+  };
+  const longTasks = async (pg, prepare) => {
+    await browser.startTracing(pg, { categories: ['devtools.timeline', 'disabled-by-default-devtools.timeline', 'toplevel'] });
+    await pg.evaluate(([n, p]) => globalThis.__prepRun(n, p), [STEPS, prepare]);
+    await pg.evaluate(() => globalThis.__prepSettle(500));
+    const trace = JSON.parse((await browser.stopTracing()).toString());
+    await pg.evaluate(() => globalThis.__prepDone());
+    const main = new Set(trace.traceEvents.filter((e) => e.ph === 'M' && e.name === 'thread_name' && e.args?.name === 'CrRendererMain').map((e) => e.pid + ':' + e.tid));
+    const tasks = trace.traceEvents.filter((e) => e.name === 'RunTask' && e.ph === 'X' && main.has(e.pid + ':' + e.tid));
+    const over = tasks.filter((t) => t.dur > 16700).map((t) => Math.round(t.dur / 100) / 10);
+    return { tasks: tasks.length, over, max: Math.round(Math.max(0, ...tasks.map((t) => t.dur)) / 100) / 10 };
+  };
+  const noWorker = await browser.newPage({ viewport: { width: 520, height: 340 } });
+  await noWorker.addInitScript(() => {
+    delete window.Worker;
+  });
+  await noWorker.goto(`http://127.0.0.1:${port}/`);
+  await noWorker.waitForFunction('globalThis.__ready === true');
+  for (const [label, pg] of [['worker', page], ['no worker', noWorker]]) {
+    const run = await pg.evaluate(([n, p]) => globalThis.__prepRun(n, p), [STEPS, true]);
+    const [first, later] = await frames(pg);
+    await pg.evaluate(() => globalThis.__prepDone());
+    const moved = await countWhole(pg, first, later);
+    const tasks = await longTasks(pg, true);
+    console.log(
+      `check-dom: prepare + land (${label}) — ${run.landed}; at landing ${run.stats.fullBakes - run.before.fullBakes} bakes, ${run.stats.probes - run.before.probes} probes, ` +
+        `${run.stats.filterSwaps - run.before.filterSwaps} swaps; ${moved} pixels change after the last motion frame; ${tasks.tasks} main-thread tasks, longest ${tasks.max} ms`,
+    );
+    if (run.landed !== 'exact') fail(`prepare + land (${label}) landed ${run.landed}`);
+    if (run.stats.fullBakes !== run.before.fullBakes || run.stats.probes !== run.before.probes || run.stats.filterSwaps !== run.before.filterSwaps) fail(`prepare + land (${label}) baked, probed or swapped at the landing`);
+    if (moved !== 0) fail(`${moved} pixels change after the last motion frame (${label})`);
+    if (tasks.over.length) fail(`main-thread tasks over 16.7 ms in the run (${label}): ${tasks.over.join(', ')} ms`);
+  }
+  {
+    const shot = async () => `data:image/png;base64,${(await noWorker.screenshot()).toString('base64')}`;
+    const host = await noWorker.evaluate((n) => globalThis.__hostRun(n), STEPS);
+    const landedShot = await shot();
+    await noWorker.evaluate(() => globalThis.__hostStale());
+    const staleShot = await shot();
+    await noWorker.evaluate(() => globalThis.__hostSettled());
+    const settledShot = await shot();
+    await noWorker.evaluate(() => globalThis.__hostDone());
+    const differing = await countWhole(noWorker, landedShot, settledShot);
+    const staleDiffering = await countWhole(noWorker, staleShot, settledShot);
+    console.log(
+      `check-dom: no worker, resize in interim, setInterim(false) — ${host.stats.landedExact} exact, ${host.stats.landedBlend} blend, ${host.stats.fullBakes} full bakes; ` +
+        `${differing} pixels differ from a lens settled on the final box (canary with the first box's hue put back: ${staleDiffering})`,
+    );
+    if (host.hrefs.join('|') === host.start.join('|')) fail('no worker: the filter still showed the first box maps after setInterim(false)');
+    if (differing !== 0) fail(`no worker: ${differing} pixels of the landed lens differ from a lens settled on the final box`);
+    if (!(staleDiffering > 0)) fail('canary: the first box hue on the landed lens changed no pixel, so the comparison cannot fail');
+  }
+  await noWorker.close();
+  {
+    const run = await page.evaluate(([n, p]) => globalThis.__prepRun(n, p), [STEPS, false]);
+    const [first, later] = await frames(page);
+    await page.evaluate(() => globalThis.__prepDone());
+    const moved = await countWhole(page, first, later);
+    console.log(`check-dom: canary without prepare — ${run.landed}, ${moved} pixels change after the last motion frame`);
+    if (run.landed === 'exact' && moved === 0) fail('canary: a morph with no prepare landed exactly and changed nothing, so the comparison cannot tell');
+  }
+
+  // 10c5. A resize at any moment of a blend continues the mix: no frame differs from the one before by more than one
+  //    ramp step of the distance between the maps. A blend that swapped the incoming image and kept its weight jumps by
+  //    the weight times the distance when the new pair arrives, so some run has to retarget late enough to tell.
+  {
+    const runs = [];
+    for (const delay of [10, 30, 50, 70, 90]) {
+      runs.push(await page.evaluate((d) => globalThis.__blendRun(d), delay));
+      await page.evaluate(() => globalThis.__blendDone());
+    }
+    const worst = Math.max(...runs.map((r) => r.worst));
+    const late = Math.max(0, ...runs.map((r) => r.retargetWeight ?? 0));
+    console.log(
+      `check-dom: a resize during a blend, at 5 moments — ${runs.filter((r) => r.retargetWeight !== null).length} retargeted (latest at weight ${late.toFixed(2)}), ` +
+        `largest frame-to-frame step ${worst.toFixed(2)} of one ramp step, up to ${Math.max(...runs.map((r) => r.longest))} maps in the filter`,
+    );
+    for (const r of runs) {
+      if (r.landed !== 'blend') fail(`the blend case landed ${r.landed}, so it measures no blend`);
+      if (!r.collapsed) fail('a blend that was resized left its extra maps in the filter');
+      if (r.longest > 3) fail(`a retargeted blend held ${r.longest} maps`);
+    }
+    if (worst > 1) fail(`a resize during a blend moved the map by ${worst.toFixed(2)} ramp steps in one frame`);
+    if (late < 0.4) fail(`canary: no resize retargeted a blend past weight 0.4 (latest ${late.toFixed(2)}), so a jump on the retarget could not show`);
+  }
 
   // 10d. Appear is the lens's strength written in place (§1, materialise by bending light): thirty
   //    steps cost no bake and no swap, absent reads as the page, half as less than present. The canary

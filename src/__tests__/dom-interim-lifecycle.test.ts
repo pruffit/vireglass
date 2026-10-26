@@ -58,7 +58,12 @@ let el: HTMLElement;
 const href = () => document.querySelector('svg[data-vireglass-filters] filter feImage')?.getAttribute('href');
 const filters = () => document.querySelectorAll('svg[data-vireglass-filters] filter').length;
 const settle = async () => {
-  for (const d of decodes.splice(0)) d.resolve();
+  for (let round = 0; round < 3; round += 1) {
+    if (vi.isFakeTimers()) await vi.advanceTimersByTimeAsync(0);
+    else await new Promise((r) => setTimeout(r, 0));
+    for (let i = 0; i < 6; i += 1) await Promise.resolve();
+    for (const d of decodes.splice(0)) d.resolve();
+  }
   await Promise.resolve();
   await Promise.resolve();
 };
@@ -101,9 +106,10 @@ afterEach(() => {
 
 describe('a pending decode never lands on a filter it was not made for', () => {
   it('drops the decode of the map a later swap replaced', async () => {
+    vi.useFakeTimers();
     const g = attach();
     g.setInterim(true);
-    g.setInterim(false);
+    vi.advanceTimersByTime(2000);
     expect(decodes.length).toBeGreaterThan(0);
     box = { width: 260, height: 100 };
     g.update();
@@ -139,9 +145,8 @@ describe('a landing bakes its maps in tasks of their own, a frame apart, and lan
     const g = attach();
     g.setInterim(true);
     box = { width: 260, height: 100 };
-    g.update();
     resetRenderStats();
-    g.setInterim(false);
+    vi.advanceTimersByTime(2000);
     return g;
   };
 
@@ -278,7 +283,7 @@ describe('a landing bakes its maps in tasks of their own, a frame apart, and lan
     await settle();
     expect(href()).toContain('w260');
     g.setInterim(true);
-    g.setInterim(false);
+    vi.advanceTimersByTime(2000);
     await vi.advanceTimersByTimeAsync(120);
     await settle();
     expect(href()).toContain('w260');
@@ -298,10 +303,8 @@ describe('a landing bakes its maps in tasks of their own, a frame apart, and lan
 
   it('lands a second landing of the same maps before the frame once', async () => {
     const g = land();
-    const waiting = vi.getTimerCount();
     g.setInterim(true);
-    g.setInterim(false);
-    expect(vi.getTimerCount()).toBe(waiting);
+    vi.advanceTimersByTime(2000);
     await vi.advanceTimersByTimeAsync(120);
     expect(renderStats().fullBakes).toBe(2);
     expect(decodes.filter((d) => d.url.startsWith('hue:'))).toHaveLength(1);
@@ -324,7 +327,7 @@ describe('a landing bakes its maps in tasks of their own, a frame apart, and lan
     await settle();
     g.setInterim(true);
     resetRenderStats();
-    g.setInterim(false);
+    vi.advanceTimersByTime(2000);
     expect(renderStats().fullBakes).toBe(0);
     expect(decodes.some((d) => d.url.startsWith('hue:'))).toBe(true);
   });
@@ -337,6 +340,166 @@ describe('a landing bakes its maps in tasks of their own, a frame apart, and lan
     expect(renderStats().fullBakes).toBe(1);
     await settle();
     expect(href()).toContain('w260');
+  });
+});
+
+describe('the host landing: setInterim(false) is land(), and builds in the background', () => {
+  const hueHref = () => document.querySelectorAll('svg[data-vireglass-filters] filter feImage')[1]?.getAttribute('href');
+  const resolve = async (prefix: string) => {
+    for (const d of decodes.filter((d) => d.url.startsWith(prefix))) d.resolve();
+    decodes = decodes.filter((d) => !d.url.startsWith(prefix));
+    for (let i = 0; i < 4; i += 1) await Promise.resolve();
+  };
+  const land = () => {
+    const g = attach();
+    g.setInterim(true);
+    box = { width: 260, height: 100 };
+    resetRenderStats();
+    expect(g.setInterim(false)).toBeUndefined();
+    return g;
+  };
+
+  beforeEach(() => {
+    spectral.on = true;
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'requestAnimationFrame', 'cancelAnimationFrame'] });
+  });
+
+  afterEach(() => {
+    Reflect.deleteProperty(window, 'devicePixelRatio');
+  });
+
+  it('writes and bakes nothing in the task of the call, and builds both maps after the next frame', async () => {
+    land();
+    expect(bake.started).toBe(0);
+    expect(renderStats()).toMatchObject({ fullBakes: 0, filterSwaps: 0, landedBlend: 1 });
+    expect(href()).not.toContain('w260');
+    await vi.advanceTimersByTimeAsync(20);
+    expect(bake.started).toBe(1);
+    expect(decodes.some((d) => d.url.includes('w260'))).toBe(true);
+    expect(renderStats().mainThreadBakes).toBe(1);
+  });
+
+  it('puts the displacement map and the hue map on the filter together, through a blend on the same filter', async () => {
+    land();
+    const node = document.querySelector('svg[data-vireglass-filters] filter');
+    const before = [href(), hueHref()];
+    await vi.advanceTimersByTimeAsync(40);
+    await resolve('map:');
+    expect([href(), hueHref()]).toEqual(before);
+    await resolve('hue:');
+    await vi.advanceTimersByTimeAsync(300);
+    expect(href()).toContain('w260');
+    expect(hueHref()).not.toBe(before[1]);
+    expect(document.querySelector('svg[data-vireglass-filters] filter')).toBe(node);
+    expect(renderStats().filterSwaps).toBe(0);
+  });
+
+  it('builds at the density the landing was keyed for', async () => {
+    Object.defineProperty(window, 'devicePixelRatio', { value: 1, configurable: true });
+    land();
+    Object.defineProperty(window, 'devicePixelRatio', { value: 2, configurable: true });
+    await vi.advanceTimersByTimeAsync(40);
+    expect(decodes.find((d) => d.url.startsWith('map:'))?.url).toContain(':d1');
+    expect(decodes.find((d) => d.url.startsWith('hue:'))?.url).toContain(':d1');
+  });
+
+  it('lands nothing when the lens is destroyed after its build started, and starts none when destroyed during the wait', async () => {
+    const g = land();
+    let release = () => {};
+    bake.mapGate = new Promise<void>((resolve) => (release = resolve));
+    await vi.advanceTimersByTimeAsync(20);
+    expect(bake.started).toBe(1);
+    g.destroy();
+    handle = null;
+    release();
+    await vi.advanceTimersByTimeAsync(120);
+    await settle();
+    expect(decodes.some((d) => d.url.startsWith('hue:'))).toBe(false);
+    const other = land();
+    other.destroy();
+    handle = null;
+    const started = bake.started;
+    await vi.advanceTimersByTimeAsync(120);
+    expect(bake.started).toBe(started);
+  });
+
+  it('builds after 100 ms where no frame comes', async () => {
+    vi.stubGlobal('requestAnimationFrame', () => 0);
+    land();
+    await vi.advanceTimersByTimeAsync(90);
+    expect(bake.started).toBe(0);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(bake.started).toBe(1);
+    vi.unstubAllGlobals();
+  });
+
+  it('does not show the pair when the lens goes back into interim during the build', async () => {
+    const g = land();
+    let release = () => {};
+    bake.mapGate = new Promise<void>((resolve) => (release = resolve));
+    await vi.advanceTimersByTimeAsync(20);
+    g.setInterim(true);
+    release();
+    await vi.advanceTimersByTimeAsync(120);
+    await settle();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(href()).not.toContain('w260');
+  });
+
+  it('follows the box when it takes a new size during the wait, and lands on the new pair', async () => {
+    const g = land();
+    box = { width: 300, height: 100 };
+    g.update();
+    await vi.advanceTimersByTimeAsync(120);
+    await settle();
+    await vi.advanceTimersByTimeAsync(300);
+    await settle();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(href()).toContain('w300');
+    expect(renderStats().fullBakes).toBe(0);
+  });
+
+  it('joins a second landing of the same maps made before the frame: one build, no new timer', async () => {
+    const g = land();
+    const waiting = vi.getTimerCount();
+    g.setInterim(true);
+    g.setInterim(false);
+    expect(vi.getTimerCount()).toBe(waiting);
+    await vi.advanceTimersByTimeAsync(120);
+    expect(bake.started).toBe(1);
+    expect(decodes.filter((d) => d.url.startsWith('hue:'))).toHaveLength(1);
+    await settle();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(href()).toContain('w260');
+  });
+
+  it('lands at once, changing nothing, on the pair it already shows', async () => {
+    const g = land();
+    await vi.advanceTimersByTimeAsync(40);
+    await settle();
+    await vi.advanceTimersByTimeAsync(300);
+    const shown = [href(), hueHref()];
+    g.setInterim(true);
+    resetRenderStats();
+    g.setInterim(false);
+    expect(renderStats()).toMatchObject({ landedExact: 1, mainThreadBakes: 0, fullBakes: 0 });
+    expect([href(), hueHref()]).toEqual(shown);
+    expect(bake.started).toBe(1);
+  });
+
+  it('survives a failed build: reports it once, and lands the box through the settled path', async () => {
+    const reported: unknown[] = [];
+    vi.stubGlobal('reportError', (e: unknown) => reported.push(e));
+    bake.fail = true;
+    land();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(reported).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(120);
+    await settle();
+    await vi.advanceTimersByTimeAsync(120);
+    await settle();
+    expect(href()).toContain('w260');
+    vi.unstubAllGlobals();
   });
 });
 
@@ -372,21 +535,38 @@ describe('appear is written in place, never baked', () => {
     g.setInterim(true);
     box = { width: 260, height: 100 };
     g.update();
-    expectStrength(0.4, 200);
-    g.setInterim(false);
+    expectStrength(0.4, 260);
+    vi.advanceTimersByTime(2000);
     await vi.advanceTimersByTimeAsync(120);
     await settle();
     expect(href()).toContain('w260');
     expectStrength(0.4, 260);
   });
 
-  it('keeps the strength at appear, and at the map\'s box, when a reduced map lands in interim', async () => {
+  it('keeps the strength at appear through the host landing, setInterim(false)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'requestAnimationFrame', 'cancelAnimationFrame'] });
+    const g = attach();
+    g.setAppear(0.4);
+    g.setInterim(true);
+    box = { width: 260, height: 100 };
+    g.update();
+    expectStrength(0.4, 260);
+    g.setInterim(false);
+    expectStrength(0.4, 260);
+    await vi.advanceTimersByTimeAsync(120);
+    await settle();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(href()).toContain('w260');
+    expectStrength(0.4, 260);
+  });
+
+  it('keeps the strength at appear, and at the live box, before and after a reduced map lands in interim', async () => {
     const g = attach();
     g.setInterim(true);
     g.setAppear(0.4);
     box = { width: 240, height: 100 };
     g.update();
-    expectStrength(0.4, 200);
+    expectStrength(0.4, 240);
     g.setMorph(shape(90));
     await settle();
     expect(href()).toContain('w240');

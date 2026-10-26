@@ -163,19 +163,26 @@ every frame costs no bake and no new filter, at rest or interim.
 import { attachGlass, renderStats, resetRenderStats } from 'vireglass/dom';
 
 glass.setInterim(true);   // before a morph, a drag or a growth
+glass.prepare({ geometry: end, morph: endMorph, sample: endSample }); // where it ends, announced at the start
 // ...animate the element's box, and `setMorph` shapes if it flows into others...
-glass.setInterim(false);  // when it lands
+glass.land();             // in the last frame: 'exact', or 'blend' if the destination was not ready
 ```
 
 A glass element that changes shape every frame used to re-run the whole pipeline every frame: a
 backdrop probe, a full-resolution displacement map (and spectral map) and a new filter element.
 That is the difference between 60 fps and 10 to 20. While interim, the element does none of it: it
-reuses its last sample, keeps its filter, and the browser stretches the existing map over the live
-box. The body, rim, shadow and custom properties still update every frame. A change of the morph
-shapes passed to `setMorph` or of the system accessibility settings rebuilds the map
-at reduced resolution and shows it in place, where the browser decodes lazily only once it has been
-decoded. `setInterim(false)` does one full-resolution rebuild and one probe (with a supplied
-`sample` it does not probe). Repeating `setInterim(false)` is a no-op.
+reuses its last sample and keeps its filter. The body, rim, shadow and custom properties still update
+every frame. A change of the box, of the morph shapes passed to `setMorph` or of the material asks a
+worker for a pair, the displacement map and the spectral hue map for that box, one build at a time and
+the newest wins. The pair is shown once both maps have decoded; until then the browser stretches the
+last one, and the refraction strength already follows the live box. Interim and settled maps share one
+key, so the pair built for the final box is the pair the lens rests on. `prepare(target)` builds and
+decodes the destination's pair ahead (priority over interim maps, the newest call wins), and `land()`
+writes it in the task of the call: no timer, probe or bake, and the frame after is the frame before.
+If the destination is not ready, `land()` blends from the shown pair into it over about 120 ms and
+returns `'blend'`. `setInterim(false)` is `land()`; it takes the held sample and does not probe, so call
+`update()` when the backdrop really changed (the colours ease over 200 ms). Without a worker the maps
+are built on the main thread in slices of 4 ms after a frame. See docs/dom.md.
 
 Always pair `setInterim(true)` with `setInterim(false)`. As a safety net an element that gets no call
 at all for 2 seconds (no resize, morph, appear or update) leaves interim by itself, exactly as
@@ -183,7 +190,7 @@ at all for 2 seconds (no resize, morph, appear or update) leaves interim by itse
 stretched map. A pause longer than that in the middle of a morph ends interim early. A gesture held
 still sends no geometry, so a host that keeps a drag or a press open longer than that calls `setInterim(true)` again while it lasts: each call restarts the 2 seconds.
 
-`renderStats()` returns `{ probes, fullBakes, reducedBakes, filterSwaps }`, counted since the last
+`renderStats()` returns `{ probes, fullBakes, reducedBakes, mainThreadBakes, workerBakes, filterSwaps, landedExact, landedBlend, probesAtLand, syncSwaps }`, counted since the last
 `resetRenderStats()`. Every map counts: a rebuild with a spectral edge is two full bakes, one for
 each map; a cache hit is none. It is the hook for a performance gate that counts work instead of
 timing it: drive a morph, then assert the counters stayed at zero.
@@ -196,7 +203,7 @@ timing it: drive a morph, then assert the counters stayed at zero.
 | `--vireglass-body-color` | the glass body: density from the model, hue from the surroundings |
 | `--vireglass-tint-color` | ambient colour alone |
 | `--vireglass-rim`, `--vireglass-rim-width` | the hairline's gradient, applied for you |
-| `--vireglass-shadow` | the adaptive shadow, also written to `box-shadow` unless you opt out |
+| `--vireglass-shadow` | the adaptive shadow, also written to `box-shadow` unless you opt out; its colour is `--vireglass-shadow-color` |
 | `--vireglass-radius`, `--vireglass-radius-min` | for concentric children (§11) |
 | `--vireglass-ink`, `--vireglass-tint`, `--vireglass-body-density` | the model's raw numbers |
 

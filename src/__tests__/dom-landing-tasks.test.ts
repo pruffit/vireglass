@@ -104,7 +104,7 @@ describe('a landing runs at most one slice of rows or one encode per task', () =
     g.update();
     log.events = [];
     const before = hrefs();
-    g.setInterim(false);
+    vi.advanceTimersByTime(2000);
     handle = g;
     await vi.advanceTimersByTimeAsync(100);
     expect(log.events.slice(log.events.indexOf('rows'))).toEqual(SHAPE);
@@ -114,6 +114,44 @@ describe('a landing runs at most one slice of rows or one encode per task', () =
     const after = hrefs();
     expect(after[0]).not.toBe(before[0]);
     expect(after[1]).not.toBe(before[1]);
+  });
+
+  it('keeps that shape through the host landing, setInterim(false), and puts both maps on the filter together', async () => {
+    trackYields();
+    const g = attachGlass(el, { material: MATERIAL_PRESETS.glass, shadow: false });
+    handle = g;
+    g.setInterim(true);
+    box = { width: 260, height: 100 };
+    g.update();
+    log.events = [];
+    const before = hrefs();
+    g.setInterim(false);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(log.events.slice(log.events.indexOf('rows'))).toEqual(SHAPE);
+    expect(hrefs()).toEqual(before);
+    for (const d of decodes.splice(0)) d.resolve();
+    await vi.advanceTimersByTimeAsync(300);
+    const after = hrefs();
+    expect(after[0]).not.toBe(before[0]);
+    expect(after[1]).not.toBe(before[1]);
+  });
+
+  it('lands a second landing of the same maps once: one build, no timer more', async () => {
+    trackYields();
+    const g = attachGlass(el, { material: MATERIAL_PRESETS.glass, shadow: false });
+    handle = g;
+    g.setInterim(true);
+    box = { width: 260, height: 100 };
+    g.update();
+    log.events = [];
+    g.setInterim(false);
+    const waiting = vi.getTimerCount();
+    g.setInterim(true);
+    g.setInterim(false);
+    expect(vi.getTimerCount()).toBe(waiting);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(log.events.filter((e) => e === 'encode')).toHaveLength(2);
+    expect(log.events.slice(log.events.indexOf('rows'))).toEqual(SHAPE);
   });
 
   it('renders and encodes at once without a timer while the page is hidden', async () => {
