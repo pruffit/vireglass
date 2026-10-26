@@ -600,6 +600,8 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   // The key of the pair on the filter, and the interim record it came from, if it did.
   let shownKey = '';
   let shownRec: InterimMap | null = null;
+  // The record whose hue is on the filter: a main-thread pair shows its map before its hue, so it may not be the shown one.
+  let hueRec: InterimMap | null = null;
   let interim = false;
   let settling = false;
   let lastSample: BackdropSample | null = null;
@@ -677,7 +679,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   const morphSignature = () => morphSignatureOf(morph);
 
   function isPinned(rec: InterimMap): boolean {
-    return rec === shownRec || rec === prepared?.rec || rec === landing?.rec || rec === blendTarget?.rec || blendRecs.includes(rec);
+    return rec === shownRec || rec === prepared?.rec || rec === hueRec || rec === landing?.rec || rec === blendTarget?.rec || blendRecs.includes(rec);
   }
 
   function maybeRelease(rec: InterimMap | null | undefined): void {
@@ -687,6 +689,12 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   function setShown(rec: InterimMap | null): void {
     const prev = shownRec;
     shownRec = rec;
+    if (prev && prev !== rec) maybeRelease(prev);
+  }
+
+  function setHueRec(rec: InterimMap | null): void {
+    const prev = hueRec;
+    hueRec = rec;
     if (prev && prev !== rec) maybeRelease(prev);
   }
 
@@ -765,6 +773,8 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     if (images[0]) writeAttr(images[0], 'href', map.url);
     if (hue && images[1]) writeAttr(images[1], 'href', hue.url);
     setShown(rec);
+    if (!images[1]) setHueRec(null);
+    else if (hue) setHueRec(rec);
     shownKey = hue || images.length < 2 ? key : '';
     present(f);
   }
@@ -833,6 +843,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       if (!live() || shownRec !== rec || blend) return;
       const image = forFilter.querySelectorAll('feImage')[1];
       if (image) writeAttr(image, 'href', hue.url);
+      setHueRec(rec);
       shownKey = rec.key;
     } catch (error) {
       if (!(error instanceof Superseded)) reportFailure(error);
@@ -1226,6 +1237,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
         filterEl = next;
         shownKey = p.key;
         setShown(rec);
+        setHueRec(rec.hue ? rec : null);
       }
     }
     finishLanding(p);
@@ -1540,6 +1552,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
           filterEl = next;
           shownKey = key;
           setShown(adopted ?? null);
+          setHueRec(adopted?.hue ? adopted : null);
         }
         mapKey = key;
       }
@@ -1654,6 +1667,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     shownKey = '';
     latestKey = '';
     setShown(null);
+    setHueRec(null);
 
     paintGlow(sampleOut.touchX, sampleOut.touchY, sampleOut.active * base.edgeLight, geometry);
 
@@ -1789,6 +1803,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     el.removeAttribute('data-vireglass-ease');
     interimMaps.clear();
     setShown(null);
+    setHueRec(null);
     invalidate();
     if (idleTimer !== null) clearTimeout(idleTimer);
     idleTimer = null;
