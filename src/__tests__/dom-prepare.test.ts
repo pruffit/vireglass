@@ -534,6 +534,46 @@ describe('a landing lands the lens as it is, never a pair for what it was', () =
       expect(href()).not.toBe(target);
     });
 
+    it('the idle end of interim, 2 s after the last call, leaves a running blend alone and leaves the lens settled when it ends', async () => {
+      const frames: ((now: number) => void)[] = [];
+      vi.stubGlobal('requestAnimationFrame', (fn: (now: number) => void) => frames.push(fn));
+      vi.stubGlobal('cancelAnimationFrame', () => undefined);
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const g = attach();
+      g.setInterim(true);
+      g.prepare(dest(260));
+      await worker.answer(0);
+      await decodeAll();
+      g.prepare(dest(300));
+      box = { width: 300, height: 100 };
+      expect(g.land()).toBe('blend');
+      await worker.answer(1);
+      await decodeAll();
+      const node = filter();
+      frames.splice(0).forEach((fn) => fn(1000));
+      frames.splice(0).forEach((fn) => fn(1060));
+      const mix = node.querySelector('feComposite[result="map"]')!;
+      const at = Number(mix.getAttribute('k3'));
+      expect(at).toBeGreaterThan(0);
+      g.setInterim(true);
+      resetRenderStats();
+      await vi.advanceTimersByTimeAsync(2100);
+      expect(renderStats()).toMatchObject({ landedBlend: 1, landedExact: 0 });
+      expect(filter()).toBe(node);
+      expect(Number(mix.getAttribute('k3'))).toBe(at);
+      expect(node.querySelectorAll('feImage')).toHaveLength(2);
+      let now = 1060;
+      while (frames.length > 0) frames.splice(0).forEach((fn) => fn((now += 16)));
+      await vi.advanceTimersByTimeAsync(300);
+      expect(node.querySelectorAll('feImage')).toHaveLength(1);
+      expect(href()).toBe(urls[1]);
+      expect(renderStats()).toMatchObject({ fullBakes: 0, filterSwaps: 0, mainThreadBakes: 0 });
+      g.update();
+      await vi.advanceTimersByTimeAsync(300);
+      expect(renderStats()).toMatchObject({ fullBakes: 0, filterSwaps: 0, mainThreadBakes: 0 });
+      vi.unstubAllGlobals();
+    });
+
     it('destroy removes the blend with the filter and leaves no timer', async () => {
       const { g } = await midBlend();
       g.destroy();

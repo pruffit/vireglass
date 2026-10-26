@@ -19,7 +19,7 @@ import { roundedRectGeometry, type VireGlassGeometry } from '../geometry';
 import { resolveOptics, VIREGLASS_MATERIAL, type VireGlassMaterial, type VireGlassOptics } from '../material';
 import { probeBackdrop } from './probe';
 import { bump } from './stats';
-import { createLru, filterSignature, mapKeyFor, quantise, sampleMoved, snapGeometry } from './interim';
+import { createLru, filterSignature, landingDiffers, mapKeyFor, quantise, sampleMoved, snapGeometry } from './interim';
 import { interimBuilder, releaseMap, type InterimPair, type WorkerFailure } from './interim-build';
 import { Superseded, yieldTask } from './bake';
 import { startBlend, type Blend } from './blend';
@@ -1203,8 +1203,6 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     if (sample && sample !== lastSample && !toSample) toSample = sample;
   }
 
-  const differs = (p: Prepared, d: { key: string; print: string }) => p.key !== d.key || p.print !== d.print;
-
   /** The lens changed under a landing: the destination becomes what it is now, and the pair on the filter stays until that one is ready. */
   function relandOnLive(d: NonNullable<ReturnType<typeof liveDescribe>>, sample: BackdropSample | null, repaint = true): void {
     const old = landing ?? prepared;
@@ -1249,7 +1247,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     if (prepared === p) prepared = null;
     invalidate();
     const d = liveDescribe();
-    if (d && differs(p, d)) {
+    if (d && landingDiffers(p, d)) {
       relandOnLive(d, p.sample);
       return;
     }
@@ -1316,7 +1314,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       bump('probesAtLand');
       toSample = probe(el);
     }
-    if (p && differs(p, live)) {
+    if (p && landingDiffers(p, live)) {
       sample = p.sample;
       if (p.rec?.ready && !blend && structureHolds(p)) nearest = p.rec;
       prepared = null;
@@ -1455,7 +1453,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
       } else if (filterEl && (landing || blend)) {
         // A landing never bakes in the task that notices a change: the destination follows the lens.
         const d = landing ? describe(geometry, morph) : null;
-        if (landing && d && differs(landing, d)) relandOnLive(d, landing.sample, false);
+        if (landing && d && landingDiffers(landing, d)) relandOnLive(d, landing.sample, false);
       } else if (key !== mapKey || !filterEl) {
         const morphNow = morphState();
         const spectral = hasSpectralEdge(full);

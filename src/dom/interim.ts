@@ -36,6 +36,10 @@ export function filterSignature(iorSpread: number, hasHue: boolean): string {
   return `${iorSpread > 1e-4 ? 'd' : '-'}${hasHue ? 'h' : '-'}`;
 }
 
+/** A landing is stale when the lens is now at another key, or at the same key with another material: the live one is landed. */
+export const landingDiffers = (p: { key: string; print: string }, d: { key: string; print: string }): boolean =>
+  p.key !== d.key || p.print !== d.print;
+
 /** Whether a backdrop moved enough for the body to be worth easing to, rather than a probe's noise. */
 export function sampleMoved(a: BackdropSample, b: BackdropSample): boolean {
   return (

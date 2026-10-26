@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createLru, filterSignature, mapKeyFor, quantise, snapGeometry } from '../dom/interim';
+import { createLru, filterSignature, landingDiffers, mapKeyFor, quantise, snapGeometry } from '../dom/interim';
 import { resolveOptics } from '../material';
 import { MATERIAL_PRESETS } from '../index';
 import { bump, renderStats, resetRenderStats } from '../dom/stats';
@@ -69,6 +69,18 @@ describe('deleting from the store', () => {
     lru.delete('k', 'new');
     expect(lru.get('k')).toBeUndefined();
     expect(gone).toEqual(['old', 'new']);
+  });
+});
+
+describe('a landing that is stale', () => {
+  it('is one for another key, and one for the same key under another material', () => {
+    const live = { print: resolveOptics(MATERIAL_PRESETS.glass) };
+    const same = { key: 'k', print: JSON.stringify(live.print) };
+    expect(landingDiffers(same, { key: 'k', print: JSON.stringify(live.print) })).toBe(false);
+    expect(landingDiffers(same, { key: 'j', print: same.print })).toBe(true);
+    const rougher = JSON.stringify(resolveOptics({ ...MATERIAL_PRESETS.glass, roughness: 0.9 }));
+    expect(rougher).not.toBe(same.print);
+    expect(landingDiffers(same, { key: 'k', print: rougher })).toBe(true);
   });
 });
 
