@@ -1,6 +1,6 @@
 # Changelog
 
-## 3.7.0 (unreleased)
+## 3.7.0
 
 One family of maps. DOM target only. A lens that finished a motion used to change on screen: the interim map was a
 reduced, stretched one, the settled map a different image, and the two met in a visible step after a pause
