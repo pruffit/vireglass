@@ -588,6 +588,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   let landing: Prepared | null = null;
   let blend: Blend | null = null;
   let blendTarget: Shown | null = null;
+  let blendRecs: InterimMap[] = [];
   let landingNow = false;
   let waiters: (() => void)[] = [];
   let easeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -676,7 +677,7 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   const morphSignature = () => morphSignatureOf(morph);
 
   function isPinned(rec: InterimMap): boolean {
-    return rec === shownRec || rec === prepared?.rec || rec === landing?.rec || rec === blendTarget?.rec;
+    return rec === shownRec || rec === prepared?.rec || rec === landing?.rec || rec === blendTarget?.rec || blendRecs.includes(rec);
   }
 
   function maybeRelease(rec: InterimMap | null | undefined): void {
@@ -1086,20 +1087,40 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
   function stopBlend(): void {
     blend?.stop();
     blend = null;
-    const target = blendTarget;
     blendTarget = null;
-    maybeRelease(target?.rec);
+    releaseBlendRecs();
+  }
+
+  function releaseBlendRecs(): void {
+    const recs = blendRecs;
+    blendRecs = [];
+    for (const rec of recs) maybeRelease(rec);
+  }
+
+  /** A pair the blend no longer shows or heads for is let go of, so a retarget storm does not pin the budget. */
+  function pruneBlendRecs(): void {
+    if (!blend) return;
+    const kept: InterimMap[] = [];
+    const dropped: InterimMap[] = [];
+    for (const rec of blendRecs) {
+      const used = rec === blendTarget?.rec || blend.shows(rec.map.url) || (!!rec.hue && blend.shows(rec.hue.url));
+      (used ? kept : dropped).push(rec);
+    }
+    blendRecs = kept;
+    for (const rec of dropped) maybeRelease(rec);
   }
 
   const shownOf = (rec: InterimMap): Shown => ({ map: rec.map, hue: rec.hue, key: rec.key, rec });
 
-  /** Mixes the filter toward `target`; a blend already running keeps its weights and changes only where it is headed. */
+  /** Mixes the filter toward `target`; a blend already running continues from what it shows now. */
   function blendTo(target: Shown): void {
     if (!filterEl) return;
     const urls = { mapUrl: target.map.url, hueUrl: target.hue?.url ?? null };
     blendTarget = target;
+    if (target.rec && !blendRecs.includes(target.rec)) blendRecs.push(target.rec);
     if (blend) {
       blend.retarget(urls);
+      pruneBlendRecs();
       return;
     }
     let ran = false;
@@ -1117,8 +1138,12 @@ export function attachGlass(el: HTMLElement, opts: AttachGlassOptions = {}): Gla
     const target = blendTarget;
     blend = null;
     blendTarget = null;
-    if (!target || destroyed || !filterEl) return;
+    if (!target || destroyed || !filterEl) {
+      releaseBlendRecs();
+      return;
+    }
     retarget(filterEl, target.map, target.hue, target.rec, target.key);
+    releaseBlendRecs();
     const p = landing;
     if (!p?.rec) return;
     if (p.rec === target.rec) finishLanding(p);

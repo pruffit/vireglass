@@ -501,6 +501,39 @@ describe('a landing lands the lens as it is, never a pair for what it was', () =
       expect(renderStats()).toMatchObject(none);
     });
 
+    it('a pair that arrives mid-blend enters at weight 0 over the mix that is shown, and the blend ends on it', async () => {
+      const { g, node, at } = await midBlend();
+      box = { width: 340, height: 100 };
+      g.update();
+      await worker.answer(2);
+      await decodeAll();
+      expect(node.querySelectorAll('feImage')).toHaveLength(3);
+      const mixes = node.querySelectorAll('feComposite[result^="map"]');
+      expect(mixes).toHaveLength(2);
+      expect(Number(mixes[0]!.getAttribute('k3'))).toBe(at);
+      expect(Number(node.querySelector('feComposite[result="map"]')!.getAttribute('k3'))).toBe(0);
+      await vi.advanceTimersByTimeAsync(400);
+      expect(node.querySelectorAll('feImage')).toHaveLength(1);
+      expect(href()).toBe(urls[2]);
+    });
+
+    it('a pair that only the blend heads for and the store evicted is revoked once, when the blend lets go of it', async () => {
+      const { g, node } = await midBlend();
+      const target = urls[1]!;
+      for (let i = 0; i < 10; i += 1) {
+        box = { width: 340 + i * 10, height: 100 };
+        g.update();
+        await worker.answer(2 + i);
+      }
+      await decodeAll();
+      expect(revoked).not.toContain(target);
+      expect(node.querySelector(`feImage[href="${target}"]`)).not.toBeNull();
+      await vi.advanceTimersByTimeAsync(600);
+      expect(node.querySelectorAll('feImage')).toHaveLength(1);
+      expect(revoked.filter((u) => u === target)).toHaveLength(1);
+      expect(href()).not.toBe(target);
+    });
+
     it('destroy removes the blend with the filter and leaves no timer', async () => {
       const { g } = await midBlend();
       g.destroy();
